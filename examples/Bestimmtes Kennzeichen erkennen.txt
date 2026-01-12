@@ -1,0 +1,19 @@
+automation:
+  - alias: "PlateVision - Bekanntes Kennzeichen"
+    trigger:
+      - platform: state
+        entity_id: sensor.platevision_last_plate
+    condition:
+      - condition: template
+        value_template: >-
+          {% set plate = states('sensor.platevision_last_plate') | upper | replace(' ', '') | replace('-', '') %}
+          {{ plate in ['BTEST123', 'MAB1234', 'HH AB 5678'] | map('upper') | map('replace', ' ', '') | map('replace', '-', '') | list }}
+    action:
+      - service: notify.mobile_app
+        data:
+          title: "✅ Bekanntes Fahrzeug"
+          message: "{{ states('sensor.platevision_last_plate') }} wurde erkannt!"
+      # Optional: Garagentor öffnen
+      # - service: cover.open_cover
+      #   target:
+      #     entity_id: cover.garage_door

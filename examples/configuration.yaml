@@ -1,0 +1,105 @@
+# ===========================================
+# PLATEVISION INTEGRATION
+# ===========================================
+
+# REST Sensoren
+sensor:
+  # Hauptsensor für Kennzeichen
+  - platform: rest
+    name: platevision_last_plate
+    resource: http://192.168.1.XXX:5000/api/latest/plate
+    value_template: "{{ value_json.plate_text }}"
+    scan_interval: 5
+    json_attributes:
+      - confidence
+      - vehicle_type
+      - vehicle_color
+      - timestamp
+      - source
+
+  # Template Sensoren für einzelne Attribute
+  - platform: template
+    sensors:
+      platevision_vehicle_type:
+        friendly_name: "Fahrzeugtyp"
+        value_template: "{{ state_attr('sensor.platevision_last_plate', 'vehicle_type') }}"
+        icon_template: >-
+          {% set vtype = state_attr('sensor.platevision_last_plate', 'vehicle_type') | lower %}
+          {% if 'pkw' in vtype or 'car' in vtype %}
+            mdi:car
+          {% elif 'lkw' in vtype or 'truck' in vtype %}
+            mdi:truck
+          {% elif 'bus' in vtype %}
+            mdi:bus
+          {% elif 'motor' in vtype %}
+            mdi:motorbike
+          {% else %}
+            mdi:car-outline
+          {% endif %}
+      
+      platevision_vehicle_color:
+        friendly_name: "Fahrzeugfarbe"
+        value_template: "{{ state_attr('sensor.platevision_last_plate', 'vehicle_color') }}"
+        icon_template: mdi:palette
+      
+      platevision_confidence:
+        friendly_name: "Erkennungs-Konfidenz"
+        value_template: "{{ (state_attr('sensor.platevision_last_plate', 'confidence') | float * 100) | round(1) }}"
+        unit_of_measurement: "%"
+        icon_template: mdi:percent
+      
+      platevision_timestamp:
+        friendly_name: "Erkennungszeit"
+        value_template: >-
+          {% set ts = state_attr('sensor.platevision_last_plate', 'timestamp') %}
+          {% if ts %}
+            {{ as_timestamp(ts) | timestamp_custom('%d.%m.%Y %H:%M:%S') }}
+          {% else %}
+            Unbekannt
+          {% endif %}
+        icon_template: mdi:clock-outline
+      
+      platevision_last_seen:
+        friendly_name: "Zuletzt gesehen"
+        value_template: >-
+          {% set ts = state_attr('sensor.platevision_last_plate', 'timestamp') %}
+          {% if ts %}
+            {% set diff = (now().timestamp() - as_timestamp(ts)) | int %}
+            {% if diff < 60 %}
+              vor {{ diff }} Sekunden
+            {% elif diff < 3600 %}
+              vor {{ (diff / 60) | int }} Minuten
+            {% elif diff < 86400 %}
+              vor {{ (diff / 3600) | int }} Stunden
+            {% else %}
+              vor {{ (diff / 86400) | int }} Tagen
+            {% endif %}
+          {% else %}
+            Unbekannt
+          {% endif %}
+        icon_template: mdi:history
+
+# Kameras
+camera:
+  - platform: generic
+    name: platevision_plate_image
+    still_image_url: http://192.168.1.XXX:5000/api/latest/plate/image
+    verify_ssl: false
+    
+  - platform: generic
+    name: platevision_vehicle_image
+    still_image_url: http://192.168.1.XXX:5000/api/latest/vehicle/image
+    verify_ssl: false
+    
+  - platform: mjpeg
+    name: platevision_live_stream
+    mjpeg_url: http://192.168.1.XXX:5000/api/stream/feed
+    verify_ssl: false
+
+# Binary Sensor für Stream Status
+binary_sensor:
+  - platform: rest
+    name: platevision_stream_status
+    resource: http://192.168.1.XXX:5000/api/stream/status
+    value_template: "{{ value_json.status == 'running' }}"
+    scan_interval: 10

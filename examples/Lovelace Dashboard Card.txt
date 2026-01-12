@@ -1,0 +1,27 @@
+type: vertical-stack
+title: PlateVision
+cards:
+  - type: picture-entity
+    entity: camera.platevision_vehicle_image
+    name: Letztes Fahrzeug
+    camera_image: camera.platevision_vehicle_image
+    show_state: false
+    
+  - type: horizontal-stack
+    cards:
+      - type: entity
+        entity: sensor.platevision_last_plate
+        name: Kennzeichen
+        icon: mdi:card-text
+        
+      - type: entity
+        entity: sensor.platevision_confidence
+        name: Konfidenz
+        
+  - type: entities
+    entities:
+      - entity: sensor.platevision_vehicle_type
+      - entity: sensor.platevision_vehicle_color
+      - entity: sensor.platevision_last_seen
+      - entity: binary_sensor.platevision_stream_status
+        name: Live Stream
