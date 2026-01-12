@@ -1,1 +1,1291 @@
+{% extends "base.html" %}
 
+{% block title %}Test & Upload - PlateVision{% endblock %}
+
+{% block page_title %}
+<i class="fas fa-flask me-2"></i>Test & Upload
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .upload-zone {
+        border: 3px dashed var(--card-border);
+        border-radius: 16px;
+        padding: 3rem 2rem;
+        text-align: center;
+        transition: all 0.3s ease;
+        cursor: pointer;
+        background: var(--dark-bg);
+    }
+    
+    .upload-zone:hover,
+    .upload-zone.dragover {
+        border-color: var(--primary-color);
+        background: rgba(99, 102, 241, 0.1);
+    }
+    
+    .upload-zone.dragover {
+        transform: scale(1.02);
+    }
+    
+    .upload-zone i.upload-icon {
+        font-size: 4rem;
+        color: var(--text-secondary);
+        margin-bottom: 1.5rem;
+        transition: all 0.3s ease;
+    }
+    
+    .upload-zone:hover i.upload-icon,
+    .upload-zone.dragover i.upload-icon {
+        color: var(--primary-color);
+        transform: translateY(-5px);
+    }
+    
+    .file-info {
+        background: var(--dark-bg);
+        border-radius: 10px;
+        padding: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    
+    .file-info-icon {
+        width: 50px;
+        height: 50px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+    }
+    
+    .file-info-icon.image {
+        background: rgba(99, 102, 241, 0.2);
+        color: var(--primary-color);
+    }
+    
+    .file-info-icon.video {
+        background: rgba(16, 185, 129, 0.2);
+        color: var(--success-color);
+    }
+    
+    .result-container {
+        background: #000;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    
+    .result-image {
+        width: 100%;
+        max-height: 500px;
+        object-fit: contain;
+    }
+    
+    .processing-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.9);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        border-radius: 12px;
+        z-index: 10;
+    }
+    
+    .processing-spinner {
+        width: 60px;
+        height: 60px;
+        border: 4px solid var(--card-border);
+        border-top-color: var(--primary-color);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+    
+    /* Video Progress */
+    .video-progress-container {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+        padding: 1.5rem;
+    }
+    
+    .video-progress-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+    
+    .video-progress-bar {
+        height: 12px;
+        background: var(--dark-bg);
+        border-radius: 6px;
+        overflow: hidden;
+        margin-bottom: 1rem;
+    }
+    
+    .video-progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+        border-radius: 6px;
+        transition: width 0.3s ease;
+        position: relative;
+    }
+    
+    .video-progress-fill::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+        animation: shimmer 1.5s infinite;
+    }
+    
+    @keyframes shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+    }
+    
+    .video-progress-stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+    }
+    
+    @media (max-width: 768px) {
+        .video-progress-stats {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    
+    .video-stat {
+        text-align: center;
+        padding: 0.75rem;
+        background: var(--dark-bg);
+        border-radius: 8px;
+    }
+    
+    .video-stat-value {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: var(--primary-color);
+    }
+    
+    .video-stat-label {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    
+    /* Detection Results */
+    .detection-result {
+        background: var(--dark-bg);
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        transition: all 0.2s ease;
+    }
+    
+    .detection-result:hover {
+        background: rgba(99, 102, 241, 0.1);
+        transform: translateX(5px);
+    }
+    
+    .detection-result img {
+        width: 120px;
+        height: 60px;
+        object-fit: cover;
+        border-radius: 6px;
+        background: #000;
+    }
+    
+    .detection-result-info {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .detection-result-placeholder {
+        width: 120px;
+        height: 60px;
+        background: var(--card-bg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+    }
+    
+    .no-results {
+        text-align: center;
+        padding: 3rem 2rem;
+        color: var(--text-secondary);
+    }
+    
+    .no-results i {
+        font-size: 4rem;
+        opacity: 0.2;
+        margin-bottom: 1.5rem;
+    }
+    
+    /* Camera */
+    .camera-preview {
+        width: 100%;
+        max-height: 350px;
+        object-fit: contain;
+        background: #000;
+        border-radius: 12px;
+    }
+    
+    /* Job Status */
+    .job-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .job-status.processing {
+        background: rgba(99, 102, 241, 0.2);
+        color: var(--primary-color);
+    }
+    
+    .job-status.completed {
+        background: rgba(16, 185, 129, 0.2);
+        color: var(--success-color);
+    }
+    
+    .job-status.error {
+        background: rgba(239, 68, 68, 0.2);
+        color: var(--danger-color);
+    }
+    
+    /* Job Card */
+    .job-card {
+        background: var(--dark-bg);
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        transition: all 0.2s ease;
+    }
+    
+    .job-card:hover {
+        background: rgba(99, 102, 241, 0.05);
+    }
+    
+    .job-progress-mini {
+        height: 4px;
+        background: var(--card-border);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 0.5rem;
+    }
+    
+    .job-progress-mini-fill {
+        height: 100%;
+        background: var(--primary-color);
+        border-radius: 2px;
+        transition: width 0.3s ease;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Upload Section -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-upload"></i>
+                    Bild oder Video hochladen
+                </h5>
+            </div>
+            <div class="card-body">
+                <!-- Upload Zone -->
+                <div class="upload-zone" id="uploadZone" onclick="triggerFileInput()">
+                    <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                    <h4>Dateien hier ablegen</h4>
+                    <p class="text-secondary mb-3">oder klicken zum Auswählen</p>
+                    <div class="d-flex justify-content-center gap-3 flex-wrap">
+                        <span class="badge bg-primary"><i class="fas fa-image me-1"></i>JPG, PNG, WEBP</span>
+                        <span class="badge bg-success"><i class="fas fa-video me-1"></i>MP4, AVI, MKV</span>
+                    </div>
+                    <small class="text-secondary d-block mt-3">Maximale Größe: 500 MB</small>
+                </div>
+                
+                <input type="file" id="fileInput" hidden accept="image/*,video/*" onchange="handleFileSelect(event)">
+                
+                <!-- Selected File Info -->
+                <div class="mt-4" id="fileInfo" style="display: none;">
+                    <div class="file-info">
+                        <div class="file-info-icon image" id="fileIcon">
+                            <i class="fas fa-image"></i>
+                        </div>
+                        <div class="flex-grow-1 min-width-0">
+                            <div class="fw-bold text-truncate" id="fileName">-</div>
+                            <small class="text-secondary">
+                                <span id="fileSize">-</span>
+                                <span class="mx-1">•</span>
+                                <span id="fileType">-</span>
+                            </small>
+                        </div>
+                        <button class="btn btn-sm btn-outline-danger" onclick="clearFile()" title="Entfernen">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    
+                    <!-- Process Button -->
+                    <button class="btn btn-primary btn-lg w-100 mt-3" id="processBtn" onclick="processFile()">
+                        <i class="fas fa-magic me-2"></i>Erkennung starten
+                    </button>
+                </div>
+                
+                <hr class="my-4">
+                
+                <!-- Camera Section -->
+                <h6 class="mb-3">
+                    <i class="fas fa-camera me-2 text-primary"></i>
+                    Kamera-Aufnahme
+                </h6>
+                
+                <video id="cameraPreview" class="camera-preview mb-3" autoplay playsinline style="display: none;"></video>
+                
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-primary flex-grow-1" id="cameraToggleBtn" onclick="toggleCamera()">
+                        <i class="fas fa-video me-2"></i>
+                        <span id="cameraToggleText">Kamera starten</span>
+                    </button>
+                    <button class="btn btn-success px-4" id="captureBtn" onclick="capturePhoto()" disabled title="Foto aufnehmen">
+                        <i class="fas fa-camera"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Results Section -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-search"></i>
+                    Erkennungsergebnis
+                </h5>
+                <span class="badge bg-success" id="resultBadge" style="display: none;">
+                    <i class="fas fa-check me-1"></i>
+                    <span id="resultCount">0</span> Erkennungen
+                </span>
+            </div>
+            <div class="card-body position-relative" id="resultArea">
+                
+                <!-- Empty State -->
+                <div id="emptyResult">
+                    <div class="no-results">
+                        <i class="fas fa-image"></i>
+                        <h5>Kein Ergebnis</h5>
+                        <p class="mb-0">Laden Sie ein Bild oder Video hoch, um die Kennzeichenerkennung zu starten.</p>
+                    </div>
+                </div>
+                
+                <!-- Processing Overlay -->
+                <div class="processing-overlay" id="processingOverlay" style="display: none;">
+                    <div class="processing-spinner mb-4"></div>
+                    <h5 id="processingTitle">Verarbeitung läuft...</h5>
+                    <p class="text-secondary mb-0" id="processingStatus">Bild wird analysiert...</p>
+                </div>
+                
+                <!-- Image Result -->
+                <div id="imageResult" style="display: none;">
+                    <div class="result-container mb-3">
+                        <img id="resultImage" class="result-image" src="" alt="Ergebnis">
+                    </div>
+                    
+                    <!-- Stats -->
+                    <div class="row g-2 mb-4">
+                        <div class="col-4">
+                            <div class="bg-dark rounded p-3 text-center">
+                                <div class="h4 mb-0 text-primary" id="statVehicles">0</div>
+                                <small class="text-secondary">Fahrzeuge</small>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="bg-dark rounded p-3 text-center">
+                                <div class="h4 mb-0 text-success" id="statPlates">0</div>
+                                <small class="text-secondary">Kennzeichen</small>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="bg-dark rounded p-3 text-center">
+                                <div class="h4 mb-0 text-info" id="statTime">0</div>
+                                <small class="text-secondary">ms</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Detections List -->
+                    <h6 class="mb-3">
+                        <i class="fas fa-list me-2"></i>
+                        Erkannte Kennzeichen
+                    </h6>
+                    <div id="detectionsList"></div>
+                </div>
+                
+                <!-- Video Progress -->
+                <div id="videoProgress" style="display: none;">
+                    <div class="video-progress-container">
+                        <div class="video-progress-header">
+                            <div>
+                                <h6 class="mb-1" id="videoFileName">Video wird verarbeitet...</h6>
+                                <small class="text-secondary">
+                                    Job ID: <code id="videoJobId">-</code>
+                                </small>
+                            </div>
+                            <span class="job-status processing" id="videoJobStatus">
+                                <i class="fas fa-spinner fa-spin"></i>
+                                <span id="videoJobStatusText">Wird hochgeladen...</span>
+                            </span>
+                        </div>
+                        
+                        <div class="video-progress-bar">
+                            <div class="video-progress-fill" id="videoProgressFill" style="width: 0%;"></div>
+                        </div>
+                        
+                        <div class="video-progress-stats">
+                            <div class="video-stat">
+                                <div class="video-stat-value" id="videoProgressPercent">0%</div>
+                                <div class="video-stat-label">Fortschritt</div>
+                            </div>
+                            <div class="video-stat">
+                                <div class="video-stat-value" id="videoFramesCurrent">0</div>
+                                <div class="video-stat-label">Frames</div>
+                            </div>
+                            <div class="video-stat">
+                                <div class="video-stat-value" id="videoDetectionsCount">0</div>
+                                <div class="video-stat-label">Erkennungen</div>
+                            </div>
+                            <div class="video-stat">
+                                <div class="video-stat-value" id="videoETA">--:--</div>
+                                <div class="video-stat-label">Verbleibend</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Processing Details -->
+                        <div class="mt-3 p-3 bg-dark rounded" id="videoProcessingDetails">
+                            <div class="row g-2 text-center" style="font-size: 0.8rem;">
+                                <div class="col-4">
+                                    <span class="text-secondary">FPS:</span>
+                                    <span class="fw-bold ms-1" id="videoFPS">-</span>
+                                </div>
+                                <div class="col-4">
+                                    <span class="text-secondary">Zeit:</span>
+                                    <span class="fw-bold ms-1" id="videoElapsed">0:00</span>
+                                </div>
+                                <div class="col-4">
+                                    <span class="text-secondary">Gesamt:</span>
+                                    <span class="fw-bold ms-1" id="videoTotalFrames">-</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Complete Actions -->
+                        <div class="mt-4" id="videoCompleteActions" style="display: none;">
+                            <div class="alert alert-success d-flex align-items-center mb-3">
+                                <i class="fas fa-check-circle fa-lg me-3"></i>
+                                <div>
+                                    <strong>Video erfolgreich verarbeitet!</strong>
+                                    <div class="small" id="videoCompleteInfo">-</div>
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <a href="#" id="downloadVideoBtn" class="btn btn-primary flex-grow-1" download>
+                                    <i class="fas fa-download me-2"></i>Video herunterladen
+                                </a>
+                                <a href="{{ url_for('history') }}" class="btn btn-outline-primary">
+                                    <i class="fas fa-history me-2"></i>Historie
+                                </a>
+                            </div>
+                        </div>
+                        
+                        <!-- Error Message -->
+                        <div class="mt-4" id="videoErrorMessage" style="display: none;">
+                            <div class="alert alert-danger d-flex align-items-center mb-0">
+                                <i class="fas fa-exclamation-circle fa-lg me-3"></i>
+                                <div>
+                                    <strong>Fehler bei der Verarbeitung</strong>
+                                    <div class="small" id="videoErrorText">-</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Active Jobs Section -->
+<div class="card mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">
+            <i class="fas fa-tasks"></i>
+            Verarbeitungsjobs
+        </h5>
+        <div class="d-flex gap-2">
+            <span class="badge bg-secondary" id="activeJobsCount">0 aktiv</span>
+            <button class="btn btn-sm btn-outline-secondary" onclick="refreshJobs()" title="Aktualisieren">
+                <i class="fas fa-sync"></i>
+            </button>
+        </div>
+    </div>
+    <div class="card-body" id="jobsContainer">
+        <div id="jobsList">
+            <!-- Jobs werden hier eingefügt -->
+        </div>
+        <div id="noJobsMessage" class="text-center text-secondary py-4">
+            <i class="fas fa-inbox fa-2x mb-2 opacity-50"></i>
+            <p class="mb-0">Keine Verarbeitungsjobs vorhanden</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // ============================================
+    // STATE VARIABLES
+    // ============================================
+    
+    let selectedFile = null;
+    let cameraStream = null;
+    let currentJobId = null;
+    let jobPollingInterval = null;
+    let jobsRefreshInterval = null;
+    
+    // ============================================
+    // INITIALIZATION
+    // ============================================
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        initDragAndDrop();
+        refreshJobs();
+        
+        // Auto-refresh jobs every 5 seconds
+        jobsRefreshInterval = setInterval(refreshJobs, 5000);
+        
+        // Listen for WebSocket events
+        socket.on('video_progress', handleVideoProgress);
+        socket.on('video_completed', handleVideoCompleted);
+    });
+    
+    // ============================================
+    // DRAG AND DROP
+    // ============================================
+    
+    function initDragAndDrop() {
+        const uploadZone = document.getElementById('uploadZone');
+        
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            uploadZone.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+        
+        ['dragenter', 'dragover'].forEach(eventName => {
+            uploadZone.addEventListener(eventName, () => {
+                uploadZone.classList.add('dragover');
+            }, false);
+        });
+        
+        ['dragleave', 'drop'].forEach(eventName => {
+            uploadZone.addEventListener(eventName, () => {
+                uploadZone.classList.remove('dragover');
+            }, false);
+        });
+        
+        uploadZone.addEventListener('drop', handleDrop, false);
+    }
+    
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    function handleDrop(e) {
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            processSelectedFile(files[0]);
+        }
+    }
+    
+    // ============================================
+    // FILE HANDLING
+    // ============================================
+    
+    function triggerFileInput() {
+        document.getElementById('fileInput').click();
+    }
+    
+    function handleFileSelect(event) {
+        const files = event.target.files;
+        if (files.length > 0) {
+            processSelectedFile(files[0]);
+        }
+    }
+    
+    function processSelectedFile(file) {
+        // Validate file type
+        const isImage = file.type.startsWith('image/');
+        const isVideo = file.type.startsWith('video/');
+        
+        if (!isImage && !isVideo) {
+            showToast('Fehler', 'Bitte nur Bild- oder Videodateien hochladen.', 'danger');
+            return;
+        }
+        
+        // Validate file size (500MB max)
+        const maxSize = 500 * 1024 * 1024;
+        if (file.size > maxSize) {
+            showToast('Fehler', 'Datei ist zu groß. Maximal 500 MB erlaubt.', 'danger');
+            return;
+        }
+        
+        selectedFile = file;
+        updateFileInfo(file);
+        resetResults();
+    }
+    
+    function updateFileInfo(file) {
+        document.getElementById('fileInfo').style.display = 'block';
+        document.getElementById('fileName').textContent = file.name;
+        document.getElementById('fileSize').textContent = formatFileSize(file.size);
+        
+        const isImage = file.type.startsWith('image/');
+        const iconEl = document.getElementById('fileIcon');
+        const typeEl = document.getElementById('fileType');
+        
+        if (isImage) {
+            iconEl.className = 'file-info-icon image';
+            iconEl.innerHTML = '<i class="fas fa-image"></i>';
+            typeEl.textContent = 'Bild';
+        } else {
+            iconEl.className = 'file-info-icon video';
+            iconEl.innerHTML = '<i class="fas fa-video"></i>';
+            typeEl.textContent = 'Video';
+        }
+    }
+    
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+    
+    function clearFile() {
+        selectedFile = null;
+        document.getElementById('fileInput').value = '';
+        document.getElementById('fileInfo').style.display = 'none';
+        resetResults();
+    }
+    
+    function resetResults() {
+        document.getElementById('emptyResult').style.display = 'block';
+        document.getElementById('imageResult').style.display = 'none';
+        document.getElementById('videoProgress').style.display = 'none';
+        document.getElementById('processingOverlay').style.display = 'none';
+        document.getElementById('resultBadge').style.display = 'none';
+    }
+    
+    // ============================================
+    // PROCESSING
+    // ============================================
+    
+    function processFile() {
+        if (!selectedFile) {
+            showToast('Fehler', 'Bitte zuerst eine Datei auswählen.', 'warning');
+            return;
+        }
+        
+        const isImage = selectedFile.type.startsWith('image/');
+        
+        if (isImage) {
+            processImage();
+        } else {
+            processVideo();
+        }
+    }
+    
+    // ============================================
+    // IMAGE PROCESSING
+    // ============================================
+    
+    function processImage() {
+        showProcessing('Bild wird analysiert...', 'Erkenne Fahrzeuge und Kennzeichen...');
+        
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        
+        fetch('/api/process/image', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            hideProcessing();
+            
+            if (data.success) {
+                displayImageResults(data);
+                showToast('Erfolg', `${data.detections ? data.detections.length : 0} Kennzeichen erkannt`, 'success');
+            } else {
+                showError(data.error || 'Verarbeitung fehlgeschlagen');
+            }
+        })
+        .catch(error => {
+            hideProcessing();
+            showError('Verbindungsfehler: ' + error.message);
+        });
+    }
+    
+    function displayImageResults(data) {
+        document.getElementById('emptyResult').style.display = 'none';
+        document.getElementById('imageResult').style.display = 'block';
+        
+        // Set result image
+        if (data.result_image) {
+            document.getElementById('resultImage').src = 'data:image/jpeg;base64,' + data.result_image;
+        }
+        
+        // Update stats
+        document.getElementById('statVehicles').textContent = data.vehicles ? data.vehicles.length : 0;
+        document.getElementById('statPlates').textContent = data.detections ? data.detections.length : 0;
+        document.getElementById('statTime').textContent = data.processing_time ? Math.round(data.processing_time * 1000) : 0;
+        
+        // Show result badge
+        const detectionCount = data.detections ? data.detections.length : 0;
+        if (detectionCount > 0) {
+            document.getElementById('resultBadge').style.display = 'inline-flex';
+            document.getElementById('resultCount').textContent = detectionCount;
+        }
+        
+        // Display detections list
+        displayDetectionsList(data.detections);
+    }
+    
+    function displayDetectionsList(detections) {
+        const listEl = document.getElementById('detectionsList');
+        
+        if (!detections || detections.length === 0) {
+            listEl.innerHTML = `
+                <div class="alert alert-warning mb-0">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    Keine Kennzeichen erkannt. Versuchen Sie ein anderes Bild oder passen Sie die Einstellungen an.
+                </div>
+            `;
+            return;
+        }
+        
+        listEl.innerHTML = detections.map((det, index) => `
+            <div class="detection-result">
+                ${det.plate_image_base64 
+                    ? `<img src="data:image/jpeg;base64,${det.plate_image_base64}" alt="Kennzeichen ${index + 1}">`
+                    : `<div class="detection-result-placeholder"><i class="fas fa-id-card text-secondary"></i></div>`
+                }
+                <div class="detection-result-info">
+                    <div class="plate-badge mb-2" style="display: inline-block;">
+                        ${det.plate_text || 'Nicht lesbar'}
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center" style="font-size: 0.8rem;">
+                        <span class="text-secondary">
+                            <i class="fas fa-car me-1"></i>${det.vehicle_type || 'Unbekannt'}
+                        </span>
+                        ${det.vehicle_color && det.vehicle_color !== 'Unbekannt' ? `
+                            <span class="text-secondary">
+                                <i class="fas fa-palette me-1"></i>${det.vehicle_color}
+                            </span>
+                        ` : ''}
+                        <span class="confidence-badge ${getConfidenceClass(det.confidence)}">
+                            ${det.confidence ? Math.round(det.confidence * 100) : 0}%
+                        </span>
+                    </div>
+                </div>
+                ${det.vehicle_image_base64 ? `
+                    <img src="data:image/jpeg;base64,${det.vehicle_image_base64}" 
+                         alt="Fahrzeug" 
+                         style="width: 80px; height: 60px; object-fit: cover; border-radius: 6px; cursor: pointer;"
+                         onclick="showImageModal(this.src, 'Fahrzeug')"
+                         title="Fahrzeugbild anzeigen">
+                ` : ''}
+            </div>
+        `).join('');
+    }
+    
+    function getConfidenceClass(confidence) {
+        if (!confidence) return 'confidence-low';
+        if (confidence >= 0.8) return 'confidence-high';
+        if (confidence >= 0.5) return 'confidence-medium';
+        return 'confidence-low';
+    }
+    
+    // ============================================
+    // VIDEO PROCESSING
+    // ============================================
+    
+    function processVideo() {
+        document.getElementById('emptyResult').style.display = 'none';
+        document.getElementById('imageResult').style.display = 'none';
+        document.getElementById('videoProgress').style.display = 'block';
+        document.getElementById('videoCompleteActions').style.display = 'none';
+        document.getElementById('videoErrorMessage').style.display = 'none';
+        
+        // Reset progress display
+        document.getElementById('videoFileName').textContent = selectedFile.name;
+        document.getElementById('videoJobId').textContent = 'Wird erstellt...';
+        document.getElementById('videoJobStatusText').textContent = 'Wird hochgeladen...';
+        document.getElementById('videoJobStatus').className = 'job-status processing';
+        document.getElementById('videoProgressFill').style.width = '0%';
+        document.getElementById('videoProgressPercent').textContent = '0%';
+        document.getElementById('videoFramesCurrent').textContent = '0';
+        document.getElementById('videoDetectionsCount').textContent = '0';
+        document.getElementById('videoETA').textContent = '--:--';
+        document.getElementById('videoFPS').textContent = '-';
+        document.getElementById('videoElapsed').textContent = '0:00';
+        document.getElementById('videoTotalFrames').textContent = '-';
+        
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        
+        fetch('/api/process/video', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                currentJobId = data.job_id;
+                document.getElementById('videoJobId').textContent = data.job_id.substring(0, 8) + '...';
+                document.getElementById('videoJobStatusText').textContent = 'Verarbeitung...';
+                
+                // Start polling for progress
+                startVideoPolling(data.job_id);
+                
+                showToast('Gestartet', 'Video-Verarbeitung wurde gestartet', 'info');
+            } else {
+                showVideoError(data.error || 'Upload fehlgeschlagen');
+            }
+        })
+        .catch(error => {
+            showVideoError('Verbindungsfehler: ' + error.message);
+        });
+    }
+    
+    function startVideoPolling(jobId) {
+        // Clear any existing interval
+        if (jobPollingInterval) {
+            clearInterval(jobPollingInterval);
+        }
+        
+        // Poll every second
+        jobPollingInterval = setInterval(() => {
+            fetchJobStatus(jobId);
+        }, 1000);
+    }
+    
+    function stopVideoPolling() {
+        if (jobPollingInterval) {
+            clearInterval(jobPollingInterval);
+            jobPollingInterval = null;
+        }
+    }
+    
+    function fetchJobStatus(jobId) {
+        fetch(`/api/process/video/${jobId}/status`)
+            .then(response => response.json())
+            .then(data => {
+                updateVideoProgress(data);
+                
+                if (data.status === 'completed') {
+                    stopVideoPolling();
+                    showVideoComplete(jobId, data);
+                } else if (data.status === 'error') {
+                    stopVideoPolling();
+                    showVideoError(data.error || 'Unbekannter Fehler');
+                }
+            })
+            .catch(error => {
+                console.error('Failed to fetch job status:', error);
+            });
+    }
+    
+    function handleVideoProgress(data) {
+        if (data.job_id === currentJobId) {
+            updateVideoProgress(data);
+        }
+    }
+    
+    function handleVideoCompleted(data) {
+        if (data.job_id === currentJobId) {
+            stopVideoPolling();
+            showVideoComplete(data.job_id, data);
+        }
+        refreshJobs();
+    }
+    
+    function updateVideoProgress(data) {
+        const progress = data.progress || 0;
+        
+        document.getElementById('videoProgressFill').style.width = progress + '%';
+        document.getElementById('videoProgressPercent').textContent = progress + '%';
+        document.getElementById('videoFramesCurrent').textContent = data.current_frame || 0;
+        document.getElementById('videoDetectionsCount').textContent = data.detections_count || 0;
+        document.getElementById('videoTotalFrames').textContent = data.total_frames || '-';
+        
+        if (data.fps_processing) {
+            document.getElementById('videoFPS').textContent = data.fps_processing;
+        }
+        
+        if (data.elapsed_time !== undefined) {
+            const mins = Math.floor(data.elapsed_time / 60);
+            const secs = data.elapsed_time % 60;
+            document.getElementById('videoElapsed').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        if (data.eta !== undefined && data.eta > 0) {
+            const mins = Math.floor(data.eta / 60);
+            const secs = data.eta % 60;
+            document.getElementById('videoETA').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+        } else if (progress >= 100) {
+            document.getElementById('videoETA').textContent = '0:00';
+        }
+    }
+    
+    function showVideoComplete(jobId, data) {
+        document.getElementById('videoJobStatus').className = 'job-status completed';
+        document.getElementById('videoJobStatus').innerHTML = '<i class="fas fa-check"></i> Fertig';
+        document.getElementById('videoProgressFill').style.width = '100%';
+        document.getElementById('videoProgressPercent').textContent = '100%';
+        document.getElementById('videoETA').textContent = '0:00';
+        
+        document.getElementById('videoProcessingDetails').style.display = 'none';
+        document.getElementById('videoCompleteActions').style.display = 'block';
+        document.getElementById('videoCompleteInfo').textContent = 
+            `${data.detections_count || 0} Kennzeichen in ${data.total_frames || 0} Frames erkannt`;
+        document.getElementById('downloadVideoBtn').href = `/api/process/video/${jobId}/output`;
+        
+        showToast('Fertig', `Video verarbeitet! ${data.detections_count || 0} Kennzeichen erkannt.`, 'success');
+        refreshJobs();
+    }
+    
+    function showVideoError(error) {
+        document.getElementById('videoJobStatus').className = 'job-status error';
+        document.getElementById('videoJobStatus').innerHTML = '<i class="fas fa-times"></i> Fehler';
+        document.getElementById('videoProcessingDetails').style.display = 'none';
+        document.getElementById('videoErrorMessage').style.display = 'block';
+        document.getElementById('videoErrorText').textContent = error;
+        
+        showToast('Fehler', error, 'danger');
+    }
+    
+    // ============================================
+    // UI HELPERS
+    // ============================================
+    
+    function showProcessing(title, status) {
+        document.getElementById('emptyResult').style.display = 'none';
+        document.getElementById('imageResult').style.display = 'none';
+        document.getElementById('videoProgress').style.display = 'none';
+        document.getElementById('processingOverlay').style.display = 'flex';
+        document.getElementById('processingTitle').textContent = title;
+        document.getElementById('processingStatus').textContent = status;
+    }
+    
+    function hideProcessing() {
+        document.getElementById('processingOverlay').style.display = 'none';
+    }
+    
+    function showError(message) {
+        document.getElementById('emptyResult').style.display = 'block';
+        showToast('Fehler', message, 'danger');
+    }
+    
+    function showImageModal(src, title) {
+        // Create a simple modal to show larger image
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.innerHTML = `
+            <div class="modal-dialog modal-lg modal-dialog-centered">
+                <div class="modal-content" style="background: var(--card-bg);">
+                    <div class="modal-header border-secondary">
+                        <h5 class="modal-title">${title}</h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body text-center p-0">
+                        <img src="${src}" class="img-fluid">
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        const bsModal = new bootstrap.Modal(modal);
+        bsModal.show();
+        modal.addEventListener('hidden.bs.modal', () => modal.remove());
+    }
+    
+    // ============================================
+    // CAMERA
+    // ============================================
+    
+    function toggleCamera() {
+        if (cameraStream) {
+            stopCamera();
+        } else {
+            startCamera();
+        }
+    }
+    
+    function startCamera() {
+        const video = document.getElementById('cameraPreview');
+        
+        navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                facingMode: 'environment',
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+            } 
+        })
+        .then(stream => {
+            cameraStream = stream;
+            video.srcObject = stream;
+            video.style.display = 'block';
+            
+            document.getElementById('cameraToggleBtn').classList.remove('btn-outline-primary');
+            document.getElementById('cameraToggleBtn').classList.add('btn-outline-danger');
+            document.getElementById('cameraToggleText').textContent = 'Kamera stoppen';
+            document.getElementById('captureBtn').disabled = false;
+        })
+        .catch(error => {
+            showToast('Fehler', 'Kamera konnte nicht gestartet werden: ' + error.message, 'danger');
+        });
+    }
+    
+    function stopCamera() {
+        if (cameraStream) {
+            cameraStream.getTracks().forEach(track => track.stop());
+            cameraStream = null;
+        }
+        
+        const video = document.getElementById('cameraPreview');
+        video.srcObject = null;
+        video.style.display = 'none';
+        
+        document.getElementById('cameraToggleBtn').classList.remove('btn-outline-danger');
+        document.getElementById('cameraToggleBtn').classList.add('btn-outline-primary');
+        document.getElementById('cameraToggleText').textContent = 'Kamera starten';
+        document.getElementById('captureBtn').disabled = true;
+    }
+    
+    function capturePhoto() {
+        const video = document.getElementById('cameraPreview');
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+        
+        canvas.toBlob(blob => {
+            const file = new File([blob], `capture_${Date.now()}.jpg`, { type: 'image/jpeg' });
+            processSelectedFile(file);
+            stopCamera();
+        }, 'image/jpeg', 0.95);
+    }
+    
+    // ============================================
+    // JOBS MANAGEMENT
+    // ============================================
+    
+    function refreshJobs() {
+        fetch('/api/process/jobs')
+            .then(response => response.json())
+            .then(jobs => {
+                displayJobs(jobs);
+            })
+            .catch(error => {
+                console.error('Failed to fetch jobs:', error);
+            });
+    }
+    
+    function displayJobs(jobs) {
+        const jobsList = document.getElementById('jobsList');
+        const noJobsMessage = document.getElementById('noJobsMessage');
+        const activeJobsCount = document.getElementById('activeJobsCount');
+        
+        const jobsArray = Object.entries(jobs);
+        
+        // Count active jobs
+        const activeCount = jobsArray.filter(([_, job]) => job.status === 'processing').length;
+        activeJobsCount.textContent = `${activeCount} aktiv`;
+        
+        if (jobsArray.length === 0) {
+            jobsList.innerHTML = '';
+            noJobsMessage.style.display = 'block';
+            return;
+        }
+        
+        noJobsMessage.style.display = 'none';
+        
+        // Sort by created_at descending
+        jobsArray.sort((a, b) => {
+            const dateA = a[1].created_at || '';
+            const dateB = b[1].created_at || '';
+            return dateB.localeCompare(dateA);
+        });
+        
+        jobsList.innerHTML = jobsArray.slice(0, 10).map(([jobId, job]) => `
+            <div class="job-card" id="job-${jobId}">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="flex-grow-1 min-width-0 me-2">
+                        <div class="fw-bold text-truncate">${job.filename || 'Video'}</div>
+                        <small class="text-secondary">
+                            <code>${jobId.substring(0, 8)}</code>
+                            ${job.created_at ? ` • ${formatJobDate(job.created_at)}` : ''}
+                        </small>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="job-status ${job.status}">
+                            ${getJobStatusIcon(job.status)}
+                            ${getJobStatusText(job)}
+                        </span>
+                        ${job.status === 'completed' ? `
+                            <a href="/api/process/video/${jobId}/output" class="btn btn-sm btn-outline-success" download title="Herunterladen">
+                                <i class="fas fa-download"></i>
+                            </a>
+                        ` : ''}
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteJob('${jobId}')" title="Löschen">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                ${job.status === 'processing' ? `
+                    <div class="job-progress-mini">
+                        <div class="job-progress-mini-fill" style="width: ${job.progress || 0}%;"></div>
+                    </div>
+                    <small class="text-secondary">
+                        ${job.current_frame || 0}/${job.total_frames || 0} Frames • ${job.detections_count || 0} Erkennungen
+                    </small>
+                ` : ''}
+                ${job.status === 'completed' ? `
+                    <small class="text-success">
+                        <i class="fas fa-check me-1"></i>${job.detections_count || 0} Kennzeichen erkannt
+                    </small>
+                ` : ''}
+                ${job.status === 'error' ? `
+                    <small class="text-danger">
+                        <i class="fas fa-exclamation-circle me-1"></i>${job.error || 'Fehler'}
+                    </small>
+                ` : ''}
+            </div>
+        `).join('');
+    }
+    
+    function formatJobDate(isoString) {
+        try {
+            const date = new Date(isoString);
+            return date.toLocaleString('de-DE', {
+                day: '2-digit',
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } catch (e) {
+            return isoString;
+        }
+    }
+    
+    function getJobStatusIcon(status) {
+        switch (status) {
+            case 'processing':
+                return '<i class="fas fa-spinner fa-spin"></i>';
+            case 'completed':
+                return '<i class="fas fa-check"></i>';
+            case 'error':
+                return '<i class="fas fa-times"></i>';
+            default:
+                return '<i class="fas fa-question"></i>';
+        }
+    }
+    
+    function getJobStatusText(job) {
+        switch (job.status) {
+            case 'processing':
+                return `${job.progress || 0}%`;
+            case 'completed':
+                return 'Fertig';
+            case 'error':
+                return 'Fehler';
+            default:
+                return job.status;
+        }
+    }
+    
+    function deleteJob(jobId) {
+        if (!confirm('Job wirklich löschen? Die Dateien werden ebenfalls entfernt.')) {
+            return;
+        }
+        
+        fetch(`/api/process/jobs/${jobId}`, { method: 'DELETE' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const jobEl = document.getElementById('job-' + jobId);
+                    if (jobEl) {
+                        jobEl.style.transition = 'all 0.3s ease';
+                        jobEl.style.opacity = '0';
+                        jobEl.style.transform = 'translateX(20px)';
+                        setTimeout(() => jobEl.remove(), 300);
+                    }
+                    showToast('Gelöscht', 'Job wurde entfernt', 'success');
+                    
+                    // Check if we need to show "no jobs" message
+                    setTimeout(() => {
+                        if (document.getElementById('jobsList').children.length === 0) {
+                            document.getElementById('noJobsMessage').style.display = 'block';
+                        }
+                    }, 350);
+                } else {
+                    showToast('Fehler', data.error || 'Löschen fehlgeschlagen', 'danger');
+                }
+            })
+            .catch(error => {
+                showToast('Fehler', 'Verbindungsfehler', 'danger');
+            });
+    }
+    
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', function() {
+        stopVideoPolling();
+        if (jobsRefreshInterval) {
+            clearInterval(jobsRefreshInterval);
+        }
+        stopCamera();
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,1469 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - PlateVision{% endblock %}
+
+{% block page_title %}
+<i class="fas fa-chart-pie me-2"></i>Dashboard
+{% endblock %}
+
+{% block header_actions %}
+<div class="d-flex align-items-center gap-2">
+    <span class="badge bg-dark" id="lastUpdateBadge">
+        <i class="fas fa-clock me-1"></i>
+        <span id="lastUpdateTime">--:--:--</span>
+    </span>
+    <button class="btn btn-sm btn-outline-primary" onclick="refreshDashboard()">
+        <i class="fas fa-sync-alt"></i>
+    </button>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Stat Cards Enhanced */
+    .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 16px;
+        padding: 1.5rem;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        background: currentColor;
+        opacity: 0.05;
+        transform: translate(30%, -30%);
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
+        border-color: var(--primary-color);
+    }
+    
+    .stat-card-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+    }
+    
+    .stat-card-value {
+        font-size: 2.25rem;
+        font-weight: 800;
+        line-height: 1.2;
+        margin: 0.5rem 0 0.25rem;
+    }
+    
+    .stat-card-label {
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+    
+    .stat-card-trend {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-size: 0.75rem;
+        margin-top: 0.5rem;
+    }
+    
+    .stat-card-trend.up {
+        color: var(--success-color);
+    }
+    
+    .stat-card-trend.down {
+        color: var(--danger-color);
+    }
+    
+    /* Stream Preview */
+    .stream-preview-container {
+        position: relative;
+        background: #000;
+        border-radius: 12px;
+        overflow: hidden;
+        aspect-ratio: 16/9;
+    }
+    
+    .stream-preview-container img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+    
+    .stream-overlay-info {
+        position: absolute;
+        top: 1rem;
+        left: 1rem;
+        right: 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        pointer-events: none;
+    }
+    
+    .stream-live-badge {
+        background: var(--danger-color);
+        color: white;
+        padding: 0.35rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        animation: pulse 2s infinite;
+    }
+    
+    .stream-live-badge .dot {
+        width: 8px;
+        height: 8px;
+        background: white;
+        border-radius: 50%;
+    }
+    
+    .stream-info-badges {
+        display: flex;
+        gap: 0.5rem;
+    }
+    
+    .stream-info-badge {
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(5px);
+        padding: 0.35rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+    }
+    
+    .stream-offline {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.9);
+    }
+    
+    .stream-offline i {
+        font-size: 4rem;
+        color: var(--text-secondary);
+        opacity: 0.5;
+        margin-bottom: 1rem;
+    }
+    
+    /* Activity Feed */
+    .activity-feed {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .activity-item {
+        display: flex;
+        gap: 1rem;
+        padding: 1rem;
+        border-bottom: 1px solid var(--card-border);
+        transition: background 0.2s ease;
+    }
+    
+    .activity-item:last-child {
+        border-bottom: none;
+    }
+    
+    .activity-item:hover {
+        background: rgba(99, 102, 241, 0.05);
+    }
+    
+    .activity-item.new {
+        background: rgba(16, 185, 129, 0.1);
+        border-left: 3px solid var(--success-color);
+    }
+    
+    .activity-icon {
+        width: 42px;
+        height: 42px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    
+    .activity-icon.car { background: rgba(99, 102, 241, 0.15); color: var(--primary-color); }
+    .activity-icon.truck { background: rgba(245, 158, 11, 0.15); color: var(--warning-color); }
+    .activity-icon.bus { background: rgba(16, 185, 129, 0.15); color: var(--success-color); }
+    .activity-icon.motorcycle { background: rgba(239, 68, 68, 0.15); color: var(--danger-color); }
+    .activity-icon.unknown { background: rgba(148, 163, 184, 0.15); color: var(--text-secondary); }
+    
+    .activity-content {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .activity-plate {
+        font-family: 'Courier New', monospace;
+        font-weight: 700;
+        color: var(--primary-color);
+        font-size: 1rem;
+    }
+    
+    .activity-meta {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 0.25rem;
+    }
+    
+    .activity-image {
+        width: 70px;
+        height: 40px;
+        object-fit: cover;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: transform 0.2s ease;
+    }
+    
+    .activity-image:hover {
+        transform: scale(1.1);
+    }
+    
+    /* Charts */
+    .chart-container {
+        position: relative;
+        height: 280px;
+    }
+    
+    /* Vehicle Type Distribution */
+    .vehicle-type-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem;
+        background: var(--dark-bg);
+        border-radius: 8px;
+        margin-bottom: 0.5rem;
+    }
+    
+    .vehicle-type-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .vehicle-type-bar {
+        flex: 1;
+        height: 8px;
+        background: var(--card-border);
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    
+    .vehicle-type-bar-fill {
+        height: 100%;
+        border-radius: 4px;
+        transition: width 0.5s ease;
+    }
+    
+    /* Top Plates */
+    .top-plate-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem;
+        background: var(--dark-bg);
+        border-radius: 8px;
+        margin-bottom: 0.5rem;
+        transition: all 0.2s ease;
+    }
+    
+    .top-plate-item:hover {
+        background: rgba(99, 102, 241, 0.1);
+        transform: translateX(5px);
+    }
+    
+    .top-plate-rank {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 0.8rem;
+    }
+    
+    .top-plate-rank.gold { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
+    .top-plate-rank.silver { background: linear-gradient(135deg, #9ca3af, #6b7280); color: white; }
+    .top-plate-rank.bronze { background: linear-gradient(135deg, #d97706, #92400e); color: white; }
+    .top-plate-rank.normal { background: var(--card-border); color: var(--text-secondary); }
+    
+    /* Quick Actions */
+    .quick-action-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 1.25rem;
+        background: var(--dark-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+        color: var(--text-primary);
+        text-decoration: none;
+        transition: all 0.2s ease;
+    }
+    
+    .quick-action-btn:hover {
+        background: rgba(99, 102, 241, 0.1);
+        border-color: var(--primary-color);
+        color: var(--primary-color);
+        transform: translateY(-3px);
+    }
+    
+    .quick-action-btn i {
+        font-size: 1.75rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .quick-action-btn span {
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+    
+    /* System Status */
+    .system-status-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid var(--card-border);
+    }
+    
+    .system-status-item:last-child {
+        border-bottom: none;
+    }
+    
+    .system-status-label {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--text-secondary);
+    }
+    
+    .system-status-value {
+        font-weight: 600;
+    }
+    
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+    }
+    
+    .status-dot.online { background: var(--success-color); box-shadow: 0 0 10px var(--success-color); }
+    .status-dot.offline { background: var(--danger-color); }
+    .status-dot.warning { background: var(--warning-color); }
+    
+    /* Settings Preview */
+    .setting-preview {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.5rem 0;
+    }
+    
+    .setting-preview-label {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+    
+    .setting-preview-value {
+        font-weight: 600;
+        color: var(--primary-color);
+    }
+    
+    /* Live Detection Grid */
+    .live-detection-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1rem;
+    }
+    
+    .live-detection-card {
+        background: var(--dark-bg);
+        border-radius: 10px;
+        padding: 1rem;
+        animation: slideIn 0.3s ease;
+    }
+    
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .live-detection-card img {
+        width: 100%;
+        height: 80px;
+        object-fit: cover;
+        border-radius: 6px;
+        margin-bottom: 0.75rem;
+    }
+    
+    /* Hourly Chart */
+    .hourly-bar {
+        display: flex;
+        align-items: flex-end;
+        gap: 3px;
+        height: 100px;
+        padding: 0 0.5rem;
+    }
+    
+    .hourly-bar-item {
+        flex: 1;
+        background: var(--primary-color);
+        border-radius: 3px 3px 0 0;
+        min-height: 4px;
+        transition: height 0.3s ease;
+        position: relative;
+    }
+    
+    .hourly-bar-item:hover {
+        background: var(--secondary-color);
+    }
+    
+    .hourly-bar-item::after {
+        content: attr(data-count);
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 0.6rem;
+        color: var(--text-secondary);
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    }
+    
+    .hourly-bar-item:hover::after {
+        opacity: 1;
+    }
+    
+    .hourly-labels {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.6rem;
+        color: var(--text-secondary);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Stats Row -->
+<div class="row g-4 mb-4">
+    <div class="col-sm-6 col-xl-3">
+        <div class="stat-card" style="color: var(--primary-color);">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <div class="stat-card-value" id="totalDetections">{{ stats.total_detections }}</div>
+                    <div class="stat-card-label">Gesamte Erkennungen</div>
+                    <div class="stat-card-trend up" id="totalTrend">
+                        <i class="fas fa-arrow-up"></i>
+                        <span>+12% diese Woche</span>
+                    </div>
+                </div>
+                <div class="stat-card-icon" style="background: rgba(99, 102, 241, 0.15);">
+                    <i class="fas fa-id-card"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-sm-6 col-xl-3">
+        <div class="stat-card" style="color: var(--success-color);">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <div class="stat-card-value" id="todayDetections">{{ stats.today_detections }}</div>
+                    <div class="stat-card-label">Heute erkannt</div>
+                    <div class="stat-card-trend up" id="todayTrend">
+                        <i class="fas fa-arrow-up"></i>
+                        <span>+5 letzte Stunde</span>
+                    </div>
+                </div>
+                <div class="stat-card-icon" style="background: rgba(16, 185, 129, 0.15);">
+                    <i class="fas fa-calendar-day"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-sm-6 col-xl-3">
+        <div class="stat-card" style="color: var(--warning-color);">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <div class="stat-card-value" id="uniquePlates">{{ stats.unique_plates }}</div>
+                    <div class="stat-card-label">Einzigartige Kennzeichen</div>
+                    <div class="stat-card-trend up">
+                        <i class="fas fa-fingerprint"></i>
+                        <span>Ohne Duplikate</span>
+                    </div>
+                </div>
+                <div class="stat-card-icon" style="background: rgba(245, 158, 11, 0.15);">
+                    <i class="fas fa-fingerprint"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-sm-6 col-xl-3">
+        <div class="stat-card" style="color: var(--secondary-color);">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <div class="stat-card-value" id="streamStatusValue">
+                        {% if stream_status.status == 'running' %}
+                            <span class="text-success">LIVE</span>
+                        {% elif stream_status.status == 'connecting' %}
+                            <span class="text-warning">...</span>
+                        {% else %}
+                            <span class="text-secondary">AUS</span>
+                        {% endif %}
+                    </div>
+                    <div class="stat-card-label">Stream Status</div>
+                    <div class="stat-card-trend">
+                        <i class="fas fa-broadcast-tower"></i>
+                        <span id="streamUptime">{{ stream_status.uptime|default(0) }}s Laufzeit</span>
+                    </div>
+                </div>
+                <div class="stat-card-icon" style="background: rgba(34, 211, 238, 0.15);">
+                    <i class="fas fa-video"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Main Content Row -->
+<div class="row g-4">
+    <!-- Left Column -->
+    <div class="col-xl-8">
+        <!-- Live Stream Preview -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-video"></i>
+                    Live Stream
+                </h5>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-success" id="btnStartStream" onclick="startStream()">
+                        <i class="fas fa-play me-1"></i>Start
+                    </button>
+                    <button class="btn btn-sm btn-danger" id="btnStopStream" onclick="stopStream()" style="display: none;">
+                        <i class="fas fa-stop me-1"></i>Stop
+                    </button>
+                    <a href="{{ url_for('live_view') }}" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-expand me-1"></i>Vollbild
+                    </a>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="stream-preview-container" id="streamContainer">
+                    <img id="streamImage" src="" alt="Stream" style="display: none;">
+                    
+                    <!-- Live Info Overlay -->
+                    <div class="stream-overlay-info" id="streamOverlayInfo" style="display: none;">
+                        <div class="stream-live-badge">
+                            <span class="dot"></span>
+                            LIVE
+                        </div>
+                        <div class="stream-info-badges">
+                            <span class="stream-info-badge">
+                                <i class="fas fa-tachometer-alt"></i>
+                                <span id="streamFPS">0</span> FPS
+                            </span>
+                            <span class="stream-info-badge">
+                                <i class="fas fa-clock"></i>
+                                <span id="streamTime">00:00:00</span>
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <!-- Offline Overlay -->
+                    <div class="stream-offline" id="streamOffline">
+                        <i class="fas fa-video-slash"></i>
+                        <h5>Stream nicht aktiv</h5>
+                        <p class="text-secondary mb-3">Klicken Sie auf Start, um den Stream zu starten</p>
+                        <button class="btn btn-primary" onclick="startStream()">
+                            <i class="fas fa-play me-2"></i>Stream starten
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Charts Row -->
+        <div class="row g-4 mb-4">
+            <!-- Detections Over Time -->
+            <div class="col-lg-8">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-chart-line"></i>
+                            Erkennungen (7 Tage)
+                        </h5>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary active" onclick="setChartRange('week')">Woche</button>
+                            <button class="btn btn-outline-secondary" onclick="setChartRange('month')">Monat</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="detectionsChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Vehicle Types -->
+            <div class="col-lg-4">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-car"></i>
+                            Fahrzeugtypen
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container" style="height: 200px;">
+                            <canvas id="vehicleTypesChart"></canvas>
+                        </div>
+                        <div id="vehicleTypesLegend" class="mt-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Hourly Distribution -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-clock"></i>
+                    Erkennungen nach Uhrzeit (Heute)
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="hourly-bar" id="hourlyBar">
+                    <!-- Filled by JavaScript -->
+                </div>
+                <div class="hourly-labels">
+                    <span>00:00</span>
+                    <span>06:00</span>
+                    <span>12:00</span>
+                    <span>18:00</span>
+                    <span>23:00</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Live Detection Feed -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-bolt"></i>
+                    Live Erkennungen
+                    <span class="badge bg-danger pulse ms-2" id="liveIndicator" style="display: none;">LIVE</span>
+                </h5>
+                <button class="btn btn-sm btn-outline-danger" onclick="clearLiveDetections()">
+                    <i class="fas fa-trash me-1"></i>Leeren
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="live-detection-grid" id="liveDetectionsGrid">
+                    <div class="text-center text-secondary py-4 w-100" id="noLiveDetections">
+                        <i class="fas fa-satellite-dish fa-2x mb-2 opacity-50"></i>
+                        <p class="mb-0">Warte auf Erkennungen...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Right Column -->
+    <div class="col-xl-4">
+        <!-- Quick Actions -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-bolt"></i>
+                    Schnellzugriff
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-2">
+                    <div class="col-6">
+                        <a href="{{ url_for('live_view') }}" class="quick-action-btn">
+                            <i class="fas fa-video text-success"></i>
+                            <span>Live Stream</span>
+                        </a>
+                    </div>
+                    <div class="col-6">
+                        <a href="{{ url_for('test_page') }}" class="quick-action-btn">
+                            <i class="fas fa-upload text-primary"></i>
+                            <span>Bild hochladen</span>
+                        </a>
+                    </div>
+                    <div class="col-6">
+                        <a href="{{ url_for('history') }}" class="quick-action-btn">
+                            <i class="fas fa-history text-warning"></i>
+                            <span>Historie</span>
+                        </a>
+                    </div>
+                    <div class="col-6">
+                        <a href="{{ url_for('settings') }}" class="quick-action-btn">
+                            <i class="fas fa-cog text-info"></i>
+                            <span>Einstellungen</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Recent Activity -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-history"></i>
+                    Letzte Erkennungen
+                </h5>
+                <a href="{{ url_for('history') }}" class="btn btn-sm btn-outline-primary">
+                    Alle anzeigen
+                </a>
+            </div>
+            <div class="card-body p-0">
+                <div class="activity-feed" id="activityFeed">
+                    <!-- Filled by JavaScript -->
+                    <div class="text-center text-secondary py-4" id="noActivity">
+                        <i class="fas fa-inbox fa-2x mb-2 opacity-50"></i>
+                        <p class="mb-0">Noch keine Erkennungen</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Top Plates -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-trophy"></i>
+                    Häufigste Kennzeichen
+                </h5>
+            </div>
+            <div class="card-body" id="topPlatesContainer">
+                {% if stats.top_plates %}
+                    {% for plate, count in stats.top_plates[:5] %}
+                    <div class="top-plate-item">
+                        <div class="top-plate-rank {% if loop.index == 1 %}gold{% elif loop.index == 2 %}silver{% elif loop.index == 3 %}bronze{% else %}normal{% endif %}">
+                            {{ loop.index }}
+                        </div>
+                        <div class="flex-grow-1">
+                            <div class="plate-badge" style="font-size: 0.85rem; padding: 0.25rem 0.5rem;">{{ plate }}</div>
+                        </div>
+                        <span class="badge bg-secondary">{{ count }}x</span>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center text-secondary py-3">
+                        <i class="fas fa-trophy fa-2x mb-2 opacity-50"></i>
+                        <p class="mb-0">Noch keine Daten</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- System Status -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-server"></i>
+                    System Status
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="system-status-item">
+                    <div class="system-status-label">
+                        <span class="status-dot online" id="statusDotStream"></span>
+                        Stream
+                    </div>
+                    <span class="system-status-value" id="systemStreamStatus">
+                        {{ 'Online' if stream_status.status == 'running' else 'Offline' }}
+                    </span>
+                </div>
+                <div class="system-status-item">
+                    <div class="system-status-label">
+                        <span class="status-dot online" id="statusDotModels"></span>
+                        KI-Modelle
+                    </div>
+                    <span class="system-status-value" id="systemModelsStatus">Geladen</span>
+                </div>
+                <div class="system-status-item">
+                    <div class="system-status-label">
+                        <span class="status-dot online" id="statusDotOCR"></span>
+                        OCR Engine
+                    </div>
+                    <span class="system-status-value" id="systemOCRStatus">Bereit</span>
+                </div>
+                <div class="system-status-item">
+                    <div class="system-status-label">
+                        <span class="status-dot" id="statusDotGPU"></span>
+                        GPU
+                    </div>
+                    <span class="system-status-value" id="systemGPUStatus">{{ 'Aktiv' if config.ocr.gpu_enabled else 'CPU-Modus' }}</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Quick Settings -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-sliders-h"></i>
+                    Schnelleinstellungen
+                </h5>
+                <a href="{{ url_for('settings') }}" class="btn btn-sm btn-outline-primary">
+                    <i class="fas fa-cog"></i>
+                </a>
+            </div>
+            <div class="card-body">
+                <!-- Confidence -->
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <label class="form-label mb-0 small">Confidence</label>
+                        <span class="badge bg-primary" id="quickConfidenceValue">{{ (config.detection.confidence_threshold * 100)|round|int }}%</span>
+                    </div>
+                    <input type="range" class="form-range" id="quickConfidence" 
+                           min="10" max="90" step="5"
+                           value="{{ (config.detection.confidence_threshold * 100)|round|int }}"
+                           onchange="updateQuickSetting('confidence', this.value)">
+                </div>
+                
+                <!-- Zoom -->
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <label class="form-label mb-0 small">Zoom-Faktor</label>
+                        <span class="badge bg-primary" id="quickZoomValue">{{ config.detection.zoom_factor }}x</span>
+                    </div>
+                    <input type="range" class="form-range" id="quickZoom" 
+                           min="10" max="50" step="5"
+                           value="{{ (config.detection.zoom_factor * 10)|round|int }}"
+                           onchange="updateQuickSetting('zoom', this.value)">
+                </div>
+                
+                <hr class="my-3">
+                
+                <!-- Toggles -->
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="quickCarDetection"
+                           {{ 'checked' if config.detection.car_detection_enabled else '' }}
+                           onchange="updateQuickToggle('car_detection_enabled', this.checked)">
+                    <label class="form-check-label small" for="quickCarDetection">
+                        Fahrzeugerkennung
+                    </label>
+                </div>
+                
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="quickZoomEnabled"
+                           {{ 'checked' if config.detection.zoom_enabled else '' }}
+                           onchange="updateQuickToggle('zoom_enabled', this.checked)">
+                    <label class="form-check-label small" for="quickZoomEnabled">
+                        Auto-Zoom
+                    </label>
+                </div>
+                
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="quickSavePlates"
+                           {{ 'checked' if config.detection.save_detected_plates else '' }}
+                           onchange="updateQuickToggle('save_detected_plates', this.checked)">
+                    <label class="form-check-label small" for="quickSavePlates">
+                        Bilder speichern
+                    </label>
+                </div>
+                
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="quickFilterDuplicates"
+                           {{ 'checked' if config.history.filter_duplicates else '' }}
+                           onchange="updateHistoryToggle('filter_duplicates', this.checked)">
+                    <label class="form-check-label small" for="quickFilterDuplicates">
+                        Duplikate filtern
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // ============================================
+    // STATE & INITIALIZATION
+    // ============================================
+    
+    let detectionsChart = null;
+    let vehicleTypesChart = null;
+    let streamActive = false;
+    let sessionDetections = [];
+    let activityData = [];
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        initCharts();
+        loadActivityFeed();
+        loadSystemStatus();
+        generateHourlyBars();
+        checkStreamStatus();
+        updateLastUpdateTime();
+        
+        // Refresh every 30 seconds
+        setInterval(refreshDashboard, 30000);
+        
+        // Update time every second
+        setInterval(updateLastUpdateTime, 1000);
+    });
+    
+    // ============================================
+    // STREAM HANDLING
+    // ============================================
+    
+    function checkStreamStatus() {
+        fetch('/api/stream/status')
+            .then(response => response.json())
+            .then(data => {
+                updateStreamUI(data);
+            });
+    }
+    
+    function updateStreamUI(data) {
+        streamActive = data.status === 'running';
+        
+        const startBtn = document.getElementById('btnStartStream');
+        const stopBtn = document.getElementById('btnStopStream');
+        const streamImage = document.getElementById('streamImage');
+        const streamOffline = document.getElementById('streamOffline');
+        const streamOverlay = document.getElementById('streamOverlayInfo');
+        const liveIndicator = document.getElementById('liveIndicator');
+        
+        if (streamActive) {
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'inline-block';
+            streamImage.style.display = 'block';
+            streamImage.src = '/api/stream/feed?' + Date.now();
+            streamOffline.style.display = 'none';
+            streamOverlay.style.display = 'flex';
+            liveIndicator.style.display = 'inline-block';
+            
+            document.getElementById('streamFPS').textContent = data.fps || 0;
+            
+            if (data.uptime) {
+                const h = Math.floor(data.uptime / 3600);
+                const m = Math.floor((data.uptime % 3600) / 60);
+                const s = data.uptime % 60;
+                document.getElementById('streamTime').textContent = 
+                    `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                document.getElementById('streamUptime').textContent = `${data.uptime}s Laufzeit`;
+            }
+            
+            document.getElementById('streamStatusValue').innerHTML = '<span class="text-success">LIVE</span>';
+            document.getElementById('statusDotStream').className = 'status-dot online';
+            document.getElementById('systemStreamStatus').textContent = 'Online';
+        } else {
+            startBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+            streamImage.style.display = 'none';
+            streamOffline.style.display = 'flex';
+            streamOverlay.style.display = 'none';
+            liveIndicator.style.display = 'none';
+            
+            document.getElementById('streamStatusValue').innerHTML = '<span class="text-secondary">AUS</span>';
+            document.getElementById('statusDotStream').className = 'status-dot offline';
+            document.getElementById('systemStreamStatus').textContent = 'Offline';
+        }
+    }
+    
+    function startStream() {
+        fetch('/api/stream/start', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('Stream', 'Stream wird gestartet...', 'success');
+                    setTimeout(checkStreamStatus, 1000);
+                } else {
+                    showToast('Fehler', data.status?.error || 'Stream konnte nicht gestartet werden', 'danger');
+                }
+            });
+    }
+    
+    function stopStream() {
+        fetch('/api/stream/stop', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                showToast('Stream', 'Stream gestoppt', 'warning');
+                checkStreamStatus();
+            });
+    }
+    
+    // Listen for stream status changes
+    window.addEventListener('streamStatusChanged', function(e) {
+        checkStreamStatus();
+    });
+    
+    // ============================================
+    // CHARTS
+    // ============================================
+    
+    function initCharts() {
+        // Detections Chart
+        const detectionsCtx = document.getElementById('detectionsChart').getContext('2d');
+        detectionsChart = new Chart(detectionsCtx, {
+            type: 'line',
+            data: {
+                labels: ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'],
+                datasets: [{
+                    label: 'Erkennungen',
+                    data: [12, 19, 8, 25, 15, 22, {{ stats.today_detections }}],
+                    borderColor: '#6366f1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointBackgroundColor: '#6366f1',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#94a3b8' }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#94a3b8' }
+                    }
+                },
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                }
+            }
+        });
+        
+        // Vehicle Types Chart
+        const vehicleCtx = document.getElementById('vehicleTypesChart').getContext('2d');
+        
+        const vehicleTypes = {{ stats.vehicle_types|tojson|safe if stats.vehicle_types else '{}' }};
+        const labels = Object.keys(vehicleTypes).length > 0 ? Object.keys(vehicleTypes) : ['PKW', 'LKW', 'Bus', 'Motorrad'];
+        const data = Object.keys(vehicleTypes).length > 0 ? Object.values(vehicleTypes) : [0, 0, 0, 0];
+        
+        vehicleTypesChart = new Chart(vehicleCtx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: [
+                        '#6366f1',
+                        '#f59e0b',
+                        '#10b981',
+                        '#ef4444',
+                        '#94a3b8'
+                    ],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                cutout: '70%'
+            }
+        });
+        
+        // Generate legend
+        const legendContainer = document.getElementById('vehicleTypesLegend');
+        const colors = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#94a3b8'];
+        legendContainer.innerHTML = labels.map((label, i) => `
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <span style="width: 12px; height: 12px; border-radius: 3px; background: ${colors[i]};"></span>
+                <span class="small text-secondary">${label}</span>
+                <span class="small fw-bold ms-auto">${data[i]}</span>
+            </div>
+        `).join('');
+    }
+    
+    function setChartRange(range) {
+        // Update button states
+        document.querySelectorAll('.btn-group .btn').forEach(btn => btn.classList.remove('active'));
+        event.target.classList.add('active');
+        
+        // Update chart data based on range
+        if (range === 'week') {
+            detectionsChart.data.labels = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+            detectionsChart.data.datasets[0].data = [12, 19, 8, 25, 15, 22, {{ stats.today_detections }}];
+        } else {
+            detectionsChart.data.labels = ['Woche 1', 'Woche 2', 'Woche 3', 'Woche 4'];
+            detectionsChart.data.datasets[0].data = [45, 62, 58, 73];
+        }
+        detectionsChart.update();
+    }
+    
+    // ============================================
+    // HOURLY BARS
+    // ============================================
+    
+    function generateHourlyBars() {
+        const container = document.getElementById('hourlyBar');
+        const now = new Date().getHours();
+        
+        // Generate random data for demo (should come from backend)
+        const hourlyData = [];
+        for (let i = 0; i < 24; i++) {
+            hourlyData.push(i <= now ? Math.floor(Math.random() * 20) : 0);
+        }
+        
+        const max = Math.max(...hourlyData, 1);
+        
+        container.innerHTML = hourlyData.map((count, hour) => {
+            const height = (count / max) * 100;
+            const isCurrentHour = hour === now;
+            return `
+                <div class="hourly-bar-item" 
+                     style="height: ${Math.max(height, 4)}%; ${isCurrentHour ? 'background: var(--secondary-color);' : ''}"
+                     data-count="${count}"
+                     title="${hour}:00 - ${count} Erkennungen">
+                </div>
+            `;
+        }).join('');
+    }
+    
+    // ============================================
+    // ACTIVITY FEED
+    // ============================================
+    
+    function loadActivityFeed() {
+        fetch('/api/history?limit=10')
+            .then(response => response.json())
+            .then(data => {
+                activityData = data.entries || [];
+                renderActivityFeed();
+            });
+    }
+    
+    function renderActivityFeed() {
+        const container = document.getElementById('activityFeed');
+        const noActivity = document.getElementById('noActivity');
+        
+        if (activityData.length === 0) {
+            container.innerHTML = '';
+            noActivity.style.display = 'block';
+            container.appendChild(noActivity);
+            return;
+        }
+        
+        noActivity.style.display = 'none';
+        
+        container.innerHTML = activityData.map(entry => {
+            const vType = (entry.vehicle_type || 'unknown').toLowerCase();
+            const iconClass = vType.includes('pkw') || vType.includes('car') ? 'car' :
+                             vType.includes('lkw') || vType.includes('truck') ? 'truck' :
+                             vType.includes('bus') ? 'bus' :
+                             vType.includes('motor') ? 'motorcycle' : 'unknown';
+            
+            const iconName = iconClass === 'car' ? 'car' :
+                            iconClass === 'truck' ? 'truck' :
+                            iconClass === 'bus' ? 'bus' :
+                            iconClass === 'motorcycle' ? 'motorcycle' : 'car';
+            
+            const timeAgo = formatTimeAgo(entry.timestamp);
+            
+            return `
+                <div class="activity-item">
+                    <div class="activity-icon ${iconClass}">
+                        <i class="fas fa-${iconName}"></i>
+                    </div>
+                    <div class="activity-content">
+                        <div class="activity-plate">${entry.plate_text || 'Unbekannt'}</div>
+                        <div class="activity-meta">
+                            <span><i class="fas fa-${iconName} me-1"></i>${entry.vehicle_type || 'Unbekannt'}</span>
+                            ${entry.vehicle_color && entry.vehicle_color !== 'Unbekannt' ? 
+                                `<span><i class="fas fa-palette me-1"></i>${entry.vehicle_color}</span>` : ''}
+                            <span><i class="fas fa-clock me-1"></i>${timeAgo}</span>
+                        </div>
+                    </div>
+                    ${entry.plate_image ? `
+                        <img src="data:image/jpeg;base64,${entry.plate_image}" 
+                             class="activity-image" 
+                             onclick="showImageModal(this.src)"
+                             alt="Kennzeichen">
+                    ` : ''}
+                </div>
+            `;
+        }).join('');
+    }
+    
+    function formatTimeAgo(timestamp) {
+        if (!timestamp) return 'Unbekannt';
+        
+        const now = new Date();
+        const then = new Date(timestamp);
+        const diff = Math.floor((now - then) / 1000);
+        
+        if (diff < 60) return 'Gerade eben';
+        if (diff < 3600) return `${Math.floor(diff / 60)} Min.`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)} Std.`;
+        return `${Math.floor(diff / 86400)} Tage`;
+    }
+    
+    // ============================================
+    // LIVE DETECTIONS
+    // ============================================
+    
+    window.addEventListener('newDetection', function(e) {
+        addLiveDetection(e.detail);
+        
+        // Also add to activity feed
+        activityData.unshift(e.detail);
+        if (activityData.length > 10) activityData.pop();
+        renderActivityFeed();
+        
+        // Update stats
+        updateStats();
+    });
+    
+    function addLiveDetection(data) {
+        const grid = document.getElementById('liveDetectionsGrid');
+        const noDetections = document.getElementById('noLiveDetections');
+        
+        if (noDetections) {
+            noDetections.style.display = 'none';
+        }
+        
+        const html = `
+            <div class="live-detection-card">
+                ${data.plate_image 
+                    ? `<img src="data:image/jpeg;base64,${data.plate_image}" alt="Kennzeichen">`
+                    : `<div style="height: 80px; background: var(--card-bg); border-radius: 6px; display: flex; align-items: center; justify-content: center; margin-bottom: 0.75rem;">
+                         <i class="fas fa-id-card fa-2x text-secondary opacity-50"></i>
+                       </div>`
+                }
+                <div class="plate-badge mb-2" style="font-size: 0.85rem;">${data.plate_text || 'Unbekannt'}</div>
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-secondary">
+                        <i class="fas fa-car me-1"></i>${data.vehicle_type || 'Unbekannt'}
+                    </small>
+                    <span class="confidence-badge ${data.confidence >= 0.8 ? 'confidence-high' : data.confidence >= 0.5 ? 'confidence-medium' : 'confidence-low'}">
+                        ${data.confidence ? Math.round(data.confidence * 100) : 0}%
+                    </span>
+                </div>
+            </div>
+        `;
+        
+        grid.insertAdjacentHTML('afterbegin', html);
+        
+        // Limit to 8 items
+        while (grid.children.length > 8) {
+            grid.removeChild(grid.lastChild);
+        }
+        
+        sessionDetections.unshift(data);
+    }
+    
+    function clearLiveDetections() {
+        const grid = document.getElementById('liveDetectionsGrid');
+        grid.innerHTML = `
+            <div class="text-center text-secondary py-4 w-100" id="noLiveDetections">
+                <i class="fas fa-satellite-dish fa-2x mb-2 opacity-50"></i>
+                <p class="mb-0">Warte auf Erkennungen...</p>
+            </div>
+        `;
+        sessionDetections = [];
+    }
+    
+    // ============================================
+    // SYSTEM STATUS
+    // ============================================
+    
+    function loadSystemStatus() {
+        fetch('/api/models/status')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('statusDotModels').className = 
+                    `status-dot ${data.coco_model && data.license_model ? 'online' : 'offline'}`;
+                document.getElementById('systemModelsStatus').textContent = 
+                    data.coco_model && data.license_model ? 'Geladen' : 'Fehler';
+                
+                document.getElementById('statusDotOCR').className = 
+                    `status-dot ${data.ocr_reader ? 'online' : 'offline'}`;
+                document.getElementById('systemOCRStatus').textContent = 
+                    data.ocr_reader ? 'Bereit' : 'Nicht geladen';
+            });
+    }
+    
+    // ============================================
+    // QUICK SETTINGS
+    // ============================================
+    
+    document.getElementById('quickConfidence').addEventListener('input', function() {
+        document.getElementById('quickConfidenceValue').textContent = this.value + '%';
+    });
+    
+    document.getElementById('quickZoom').addEventListener('input', function() {
+        document.getElementById('quickZoomValue').textContent = (this.value / 10).toFixed(1) + 'x';
+    });
+    
+    function updateQuickSetting(type, value) {
+        let data = {};
+        
+        if (type === 'confidence') {
+            data.confidence_threshold = value / 100;
+        } else if (type === 'zoom') {
+            data.zoom_factor = value / 10;
+        }
+        
+        fetch('/api/config/detection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Gespeichert', 'Einstellung aktualisiert', 'success');
+            }
+        });
+    }
+    
+    function updateQuickToggle(key, value) {
+        const data = {};
+        data[key] = value;
+        
+        fetch('/api/config/detection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Gespeichert', 'Einstellung aktualisiert', 'success');
+            }
+        });
+    }
+    
+    function updateHistoryToggle(key, value) {
+        const data = {};
+        data[key] = value;
+        
+        fetch('/api/config/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Gespeichert', 'Einstellung aktualisiert', 'success');
+            }
+        });
+    }
+    
+    // ============================================
+    // REFRESH & HELPERS
+    // ============================================
+    
+    function refreshDashboard() {
+        checkStreamStatus();
+        loadSystemStatus();
+        updateStats();
+    }
+    
+    function updateStats() {
+        fetch('/api/history/statistics')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('totalDetections').textContent = data.total_detections || 0;
+                document.getElementById('todayDetections').textContent = data.today_detections || 0;
+                document.getElementById('uniquePlates').textContent = data.unique_plates || 0;
+                
+                // Update vehicle chart
+                if (data.vehicle_types && Object.keys(data.vehicle_types).length > 0) {
+                    vehicleTypesChart.data.labels = Object.keys(data.vehicle_types);
+                    vehicleTypesChart.data.datasets[0].data = Object.values(data.vehicle_types);
+                    vehicleTypesChart.update();
+                }
+            });
+    }
+    
+    function updateLastUpdateTime() {
+        const now = new Date();
+        document.getElementById('lastUpdateTime').textContent = 
+            now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+    
+    function showImageModal(src) {
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.innerHTML = `
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content" style="background: var(--card-bg);">
+                    <div class="modal-body text-center p-2">
+                        <img src="${src}" class="img-fluid rounded">
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        const bsModal = new bootstrap.Modal(modal);
+        bsModal.show();
+        modal.addEventListener('hidden.bs.modal', () => modal.remove());
+    }
+    
+    // Stream status polling
+    setInterval(checkStreamStatus, 5000);
+</script>
+{% endblock %}

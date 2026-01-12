@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}500 - Serverfehler{% endblock %}
+
+{% block page_title %}Fehler 500{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 text-center py-5">
+        <div class="mb-4">
+            <i class="fas fa-server fa-5x text-danger"></i>
+        </div>
+        <h1 class="display-1 fw-bold text-danger">500</h1>
+        <h3 class="mb-3">Interner Serverfehler</h3>
+        <p class="text-secondary mb-4">
+            Es ist ein unerwarteter Fehler aufgetreten. Bitte versuchen Sie es später erneut.
+        </p>
+        <div class="d-flex gap-3 justify-content-center">
+            <a href="{{ url_for('dashboard') }}" class="btn btn-primary">
+                <i class="fas fa-home me-2"></i>Zum Dashboard
+            </a>
+            <button onclick="location.reload()" class="btn btn-outline-secondary">
+                <i class="fas fa-redo me-2"></i>Neu laden
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}

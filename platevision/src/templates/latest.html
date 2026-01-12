@@ -1,0 +1,703 @@
+{% extends "base.html" %}
+
+{% block title %}Letzte Erkennung - PlateVision{% endblock %}
+
+{% block page_title %}
+<i class="fas fa-car me-2"></i>Letzte Erkennung
+{% endblock %}
+
+{% block header_actions %}
+<div class="d-flex align-items-center gap-2">
+    <span class="badge bg-dark" id="autoRefreshBadge">
+        <i class="fas fa-sync-alt me-1"></i>
+        Auto-Refresh: <span id="refreshCountdown">5</span>s
+    </span>
+    <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox" id="autoRefreshToggle" checked>
+        <label class="form-check-label small" for="autoRefreshToggle">Auto</label>
+    </div>
+    <button class="btn btn-sm btn-outline-primary" onclick="loadLatestDetection()">
+        <i class="fas fa-sync-alt"></i>
+    </button>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .latest-container {
+        max-width: 1000px;
+        margin: 0 auto;
+    }
+    
+    .latest-card {
+        background: var(--card-bg);
+        border: 2px solid var(--card-border);
+        border-radius: 20px;
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+    
+    .latest-card.new-detection {
+        border-color: var(--success-color);
+        box-shadow: 0 0 30px rgba(16, 185, 129, 0.3);
+    }
+    
+    .latest-header {
+        background: linear-gradient(135deg, var(--primary-color), #4f46e5);
+        padding: 1.5rem 2rem;
+        text-align: center;
+    }
+    
+    .latest-plate {
+        font-family: 'Courier New', monospace;
+        font-size: 3rem;
+        font-weight: 800;
+        letter-spacing: 0.15em;
+        color: white;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        margin-bottom: 0.5rem;
+    }
+    
+    .latest-timestamp {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 1rem;
+    }
+    
+    .latest-body {
+        padding: 2rem;
+    }
+    
+    .latest-images {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        margin-bottom: 2rem;
+    }
+    
+    @media (max-width: 768px) {
+        .latest-images {
+            grid-template-columns: 1fr;
+        }
+        
+        .latest-plate {
+            font-size: 2rem;
+        }
+    }
+    
+    .latest-image-box {
+        background: #000;
+        border-radius: 12px;
+        overflow: hidden;
+        position: relative;
+    }
+    
+    .latest-image-box img {
+        width: 100%;
+        height: 250px;
+        object-fit: contain;
+    }
+    
+    .latest-image-label {
+        position: absolute;
+        top: 0.75rem;
+        left: 0.75rem;
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(5px);
+        padding: 0.35rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    
+    .latest-image-placeholder {
+        height: 250px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: var(--dark-bg);
+    }
+    
+    .latest-image-placeholder i {
+        font-size: 4rem;
+        color: var(--text-secondary);
+        opacity: 0.3;
+        margin-bottom: 1rem;
+    }
+    
+    .latest-details {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+    }
+    
+    @media (max-width: 576px) {
+        .latest-details {
+            grid-template-columns: 1fr;
+        }
+    }
+    
+    .latest-detail-item {
+        background: var(--dark-bg);
+        border-radius: 12px;
+        padding: 1.25rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    
+    .latest-detail-icon {
+        width: 50px;
+        height: 50px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+    }
+    
+    .latest-detail-icon.primary { background: rgba(99, 102, 241, 0.15); color: var(--primary-color); }
+    .latest-detail-icon.success { background: rgba(16, 185, 129, 0.15); color: var(--success-color); }
+    .latest-detail-icon.warning { background: rgba(245, 158, 11, 0.15); color: var(--warning-color); }
+    .latest-detail-icon.info { background: rgba(34, 211, 238, 0.15); color: var(--secondary-color); }
+    .latest-detail-icon.danger { background: rgba(239, 68, 68, 0.15); color: var(--danger-color); }
+    
+    .latest-detail-content {
+        flex: 1;
+    }
+    
+    .latest-detail-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    
+    .latest-detail-value {
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+    
+    .no-detection {
+        text-align: center;
+        padding: 4rem 2rem;
+    }
+    
+    .no-detection i {
+        font-size: 6rem;
+        color: var(--text-secondary);
+        opacity: 0.2;
+        margin-bottom: 1.5rem;
+    }
+    
+    /* API Info Section */
+    .api-section {
+        background: var(--dark-bg);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-top: 1.5rem;
+    }
+    
+    .api-endpoint {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.75rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    
+    .api-method {
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        font-weight: 700;
+    }
+    
+    .api-method.get { background: rgba(16, 185, 129, 0.2); color: var(--success-color); }
+    
+    .api-url {
+        flex: 1;
+        font-family: monospace;
+        font-size: 0.85rem;
+        word-break: break-all;
+    }
+    
+    .copy-btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+    }
+    
+    /* Pulse animation for new detection */
+    @keyframes pulse-border {
+        0%, 100% { border-color: var(--success-color); }
+        50% { border-color: var(--primary-color); }
+    }
+    
+    .latest-card.new-detection {
+        animation: pulse-border 2s ease infinite;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="latest-container">
+    <!-- Main Detection Card -->
+    <div class="latest-card" id="latestCard">
+        <div id="latestContent">
+            <!-- Loading State -->
+            <div class="text-center py-5" id="loadingState">
+                <div class="spinner-border text-primary mb-3"></div>
+                <p class="text-secondary">Lade letzte Erkennung...</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Home Assistant Integration -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h5 class="card-title mb-0">
+                <i class="fas fa-home text-info me-2"></i>
+                Home Assistant Integration
+            </h5>
+        </div>
+        <div class="card-body">
+            <p class="text-secondary mb-3">
+                Verwenden Sie diese API-Endpunkte, um die letzte Erkennung in Home Assistant einzubinden.
+            </p>
+            
+            <div class="api-section">
+                <h6 class="mb-3"><i class="fas fa-code me-2"></i>API Endpunkte</h6>
+                
+                <!-- Latest Detection JSON -->
+                <div class="api-endpoint">
+                    <span class="api-method get">GET</span>
+                    <code class="api-url" id="apiLatestUrl">/api/latest</code>
+                    <button class="btn btn-sm btn-outline-primary copy-btn" onclick="copyToClipboard('apiLatestUrl')">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+                
+                <!-- Plate Text Only -->
+                <div class="api-endpoint">
+                    <span class="api-method get">GET</span>
+                    <code class="api-url" id="apiPlateTextUrl">/api/latest/plate</code>
+                    <button class="btn btn-sm btn-outline-primary copy-btn" onclick="copyToClipboard('apiPlateTextUrl')">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+                
+                <!-- Plate Image -->
+                <div class="api-endpoint">
+                    <span class="api-method get">GET</span>
+                    <code class="api-url" id="apiPlateImageUrl">/api/latest/plate/image</code>
+                    <button class="btn btn-sm btn-outline-primary copy-btn" onclick="copyToClipboard('apiPlateImageUrl')">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+                
+                <!-- Vehicle Image -->
+                <div class="api-endpoint">
+                    <span class="api-method get">GET</span>
+                    <code class="api-url" id="apiVehicleImageUrl">/api/latest/vehicle/image</code>
+                    <button class="btn btn-sm btn-outline-primary copy-btn" onclick="copyToClipboard('apiVehicleImageUrl')">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Home Assistant YAML -->
+            <div class="api-section mt-3">
+                <h6 class="mb-3">
+                    <i class="fas fa-file-code me-2"></i>
+                    Home Assistant configuration.yaml
+                </h6>
+                
+                <div class="position-relative">
+                    <pre class="bg-dark p-3 rounded" style="font-size: 0.8rem; overflow-x: auto;"><code id="haYamlConfig"># PlateVision Integration
+
+# REST Sensor für Kennzeichen-Text
+sensor:
+  - platform: rest
+    name: "Letztes Kennzeichen"
+    resource: http://<PLATEVISION_IP>:5000/api/latest/plate
+    value_template: "{{ value_json.plate_text }}"
+    scan_interval: 10
+    json_attributes:
+      - confidence
+      - vehicle_type
+      - vehicle_color
+      - timestamp
+
+  - platform: rest
+    name: "Kennzeichen Details"
+    resource: http://<PLATEVISION_IP>:5000/api/latest
+    value_template: "{{ value_json.plate_text }}"
+    scan_interval: 10
+    json_attributes:
+      - confidence
+      - vehicle_type
+      - vehicle_color
+      - timestamp
+      - source
+
+# Kamera für Kennzeichen-Bild
+camera:
+  - platform: generic
+    name: "Letztes Kennzeichen Bild"
+    still_image_url: http://<PLATEVISION_IP>:5000/api/latest/plate/image
+    verify_ssl: false
+
+  - platform: generic
+    name: "Letztes Fahrzeug Bild"
+    still_image_url: http://<PLATEVISION_IP>:5000/api/latest/vehicle/image
+    verify_ssl: false
+
+# Optional: MJPEG Stream
+camera:
+  - platform: mjpeg
+    name: "PlateVision Live"
+    mjpeg_url: http://<PLATEVISION_IP>:5000/api/stream/feed
+    verify_ssl: false</code></pre>
+                    <button class="btn btn-sm btn-outline-primary position-absolute" style="top: 0.5rem; right: 0.5rem;" onclick="copyYamlConfig()">
+                        <i class="fas fa-copy me-1"></i>Kopieren
+                    </button>
+                </div>
+                
+                <div class="alert alert-info mt-3 mb-0">
+                    <i class="fas fa-info-circle me-2"></i>
+                    Ersetzen Sie <code>&lt;PLATEVISION_IP&gt;</code> durch die IP-Adresse Ihres PlateVision Servers 
+                    (z.B. <code id="serverIp">{{ request.host }}</code>).
+                </div>
+            </div>
+            
+            <!-- Lovelace Card Example -->
+            <div class="api-section mt-3">
+                <h6 class="mb-3">
+                    <i class="fas fa-th-large me-2"></i>
+                    Lovelace Dashboard Card
+                </h6>
+                
+                <div class="position-relative">
+                    <pre class="bg-dark p-3 rounded" style="font-size: 0.8rem; overflow-x: auto;"><code id="lovelaceConfig">type: vertical-stack
+cards:
+  - type: picture-entity
+    entity: camera.letztes_fahrzeug_bild
+    name: Letztes erkanntes Fahrzeug
+    show_state: false
+    
+  - type: entities
+    title: Kennzeichen Details
+    entities:
+      - entity: sensor.letztes_kennzeichen
+        name: Kennzeichen
+        icon: mdi:car
+      - type: attribute
+        entity: sensor.letztes_kennzeichen
+        attribute: vehicle_type
+        name: Fahrzeugtyp
+        icon: mdi:car-info
+      - type: attribute
+        entity: sensor.letztes_kennzeichen
+        attribute: vehicle_color
+        name: Farbe
+        icon: mdi:palette
+      - type: attribute
+        entity: sensor.letztes_kennzeichen
+        attribute: confidence
+        name: Konfidenz
+        icon: mdi:percent
+        
+  - type: picture-entity
+    entity: camera.letztes_kennzeichen_bild
+    name: Kennzeichen
+    show_state: false</code></pre>
+                    <button class="btn btn-sm btn-outline-primary position-absolute" style="top: 0.5rem; right: 0.5rem;" onclick="copyLovelaceConfig()">
+                        <i class="fas fa-copy me-1"></i>Kopieren
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let autoRefresh = true;
+    let refreshInterval = null;
+    let countdown = 5;
+    let lastDetectionId = null;
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        loadLatestDetection();
+        startAutoRefresh();
+        updateApiUrls();
+        
+        // Listen for new detections via WebSocket
+        socket.on('new_detection', function(data) {
+            displayDetection(data);
+            highlightNewDetection();
+        });
+    });
+    
+    // Auto Refresh Toggle
+    document.getElementById('autoRefreshToggle').addEventListener('change', function() {
+        autoRefresh = this.checked;
+        if (autoRefresh) {
+            startAutoRefresh();
+        } else {
+            stopAutoRefresh();
+        }
+    });
+    
+    function startAutoRefresh() {
+        countdown = 5;
+        updateCountdown();
+        refreshInterval = setInterval(function() {
+            countdown--;
+            updateCountdown();
+            if (countdown <= 0) {
+                loadLatestDetection();
+                countdown = 5;
+            }
+        }, 1000);
+    }
+    
+    function stopAutoRefresh() {
+        if (refreshInterval) {
+            clearInterval(refreshInterval);
+            refreshInterval = null;
+        }
+        document.getElementById('refreshCountdown').textContent = '--';
+    }
+    
+    function updateCountdown() {
+        document.getElementById('refreshCountdown').textContent = countdown;
+    }
+    
+    function loadLatestDetection() {
+        fetch('/api/latest')
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showNoDetection();
+                } else {
+                    displayDetection(data);
+                    
+                    // Check if it's a new detection
+                    if (lastDetectionId !== data.id) {
+                        lastDetectionId = data.id;
+                        if (lastDetectionId !== null) {
+                            highlightNewDetection();
+                        }
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error loading latest detection:', error);
+                showNoDetection();
+            });
+    }
+    
+    function displayDetection(data) {
+        const formatTimestamp = (ts) => {
+            if (!ts) return 'Unbekannt';
+            const date = new Date(ts);
+            return date.toLocaleString('de-DE', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        };
+        
+        const getTimeAgo = (ts) => {
+            if (!ts) return '';
+            const now = new Date();
+            const then = new Date(ts);
+            const diff = Math.floor((now - then) / 1000);
+            
+            if (diff < 60) return `vor ${diff} Sekunden`;
+            if (diff < 3600) return `vor ${Math.floor(diff / 60)} Minuten`;
+            if (diff < 86400) return `vor ${Math.floor(diff / 3600)} Stunden`;
+            return `vor ${Math.floor(diff / 86400)} Tagen`;
+        };
+        
+        const confidenceClass = data.confidence >= 0.8 ? 'success' : 
+                               data.confidence >= 0.5 ? 'warning' : 'danger';
+        
+        const html = `
+            <!-- Header -->
+            <div class="latest-header">
+                <div class="latest-plate">${data.plate_text || 'UNBEKANNT'}</div>
+                <div class="latest-timestamp">
+                    <i class="fas fa-clock me-1"></i>
+                    ${formatTimestamp(data.timestamp)}
+                    <span class="ms-2 opacity-75">(${getTimeAgo(data.timestamp)})</span>
+                </div>
+            </div>
+            
+            <!-- Body -->
+            <div class="latest-body">
+                <!-- Images -->
+                <div class="latest-images">
+                    <!-- Vehicle Image -->
+                    <div class="latest-image-box">
+                        ${data.vehicle_image 
+                            ? `<img src="data:image/jpeg;base64,${data.vehicle_image}" alt="Fahrzeug">
+                               <span class="latest-image-label"><i class="fas fa-car me-1"></i>Fahrzeug</span>`
+                            : `<div class="latest-image-placeholder">
+                                   <i class="fas fa-car"></i>
+                                   <span class="text-secondary">Kein Fahrzeugbild</span>
+                               </div>`
+                        }
+                    </div>
+                    
+                    <!-- Plate Image -->
+                    <div class="latest-image-box">
+                        ${data.plate_image 
+                            ? `<img src="data:image/jpeg;base64,${data.plate_image}" alt="Kennzeichen">
+                               <span class="latest-image-label"><i class="fas fa-id-card me-1"></i>Kennzeichen</span>`
+                            : `<div class="latest-image-placeholder">
+                                   <i class="fas fa-id-card"></i>
+                                   <span class="text-secondary">Kein Kennzeichenbild</span>
+                               </div>`
+                        }
+                    </div>
+                </div>
+                
+                <!-- Details Grid -->
+                <div class="latest-details">
+                    <div class="latest-detail-item">
+                        <div class="latest-detail-icon primary">
+                            <i class="fas fa-car"></i>
+                        </div>
+                        <div class="latest-detail-content">
+                            <div class="latest-detail-label">Fahrzeugtyp</div>
+                            <div class="latest-detail-value">${data.vehicle_type || 'Unbekannt'}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="latest-detail-item">
+                        <div class="latest-detail-icon warning">
+                            <i class="fas fa-palette"></i>
+                        </div>
+                        <div class="latest-detail-content">
+                            <div class="latest-detail-label">Fahrzeugfarbe</div>
+                            <div class="latest-detail-value">${data.vehicle_color || 'Unbekannt'}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="latest-detail-item">
+                        <div class="latest-detail-icon ${confidenceClass}">
+                            <i class="fas fa-percentage"></i>
+                        </div>
+                        <div class="latest-detail-content">
+                            <div class="latest-detail-label">Konfidenz</div>
+                            <div class="latest-detail-value">${data.confidence ? (data.confidence * 100).toFixed(1) + '%' : 'N/A'}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="latest-detail-item">
+                        <div class="latest-detail-icon info">
+                            <i class="fas fa-broadcast-tower"></i>
+                        </div>
+                        <div class="latest-detail-content">
+                            <div class="latest-detail-label">Quelle</div>
+                            <div class="latest-detail-value">
+                                ${data.source === 'rtsp_stream' ? 'RTSP Stream' :
+                                  data.source === 'image_upload' ? 'Bild Upload' :
+                                  data.source === 'video_upload' ? 'Video' : data.source || 'Unbekannt'}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Actions -->
+                <div class="d-flex gap-2 mt-4 justify-content-center">
+                    <a href="{{ url_for('history') }}" class="btn btn-outline-primary">
+                        <i class="fas fa-history me-2"></i>Alle Erkennungen
+                    </a>
+                    <button class="btn btn-outline-success" onclick="copyPlateText('${data.plate_text}')">
+                        <i class="fas fa-copy me-2"></i>Kennzeichen kopieren
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        document.getElementById('latestContent').innerHTML = html;
+    }
+    
+    function showNoDetection() {
+        document.getElementById('latestContent').innerHTML = `
+            <div class="no-detection">
+                <i class="fas fa-car-side"></i>
+                <h4>Keine Erkennung vorhanden</h4>
+                <p class="text-secondary mb-4">
+                    Es wurde noch kein Kennzeichen erkannt. Starten Sie den Live-Stream oder laden Sie ein Bild hoch.
+                </p>
+                <div class="d-flex gap-2 justify-content-center">
+                    <a href="{{ url_for('live_view') }}" class="btn btn-primary">
+                        <i class="fas fa-video me-2"></i>Live Stream
+                    </a>
+                    <a href="{{ url_for('test_page') }}" class="btn btn-outline-primary">
+                        <i class="fas fa-upload me-2"></i>Bild hochladen
+                    </a>
+                </div>
+            </div>
+        `;
+    }
+    
+    function highlightNewDetection() {
+        const card = document.getElementById('latestCard');
+        card.classList.add('new-detection');
+        setTimeout(() => {
+            card.classList.remove('new-detection');
+        }, 3000);
+    }
+    
+    function updateApiUrls() {
+        const baseUrl = window.location.origin;
+        document.getElementById('apiLatestUrl').textContent = baseUrl + '/api/latest';
+        document.getElementById('apiPlateTextUrl').textContent = baseUrl + '/api/latest/plate';
+        document.getElementById('apiPlateImageUrl').textContent = baseUrl + '/api/latest/plate/image';
+        document.getElementById('apiVehicleImageUrl').textContent = baseUrl + '/api/latest/vehicle/image';
+    }
+    
+    function copyToClipboard(elementId) {
+        const text = document.getElementById(elementId).textContent;
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Kopiert', 'URL in Zwischenablage kopiert', 'success');
+        });
+    }
+    
+    function copyPlateText(plate) {
+        if (!plate) return;
+        navigator.clipboard.writeText(plate).then(() => {
+            showToast('Kopiert', `"${plate}" kopiert`, 'success');
+        });
+    }
+    
+    function copyYamlConfig() {
+        const config = document.getElementById('haYamlConfig').textContent;
+        const serverIp = window.location.hostname + ':' + window.location.port;
+        const updatedConfig = config.replace(/<PLATEVISION_IP>:5000/g, serverIp);
+        
+        navigator.clipboard.writeText(updatedConfig).then(() => {
+            showToast('Kopiert', 'YAML Konfiguration kopiert', 'success');
+        });
+    }
+    
+    function copyLovelaceConfig() {
+        const config = document.getElementById('lovelaceConfig').textContent;
+        navigator.clipboard.writeText(config).then(() => {
+            showToast('Kopiert', 'Lovelace Konfiguration kopiert', 'success');
+        });
+    }
+</script>
+{% endblock %}

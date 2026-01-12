@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="de" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}License Plate Detection{% endblock %}</title>
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Font Awesome Icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    
+    <style>
+        :root {
+            --primary-color: #6366f1;
+            --primary-hover: #4f46e5;
+            --secondary-color: #22d3ee;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --danger-color: #ef4444;
+            --dark-bg: #0f172a;
+            --card-bg: #1e293b;
+            --card-border: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --sidebar-width: 280px;
+        }
+        
+        * {
+            font-family: 'Inter', sans-serif;
+        }
+        
+        body {
+            background: var(--dark-bg);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: var(--sidebar-width);
+            height: 100vh;
+            background: var(--card-bg);
+            border-right: 1px solid var(--card-border);
+            z-index: 1000;
+            transition: transform 0.3s ease;
+        }
+        
+        .sidebar-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--card-border);
+        }
+        
+        .sidebar-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+            color: var(--text-primary);
+        }
+        
+        .sidebar-logo i {
+            font-size: 2rem;
+            color: var(--primary-color);
+        }
+        
+        .sidebar-logo-text {
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+        
+        .sidebar-logo-text span {
+            color: var(--primary-color);
+        }
+        
+        .sidebar-nav {
+            padding: 1rem 0;
+        }
+        
+        .nav-section {
+            padding: 0.5rem 1.5rem;
+            margin-top: 1rem;
+        }
+        
+        .nav-section-title {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+        
+        .sidebar-nav .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1.5rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            border-left: 3px solid transparent;
+        }
+        
+        .sidebar-nav .nav-link:hover {
+            color: var(--text-primary);
+            background: rgba(99, 102, 241, 0.1);
+        }
+        
+        .sidebar-nav .nav-link.active {
+            color: var(--primary-color);
+            background: rgba(99, 102, 241, 0.15);
+            border-left-color: var(--primary-color);
+        }
+        
+        .sidebar-nav .nav-link i {
+            width: 20px;
+            text-align: center;
+        }
+        
+        /* Stream Status Badge in Sidebar */
+        .stream-status-badge {
+            margin-left: auto;
+            padding: 0.2rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .stream-status-badge.running {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success-color);
+        }
+        
+        .stream-status-badge.stopped {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger-color);
+        }
+        
+        .stream-status-badge.connecting {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--warning-color);
+        }
+        
+        /* Main Content */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            min-height: 100vh;
+        }
+        
+        /* Top Header */
+        .top-header {
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--card-border);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .page-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin: 0;
+        }
+        
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        /* Content Area */
+        .content-area {
+            padding: 2rem;
+        }
+        
+        /* Cards */
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+        }
+        
+        .card-header {
+            background: transparent;
+            border-bottom: 1px solid var(--card-border);
+            padding: 1rem 1.25rem;
+        }
+        
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .card-title i {
+            color: var(--primary-color);
+        }
+        
+        /* Stat Cards */
+        .stat-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+        
+        .stat-card-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+        
+        .stat-card-icon.primary {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--primary-color);
+        }
+        
+        .stat-card-icon.success {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success-color);
+        }
+        
+        .stat-card-icon.warning {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--warning-color);
+        }
+        
+        .stat-card-icon.info {
+            background: rgba(34, 211, 238, 0.15);
+            color: var(--secondary-color);
+        }
+        
+        .stat-card-value {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0.5rem 0 0.25rem;
+        }
+        
+        .stat-card-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+        
+        /* Buttons */
+        .btn-primary {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            border-color: var(--primary-hover);
+        }
+        
+        .btn-success {
+            background: var(--success-color);
+            border-color: var(--success-color);
+        }
+        
+        .btn-outline-primary {
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }
+        
+        .btn-outline-primary:hover {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        /* Stream Container */
+        .stream-container {
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+            aspect-ratio: 16/9;
+        }
+        
+        .stream-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        .stream-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.7);
+        }
+        
+        .stream-overlay-content {
+            text-align: center;
+        }
+        
+        .stream-overlay-content i {
+            font-size: 3rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+        
+        /* Tables */
+        .table {
+            color: var(--text-primary);
+        }
+        
+        .table thead th {
+            background: rgba(99, 102, 241, 0.1);
+            border-color: var(--card-border);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            padding: 1rem;
+        }
+        
+        .table tbody td {
+            border-color: var(--card-border);
+            padding: 1rem;
+            vertical-align: middle;
+        }
+        
+        .table tbody tr:hover {
+            background: rgba(99, 102, 241, 0.05);
+        }
+        
+        /* Plate Badge */
+        .plate-badge {
+            display: inline-block;
+            background: var(--dark-bg);
+            border: 2px solid var(--primary-color);
+            border-radius: 6px;
+            padding: 0.5rem 1rem;
+            font-family: 'Courier New', monospace;
+            font-weight: 700;
+            font-size: 1rem;
+            letter-spacing: 0.1em;
+        }
+        
+        /* Detection Image */
+        .detection-image {
+            width: 100px;
+            height: 50px;
+            object-fit: cover;
+            border-radius: 4px;
+            border: 1px solid var(--card-border);
+        }
+        
+        /* Forms */
+        .form-control, .form-select {
+            background: var(--dark-bg);
+            border-color: var(--card-border);
+            color: var(--text-primary);
+        }
+        
+        .form-control:focus, .form-select:focus {
+            background: var(--dark-bg);
+            border-color: var(--primary-color);
+            color: var(--text-primary);
+            box-shadow: 0 0 0 0.2rem rgba(99, 102, 241, 0.25);
+        }
+        
+        .form-label {
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+        
+        /* Alerts */
+        .alert {
+            border-radius: 10px;
+            border: none;
+        }
+        
+        .alert-success {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success-color);
+        }
+        
+        .alert-danger {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger-color);
+        }
+        
+        .alert-warning {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--warning-color);
+        }
+        
+        .alert-info {
+            background: rgba(34, 211, 238, 0.15);
+            color: var(--secondary-color);
+        }
+        
+        /* Toast Container */
+        .toast-container {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 9999;
+        }
+        
+        /* Pagination */
+        .pagination .page-link {
+            background: var(--card-bg);
+            border-color: var(--card-border);
+            color: var(--text-primary);
+        }
+        
+        .pagination .page-link:hover {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        .pagination .page-item.active .page-link {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        /* Mobile Responsive */
+        .sidebar-toggle {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            font-size: 1.25rem;
+            cursor: pointer;
+        }
+        
+        @media (max-width: 991px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+            
+            .sidebar.show {
+                transform: translateX(0);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+            
+            .sidebar-toggle {
+                display: block;
+            }
+            
+            .sidebar-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 999;
+            }
+            
+            .sidebar-overlay.show {
+                display: block;
+            }
+        }
+        
+        /* Loading Spinner */
+        .spinner-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem;
+        }
+        
+        /* Confidence Badge */
+        .confidence-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .confidence-high {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success-color);
+        }
+        
+        .confidence-medium {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--warning-color);
+        }
+        
+        .confidence-low {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger-color);
+        }
+        
+        /* Animation */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.3s ease;
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--dark-bg);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--card-border);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary);
+        }
+    </style>
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Sidebar Overlay (Mobile) -->
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+    
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <a href="{{ url_for('dashboard') }}" class="sidebar-logo">
+                <i class="fas fa-car-side"></i>
+                <div class="sidebar-logo-text">
+                    Plate<span>Vision</span>
+                </div>
+            </a>
+        </div>
+        
+        <div class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Hauptmenü</div>
+            </div>
+            
+            <a href="{{ url_for('dashboard') }}" class="nav-link {% if page == 'dashboard' %}active{% endif %}">
+                <i class="fas fa-chart-pie"></i>
+                <span>Dashboard</span>
+            </a>
+            
+            <a href="{{ url_for('live_view') }}" class="nav-link {% if page == 'live' %}active{% endif %}">
+                <i class="fas fa-video"></i>
+                <span>Live Stream</span>
+                <span class="stream-status-badge {{ stream_status.status if stream_status else 'stopped' }}" id="sidebarStreamStatus">
+                    {{ stream_status.status if stream_status else 'Stopped' }}
+                </span>
+            </a>
+            
+            <a href="{{ url_for('history') }}" class="nav-link {% if page == 'history' %}active{% endif %}">
+                <i class="fas fa-history"></i>
+                <span>Historie</span>
+            </a>
+			<!-- In der sidebar-nav Section nach "Historie" hinzufügen -->
+			<a href="{{ url_for('latest_detection_page') }}" class="nav-link {% if page == 'latest' %}active{% endif %}">
+				<i class="fas fa-car-side"></i>
+				<span>Letzte Erkennung</span>
+				<span class="badge bg-success ms-auto" id="sidebarLatestBadge" style="display: none;">NEU</span>
+			</a>            
+            <a href="{{ url_for('test_page') }}" class="nav-link {% if page == 'test' %}active{% endif %}">
+                <i class="fas fa-flask"></i>
+                <span>Test & Upload</span>
+            </a>
+            
+            <div class="nav-section">
+                <div class="nav-section-title">Einstellungen</div>
+            </div>
+            
+            <a href="{{ url_for('rtsp_settings') }}" class="nav-link {% if page == 'rtsp' %}active{% endif %}">
+                <i class="fas fa-broadcast-tower"></i>
+                <span>RTSP Stream</span>
+            </a>
+            
+            <a href="{{ url_for('settings') }}" class="nav-link {% if page == 'settings' %}active{% endif %}">
+                <i class="fas fa-cog"></i>
+                <span>Einstellungen</span>
+            </a>
+        </div>
+        
+        <!-- Sidebar Footer -->
+        <div class="position-absolute bottom-0 start-0 end-0 p-3 border-top" style="border-color: var(--card-border) !important;">
+            <div class="d-flex align-items-center gap-2">
+                <div class="rounded-circle bg-success" style="width: 8px; height: 8px;" id="systemStatus"></div>
+                <small class="text-secondary">System Online</small>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Top Header -->
+        <header class="top-header">
+            <div class="d-flex align-items-center gap-3">
+                <button class="sidebar-toggle" onclick="toggleSidebar()">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <h1 class="page-title">{% block page_title %}Dashboard{% endblock %}</h1>
+            </div>
+            
+            <div class="header-actions">
+                {% block header_actions %}
+                <!-- Stream Control Buttons -->
+                <div class="btn-group" id="streamControls">
+                    <button class="btn btn-sm btn-outline-success" id="btnStartStream" onclick="startStream()">
+                        <i class="fas fa-play me-1"></i> Start
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" id="btnStopStream" onclick="stopStream()" style="display: none;">
+                        <i class="fas fa-stop me-1"></i> Stop
+                    </button>
+                </div>
+                {% endblock %}
+                
+                <!-- Notifications -->
+                <div class="dropdown">
+                    <button class="btn btn-link text-secondary position-relative" data-bs-toggle="dropdown">
+                        <i class="fas fa-bell fa-lg"></i>
+                        <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" id="notificationCount" style="display: none;">
+                            0
+                        </span>
+                    </button>
+                    <div class="dropdown-menu dropdown-menu-end" style="min-width: 300px; background: var(--card-bg); border-color: var(--card-border);">
+                        <h6 class="dropdown-header">Neue Erkennungen</h6>
+                        <div id="notificationList">
+                            <div class="dropdown-item text-secondary">Keine neuen Erkennungen</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <!-- Content Area -->
+        <div class="content-area">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+    
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+        // Socket.IO Connection
+        const socket = io();
+        
+        socket.on('connect', function() {
+            console.log('WebSocket connected');
+            document.getElementById('systemStatus').classList.remove('bg-danger');
+            document.getElementById('systemStatus').classList.add('bg-success');
+        });
+        
+        socket.on('disconnect', function() {
+            console.log('WebSocket disconnected');
+            document.getElementById('systemStatus').classList.remove('bg-success');
+            document.getElementById('systemStatus').classList.add('bg-danger');
+        });
+        
+        // New Detection Event
+        socket.on('new_detection', function(data) {
+            showToast('Neue Erkennung', `Kennzeichen: ${data.plate_text}`, 'success');
+            updateNotifications(data);
+            
+            // Event für andere Seiten
+            window.dispatchEvent(new CustomEvent('newDetection', { detail: data }));
+        });
+        
+        // Sidebar Toggle
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('show');
+            document.getElementById('sidebarOverlay').classList.toggle('show');
+        }
+        
+        // Stream Control
+        function startStream() {
+            fetch('/api/stream/start', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('Stream', 'Stream gestartet', 'success');
+                        updateStreamStatus('connecting');
+                    } else {
+                        showToast('Fehler', data.status.error || 'Stream konnte nicht gestartet werden', 'danger');
+                    }
+                })
+                .catch(error => {
+                    showToast('Fehler', 'Verbindungsfehler', 'danger');
+                });
+        }
+        
+        function stopStream() {
+            fetch('/api/stream/stop', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    showToast('Stream', 'Stream gestoppt', 'warning');
+                    updateStreamStatus('stopped');
+                });
+        }
+        
+        function updateStreamStatus(status) {
+            const badge = document.getElementById('sidebarStreamStatus');
+            const btnStart = document.getElementById('btnStartStream');
+            const btnStop = document.getElementById('btnStopStream');
+            
+            badge.textContent = status;
+            badge.className = 'stream-status-badge ' + status;
+            
+            if (status === 'running' || status === 'connecting') {
+                btnStart.style.display = 'none';
+                btnStop.style.display = 'inline-block';
+            } else {
+                btnStart.style.display = 'inline-block';
+                btnStop.style.display = 'none';
+            }
+            
+            // Event für andere Seiten
+            window.dispatchEvent(new CustomEvent('streamStatusChanged', { detail: { status: status } }));
+        }
+        
+        // Check stream status periodically
+        function checkStreamStatus() {
+            fetch('/api/stream/status')
+                .then(response => response.json())
+                .then(data => {
+                    updateStreamStatus(data.status);
+                });
+        }
+        
+        // Toast Notification
+        function showToast(title, message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const id = 'toast-' + Date.now();
+            
+            const icons = {
+                success: 'fa-check-circle',
+                danger: 'fa-exclamation-circle',
+                warning: 'fa-exclamation-triangle',
+                info: 'fa-info-circle'
+            };
+            
+            const html = `
+                <div id="${id}" class="toast fade-in" role="alert">
+                    <div class="toast-header" style="background: var(--card-bg); border-color: var(--card-border);">
+                        <i class="fas ${icons[type]} me-2 text-${type}"></i>
+                        <strong class="me-auto">${title}</strong>
+                        <small>Jetzt</small>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+                    </div>
+                    <div class="toast-body" style="background: var(--card-bg);">
+                        ${message}
+                    </div>
+                </div>
+            `;
+            
+            container.insertAdjacentHTML('beforeend', html);
+            
+            const toastEl = document.getElementById(id);
+            const toast = new bootstrap.Toast(toastEl, { delay: 5000 });
+            toast.show();
+            
+            toastEl.addEventListener('hidden.bs.toast', function() {
+                toastEl.remove();
+            });
+        }
+        
+        // Notifications
+        let notificationCount = 0;
+        const notifications = [];
+        
+        function updateNotifications(data) {
+            notificationCount++;
+            notifications.unshift(data);
+            
+            // Max 10 notifications
+            if (notifications.length > 10) {
+                notifications.pop();
+            }
+            
+            const countEl = document.getElementById('notificationCount');
+            countEl.textContent = notificationCount;
+            countEl.style.display = 'inline-block';
+            
+            const listEl = document.getElementById('notificationList');
+            listEl.innerHTML = notifications.map(n => `
+                <a href="/history" class="dropdown-item">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="fas fa-car text-primary"></i>
+                        <div>
+                            <div class="fw-bold">${n.plate_text}</div>
+                            <small class="text-secondary">${new Date().toLocaleTimeString()}</small>
+                        </div>
+                    </div>
+                </a>
+            `).join('');
+        }
+        
+        // Format Date
+        function formatDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleString('de-DE');
+        }
+        
+        // Format Confidence
+        function formatConfidence(value) {
+            const percent = (value * 100).toFixed(1);
+            let className = 'confidence-low';
+            if (value >= 0.8) className = 'confidence-high';
+            else if (value >= 0.5) className = 'confidence-medium';
+            return `<span class="confidence-badge ${className}">${percent}%</span>`;
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            checkStreamStatus();
+            setInterval(checkStreamStatus, 5000);
+        });
+    </script>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,1077 @@
+{% extends "base.html" %}
+
+{% block title %}Live Stream - PlateVision{% endblock %}
+
+{% block page_title %}
+<i class="fas fa-video me-2"></i>Live Stream
+<span class="badge ms-2 {{ 'bg-success' if stream_status.status == 'running' else 'bg-secondary' }}" id="headerStatusBadge">
+    {{ stream_status.status|upper if stream_status else 'STOPPED' }}
+</span>
+{% endblock %}
+
+{% block header_actions %}
+<div class="d-flex gap-2 align-items-center">
+    <!-- FPS Counter -->
+    <span class="badge bg-dark" id="fpsCounter">
+        <i class="fas fa-tachometer-alt me-1"></i>
+        <span id="fpsValue">0</span> FPS
+    </span>
+    
+    <!-- Resolution -->
+    <span class="badge bg-dark" id="resolutionBadge">
+        <i class="fas fa-expand me-1"></i>
+        <span id="resolutionValue">--</span>
+    </span>
+    
+    <!-- Stream Controls -->
+    <div class="btn-group">
+        <button class="btn btn-success" id="btnStart" onclick="startStream()">
+            <i class="fas fa-play me-1"></i>Start
+        </button>
+        <button class="btn btn-danger" id="btnStop" onclick="stopStream()" style="display: none;">
+            <i class="fas fa-stop me-1"></i>Stop
+        </button>
+        <button class="btn btn-outline-secondary" onclick="toggleFullscreen()" title="Vollbild">
+            <i class="fas fa-expand"></i>
+        </button>
+        <button class="btn btn-outline-secondary" onclick="takeSnapshot()" title="Screenshot">
+            <i class="fas fa-camera"></i>
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Live Page Specific Styles */
+    .live-container {
+        display: grid;
+        grid-template-columns: 1fr 380px;
+        gap: 1.5rem;
+        height: calc(100vh - 180px);
+    }
+    
+    @media (max-width: 1200px) {
+        .live-container {
+            grid-template-columns: 1fr;
+            height: auto;
+        }
+    }
+    
+    /* Main Stream Area */
+    .stream-main {
+        background: #000;
+        border-radius: 12px;
+        overflow: hidden;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .stream-main.fullscreen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 9999;
+        border-radius: 0;
+    }
+    
+    .stream-video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+    
+    /* Stream Overlay */
+    .stream-offline-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.9);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+    }
+    
+    .stream-offline-overlay.hidden {
+        display: none;
+    }
+    
+    .offline-icon {
+        font-size: 5rem;
+        color: var(--text-secondary);
+        margin-bottom: 1.5rem;
+        animation: pulse 2s infinite;
+    }
+    
+    .offline-icon.connecting {
+        color: var(--warning-color);
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+    
+    /* Stream Info Overlay */
+    .stream-info-overlay {
+        position: absolute;
+        top: 1rem;
+        left: 1rem;
+        right: 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        pointer-events: none;
+        z-index: 5;
+    }
+    
+    .stream-info-overlay > * {
+        pointer-events: auto;
+    }
+    
+    .live-badge {
+        background: var(--danger-color);
+        color: white;
+        padding: 0.4rem 0.8rem;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.8rem;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        animation: pulse 1.5s infinite;
+    }
+    
+    .live-badge .dot {
+        width: 8px;
+        height: 8px;
+        background: white;
+        border-radius: 50%;
+    }
+    
+    .stream-time {
+        background: rgba(0, 0, 0, 0.7);
+        padding: 0.4rem 0.8rem;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 0.9rem;
+    }
+    
+    /* Detection Overlay */
+    .detection-overlay {
+        position: absolute;
+        bottom: 1rem;
+        left: 1rem;
+        right: 1rem;
+        z-index: 5;
+    }
+    
+    .detection-alert {
+        background: rgba(16, 185, 129, 0.95);
+        color: white;
+        padding: 1rem 1.5rem;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        animation: slideUp 0.3s ease;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    }
+    
+    @keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .detection-alert .plate-text {
+        font-family: 'Courier New', monospace;
+        font-size: 1.5rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        background: rgba(255, 255, 255, 0.2);
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+    }
+    
+    /* Sidebar Panel */
+    .live-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        overflow-y: auto;
+        max-height: calc(100vh - 180px);
+    }
+    
+    @media (max-width: 1200px) {
+        .live-sidebar {
+            max-height: none;
+        }
+    }
+    
+    /* Detection Cards */
+    .detection-card {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 10px;
+        padding: 1rem;
+        display: flex;
+        gap: 1rem;
+        transition: all 0.2s ease;
+    }
+    
+    .detection-card:hover {
+        border-color: var(--primary-color);
+        transform: translateX(-5px);
+    }
+    
+    .detection-card.new {
+        border-color: var(--success-color);
+        animation: glow 1s ease;
+    }
+    
+    @keyframes glow {
+        0%, 100% { box-shadow: 0 0 0 rgba(16, 185, 129, 0); }
+        50% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.4); }
+    }
+    
+    .detection-card-image {
+        width: 80px;
+        height: 45px;
+        object-fit: cover;
+        border-radius: 6px;
+        background: var(--dark-bg);
+    }
+    
+    .detection-card-content {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .detection-card-plate {
+        font-family: 'Courier New', monospace;
+        font-weight: 700;
+        font-size: 1.1rem;
+        color: var(--primary-color);
+        margin-bottom: 0.25rem;
+    }
+    
+    .detection-card-meta {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        display: flex;
+        gap: 0.75rem;
+    }
+    
+    /* Controls Panel */
+    .controls-panel {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+        padding: 1.25rem;
+    }
+    
+    .controls-panel h6 {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .controls-panel h6 i {
+        color: var(--primary-color);
+    }
+    
+    /* Quick Stats */
+    .quick-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+    }
+    
+    .quick-stat {
+        background: var(--dark-bg);
+        border-radius: 8px;
+        padding: 0.75rem;
+        text-align: center;
+    }
+    
+    .quick-stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+    
+    .quick-stat-label {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+    }
+    
+    /* Range Slider Custom */
+    .control-slider {
+        margin-bottom: 1rem;
+    }
+    
+    .control-slider label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.85rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .control-slider label span:last-child {
+        color: var(--primary-color);
+        font-weight: 600;
+    }
+    
+    /* Fullscreen Exit Button */
+    .fullscreen-exit {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        z-index: 10000;
+        display: none;
+    }
+    
+    .stream-main.fullscreen .fullscreen-exit {
+        display: block;
+    }
+    
+    /* Connection Status */
+    .connection-status {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: var(--dark-bg);
+        border-radius: 8px;
+        font-size: 0.85rem;
+    }
+    
+    .connection-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--danger-color);
+    }
+    
+    .connection-dot.connected {
+        background: var(--success-color);
+        animation: pulse 2s infinite;
+    }
+    
+    .connection-dot.connecting {
+        background: var(--warning-color);
+        animation: pulse 0.5s infinite;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="live-container">
+    <!-- Main Stream Area -->
+    <div class="stream-main" id="streamMain">
+        <!-- Stream Video/Image -->
+        <img id="streamVideo" class="stream-video" src="" alt="Live Stream">
+        
+        <!-- Offline Overlay -->
+        <div class="stream-offline-overlay" id="offlineOverlay">
+            <i class="fas fa-video-slash offline-icon" id="offlineIcon"></i>
+            <h4 id="offlineTitle">Stream nicht aktiv</h4>
+            <p class="text-secondary mb-4" id="offlineMessage">Klicken Sie auf Start, um den RTSP Stream zu starten</p>
+            <button class="btn btn-primary btn-lg" onclick="startStream()" id="offlineStartBtn">
+                <i class="fas fa-play me-2"></i>Stream starten
+            </button>
+            
+            <!-- Error Info -->
+            <div class="alert alert-danger mt-4" id="errorAlert" style="display: none; max-width: 500px;">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <span id="errorMessage"></span>
+            </div>
+        </div>
+        
+        <!-- Live Info Overlay (visible when streaming) -->
+        <div class="stream-info-overlay" id="streamInfoOverlay" style="display: none;">
+            <div class="live-badge">
+                <span class="dot"></span>
+                LIVE
+            </div>
+            <div class="stream-time" id="streamTime">00:00:00</div>
+        </div>
+        
+        <!-- Detection Alert Overlay -->
+        <div class="detection-overlay" id="detectionOverlay" style="display: none;">
+            <div class="detection-alert">
+                <i class="fas fa-car fa-2x"></i>
+                <div>
+                    <div class="small opacity-75">Kennzeichen erkannt</div>
+                    <div class="plate-text" id="detectedPlateText">--</div>
+                </div>
+                <div class="ms-auto text-end">
+                    <div class="small opacity-75">Konfidenz</div>
+                    <div class="h5 mb-0" id="detectedConfidence">--%</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Fullscreen Exit Button -->
+        <button class="btn btn-light fullscreen-exit" onclick="toggleFullscreen()">
+            <i class="fas fa-compress me-1"></i>Beenden
+        </button>
+    </div>
+    
+    <!-- Sidebar -->
+    <div class="live-sidebar">
+        <!-- Connection Status -->
+        <div class="controls-panel">
+            <h6><i class="fas fa-wifi"></i>Verbindungsstatus</h6>
+            
+            <div class="connection-status mb-3">
+                <span class="connection-dot" id="connectionDot"></span>
+                <span id="connectionText">Getrennt</span>
+            </div>
+            
+            <div class="row g-2">
+                <div class="col-6">
+                    <button class="btn btn-success w-100" id="sidebarStartBtn" onclick="startStream()">
+                        <i class="fas fa-play me-1"></i>Start
+                    </button>
+                </div>
+                <div class="col-6">
+                    <button class="btn btn-danger w-100" id="sidebarStopBtn" onclick="stopStream()" disabled>
+                        <i class="fas fa-stop me-1"></i>Stop
+                    </button>
+                </div>
+            </div>
+            
+            <!-- RTSP URL Display -->
+            <div class="mt-3">
+                <small class="text-secondary">RTSP URL:</small>
+                <div class="bg-dark rounded p-2 mt-1" style="font-size: 0.75rem; word-break: break-all;">
+                    <code id="rtspUrlDisplay">{{ config.rtsp.url if config else 'Nicht konfiguriert' }}</code>
+                </div>
+                <a href="{{ url_for('rtsp_settings') }}" class="btn btn-sm btn-outline-primary mt-2 w-100">
+                    <i class="fas fa-cog me-1"></i>RTSP Einstellungen
+                </a>
+            </div>
+        </div>
+        
+        <!-- Quick Stats -->
+        <div class="controls-panel">
+            <h6><i class="fas fa-chart-bar"></i>Statistiken</h6>
+            
+            <div class="quick-stats">
+                <div class="quick-stat">
+                    <div class="quick-stat-value" id="statSessionDetections">0</div>
+                    <div class="quick-stat-label">Session</div>
+                </div>
+                <div class="quick-stat">
+                    <div class="quick-stat-value" id="statTodayDetections">0</div>
+                    <div class="quick-stat-label">Heute</div>
+                </div>
+                <div class="quick-stat">
+                    <div class="quick-stat-value" id="statStreamUptime">00:00</div>
+                    <div class="quick-stat-label">Laufzeit</div>
+                </div>
+                <div class="quick-stat">
+                    <div class="quick-stat-value" id="statReconnects">0</div>
+                    <div class="quick-stat-label">Reconnects</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Live Controls -->
+        <div class="controls-panel">
+            <h6><i class="fas fa-sliders-h"></i>Live Einstellungen</h6>
+            
+            <div class="control-slider">
+                <label>
+                    <span>Erkennungs-Intervall</span>
+                    <span id="intervalValue">0.5s</span>
+                </label>
+                <input type="range" class="form-range" id="intervalSlider" 
+                       min="1" max="20" value="5"
+                       oninput="updateInterval(this.value)">
+            </div>
+            
+            <div class="control-slider">
+                <label>
+                    <span>Confidence Threshold</span>
+                    <span id="liveConfidenceValue">50%</span>
+                </label>
+                <input type="range" class="form-range" id="liveConfidenceSlider" 
+                       min="10" max="95" value="50"
+                       oninput="updateLiveConfidence(this.value)">
+            </div>
+            
+            <hr class="my-3 border-secondary">
+            
+            <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="toggleLiveDetection" checked>
+                <label class="form-check-label" for="toggleLiveDetection">
+                    Erkennung aktiv
+                </label>
+            </div>
+            
+            <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="toggleAutoSave" checked>
+                <label class="form-check-label" for="toggleAutoSave">
+                    Automatisch speichern
+                </label>
+            </div>
+            
+            <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="toggleSoundAlert">
+                <label class="form-check-label" for="toggleSoundAlert">
+                    Ton bei Erkennung
+                </label>
+            </div>
+            
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="toggleShowBoxes" checked>
+                <label class="form-check-label" for="toggleShowBoxes">
+                    Erkennungsrahmen anzeigen
+                </label>
+            </div>
+        </div>
+        
+        <!-- Recent Detections -->
+        <div class="controls-panel flex-grow-1" style="min-height: 200px;">
+            <h6 class="d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-history"></i>Letzte Erkennungen</span>
+                <button class="btn btn-sm btn-outline-secondary" onclick="clearSessionDetections()">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </h6>
+            
+            <div id="recentDetectionsList" style="max-height: 400px; overflow-y: auto;">
+                <div class="text-center text-secondary py-4" id="noDetectionsMessage">
+                    <i class="fas fa-car-side fa-2x mb-2 opacity-50"></i>
+                    <p class="small mb-0">Noch keine Erkennungen in dieser Session</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Snapshot Modal -->
+<div class="modal fade" id="snapshotModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content" style="background: var(--card-bg);">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">
+                    <i class="fas fa-camera text-primary me-2"></i>Screenshot
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="snapshotImage" class="img-fluid rounded" src="">
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+                <button type="button" class="btn btn-primary" onclick="downloadSnapshot()">
+                    <i class="fas fa-download me-1"></i>Herunterladen
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Audio for detection alert -->
+<audio id="detectionSound" preload="auto">
+    <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Onp+fm5eSiXtwZ19ZWV5jaHB4gImQlZiZmZiWko2GfnRrYltWU1NWWl9la3J6gYiOk5eZmpmYlpKMhX1zbGReWFRSU1ZbYWhydH2EjJKXmpmamJaTjYZ+c2xkXVhUUlJVWmBncHd/h42TmJmampeTj4mBd25mX1pWU1JUWFxia3R8hIySmJqamJeUj4mBd25mX1hVUlJUV1xia3R8hIySmZqamJeUj4h/" type="audio/wav">
+</audio>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // ============================================
+    // STATE & CONFIGURATION
+    // ============================================
+    
+    let isStreaming = false;
+    let streamStartTime = null;
+    let sessionDetections = [];
+    let fpsCounter = { frames: 0, lastTime: Date.now(), fps: 0 };
+    let uptimeInterval = null;
+    let frameInterval = null;
+    
+    // DOM Elements
+    const streamVideo = document.getElementById('streamVideo');
+    const offlineOverlay = document.getElementById('offlineOverlay');
+    const offlineIcon = document.getElementById('offlineIcon');
+    const offlineTitle = document.getElementById('offlineTitle');
+    const offlineMessage = document.getElementById('offlineMessage');
+    const offlineStartBtn = document.getElementById('offlineStartBtn');
+    const streamInfoOverlay = document.getElementById('streamInfoOverlay');
+    const errorAlert = document.getElementById('errorAlert');
+    const errorMessage = document.getElementById('errorMessage');
+    const connectionDot = document.getElementById('connectionDot');
+    const connectionText = document.getElementById('connectionText');
+    
+    // ============================================
+    // STREAM CONTROL
+    // ============================================
+    
+    function startStream() {
+        updateUIConnecting();
+        
+        fetch('/api/stream/start', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    isStreaming = true;
+                    streamStartTime = Date.now();
+                    updateUIStreaming();
+                    startStreamFeed();
+                    startUptimeCounter();
+                    showToast('Stream', 'Verbindung wird hergestellt...', 'info');
+                } else {
+                    updateUIError(data.status?.error || 'Stream konnte nicht gestartet werden');
+                }
+            })
+            .catch(error => {
+                updateUIError('Verbindungsfehler: ' + error.message);
+            });
+    }
+    
+    function stopStream() {
+        fetch('/api/stream/stop', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                isStreaming = false;
+                stopStreamFeed();
+                stopUptimeCounter();
+                updateUIStopped();
+                showToast('Stream', 'Stream gestoppt', 'warning');
+            });
+    }
+    
+    function startStreamFeed() {
+        // Use MJPEG stream
+        streamVideo.src = '/api/stream/feed?' + Date.now();
+        streamVideo.style.display = 'block';
+        
+        streamVideo.onerror = function() {
+            console.error('Stream error');
+            if (isStreaming) {
+                // Try to reconnect
+                setTimeout(() => {
+                    if (isStreaming) {
+                        streamVideo.src = '/api/stream/feed?' + Date.now();
+                    }
+                }, 2000);
+            }
+        };
+        
+        streamVideo.onload = function() {
+            fpsCounter.frames++;
+        };
+        
+        // FPS counter
+        frameInterval = setInterval(() => {
+            const now = Date.now();
+            const elapsed = (now - fpsCounter.lastTime) / 1000;
+            fpsCounter.fps = Math.round(fpsCounter.frames / elapsed);
+            fpsCounter.frames = 0;
+            fpsCounter.lastTime = now;
+            document.getElementById('fpsValue').textContent = fpsCounter.fps;
+        }, 1000);
+    }
+    
+    function stopStreamFeed() {
+        streamVideo.src = '';
+        streamVideo.style.display = 'none';
+        
+        if (frameInterval) {
+            clearInterval(frameInterval);
+            frameInterval = null;
+        }
+        
+        document.getElementById('fpsValue').textContent = '0';
+    }
+    
+    // ============================================
+    // UI UPDATES
+    // ============================================
+    
+    function updateUIConnecting() {
+        offlineIcon.className = 'fas fa-spinner offline-icon connecting';
+        offlineTitle.textContent = 'Verbindung wird hergestellt...';
+        offlineMessage.textContent = 'Bitte warten...';
+        offlineStartBtn.style.display = 'none';
+        errorAlert.style.display = 'none';
+        
+        connectionDot.className = 'connection-dot connecting';
+        connectionText.textContent = 'Verbinde...';
+        
+        document.getElementById('headerStatusBadge').className = 'badge ms-2 bg-warning';
+        document.getElementById('headerStatusBadge').textContent = 'CONNECTING';
+    }
+    
+    function updateUIStreaming() {
+        offlineOverlay.classList.add('hidden');
+        streamInfoOverlay.style.display = 'flex';
+        
+        connectionDot.className = 'connection-dot connected';
+        connectionText.textContent = 'Verbunden';
+        
+        document.getElementById('btnStart').style.display = 'none';
+        document.getElementById('btnStop').style.display = 'inline-block';
+        document.getElementById('sidebarStartBtn').disabled = true;
+        document.getElementById('sidebarStopBtn').disabled = false;
+        
+        document.getElementById('headerStatusBadge').className = 'badge ms-2 bg-success';
+        document.getElementById('headerStatusBadge').textContent = 'RUNNING';
+    }
+    
+    function updateUIStopped() {
+        offlineOverlay.classList.remove('hidden');
+        streamInfoOverlay.style.display = 'none';
+        
+        offlineIcon.className = 'fas fa-video-slash offline-icon';
+        offlineTitle.textContent = 'Stream nicht aktiv';
+        offlineMessage.textContent = 'Klicken Sie auf Start, um den RTSP Stream zu starten';
+        offlineStartBtn.style.display = 'inline-block';
+        errorAlert.style.display = 'none';
+        
+        connectionDot.className = 'connection-dot';
+        connectionText.textContent = 'Getrennt';
+        
+        document.getElementById('btnStart').style.display = 'inline-block';
+        document.getElementById('btnStop').style.display = 'none';
+        document.getElementById('sidebarStartBtn').disabled = false;
+        document.getElementById('sidebarStopBtn').disabled = true;
+        
+        document.getElementById('headerStatusBadge').className = 'badge ms-2 bg-secondary';
+        document.getElementById('headerStatusBadge').textContent = 'STOPPED';
+    }
+    
+    function updateUIError(error) {
+        offlineOverlay.classList.remove('hidden');
+        streamInfoOverlay.style.display = 'none';
+        
+        offlineIcon.className = 'fas fa-exclamation-triangle offline-icon';
+        offlineIcon.style.color = 'var(--danger-color)';
+        offlineTitle.textContent = 'Verbindungsfehler';
+        offlineMessage.textContent = 'Der Stream konnte nicht gestartet werden';
+        offlineStartBtn.style.display = 'inline-block';
+        offlineStartBtn.innerHTML = '<i class="fas fa-redo me-2"></i>Erneut versuchen';
+        
+        errorAlert.style.display = 'block';
+        errorMessage.textContent = error;
+        
+        connectionDot.className = 'connection-dot';
+        connectionText.textContent = 'Fehler';
+        
+        document.getElementById('btnStart').style.display = 'inline-block';
+        document.getElementById('btnStop').style.display = 'none';
+        document.getElementById('sidebarStartBtn').disabled = false;
+        document.getElementById('sidebarStopBtn').disabled = true;
+        
+        document.getElementById('headerStatusBadge').className = 'badge ms-2 bg-danger';
+        document.getElementById('headerStatusBadge').textContent = 'ERROR';
+        
+        isStreaming = false;
+    }
+    
+    // ============================================
+    // UPTIME COUNTER
+    // ============================================
+    
+    function startUptimeCounter() {
+        updateStreamTime();
+        uptimeInterval = setInterval(updateStreamTime, 1000);
+    }
+    
+    function stopUptimeCounter() {
+        if (uptimeInterval) {
+            clearInterval(uptimeInterval);
+            uptimeInterval = null;
+        }
+        document.getElementById('streamTime').textContent = '00:00:00';
+        document.getElementById('statStreamUptime').textContent = '00:00';
+    }
+    
+    function updateStreamTime() {
+        if (!streamStartTime) return;
+        
+        const elapsed = Math.floor((Date.now() - streamStartTime) / 1000);
+        const hours = Math.floor(elapsed / 3600).toString().padStart(2, '0');
+        const minutes = Math.floor((elapsed % 3600) / 60).toString().padStart(2, '0');
+        const seconds = (elapsed % 60).toString().padStart(2, '0');
+        
+        document.getElementById('streamTime').textContent = `${hours}:${minutes}:${seconds}`;
+        document.getElementById('statStreamUptime').textContent = `${hours}:${minutes}`;
+    }
+    
+    // ============================================
+    // DETECTION HANDLING
+    // ============================================
+    
+    window.addEventListener('newDetection', function(e) {
+        const data = e.detail;
+        handleNewDetection(data);
+    });
+    
+    function handleNewDetection(data) {
+        // Update session counter
+        sessionDetections.unshift(data);
+        document.getElementById('statSessionDetections').textContent = sessionDetections.length;
+        
+        // Show detection overlay
+        showDetectionOverlay(data);
+        
+        // Add to recent list
+        addToRecentList(data);
+        
+        // Play sound if enabled
+        if (document.getElementById('toggleSoundAlert').checked) {
+            playDetectionSound();
+        }
+        
+        // Update today counter
+        const todayEl = document.getElementById('statTodayDetections');
+        todayEl.textContent = parseInt(todayEl.textContent) + 1;
+    }
+    
+    function showDetectionOverlay(data) {
+        const overlay = document.getElementById('detectionOverlay');
+        document.getElementById('detectedPlateText').textContent = data.plate_text || '--';
+        document.getElementById('detectedConfidence').textContent = 
+            data.confidence ? Math.round(data.confidence * 100) + '%' : '--%';
+        
+        overlay.style.display = 'block';
+        
+        // Hide after 4 seconds
+        setTimeout(() => {
+            overlay.style.display = 'none';
+        }, 4000);
+    }
+    
+    function addToRecentList(data) {
+        const list = document.getElementById('recentDetectionsList');
+        const noMsg = document.getElementById('noDetectionsMessage');
+        
+        if (noMsg) noMsg.remove();
+        
+        const html = `
+            <div class="detection-card new mb-2">
+                ${data.plate_image 
+                    ? `<img src="data:image/jpeg;base64,${data.plate_image}" class="detection-card-image">`
+                    : '<div class="detection-card-image d-flex align-items-center justify-content-center"><i class="fas fa-car text-secondary"></i></div>'
+                }
+                <div class="detection-card-content">
+                    <div class="detection-card-plate">${data.plate_text || 'Unbekannt'}</div>
+                    <div class="detection-card-meta">
+                        <span><i class="fas fa-percentage me-1"></i>${data.confidence ? Math.round(data.confidence * 100) : 0}%</span>
+                        <span><i class="fas fa-clock me-1"></i>${new Date().toLocaleTimeString()}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        list.insertAdjacentHTML('afterbegin', html);
+        
+        // Remove 'new' class after animation
+        setTimeout(() => {
+            const newCard = list.querySelector('.detection-card.new');
+            if (newCard) newCard.classList.remove('new');
+        }, 1500);
+        
+        // Limit to 20 items
+        while (list.children.length > 20) {
+            list.removeChild(list.lastChild);
+        }
+    }
+    
+    function clearSessionDetections() {
+        sessionDetections = [];
+        document.getElementById('statSessionDetections').textContent = '0';
+        document.getElementById('recentDetectionsList').innerHTML = `
+            <div class="text-center text-secondary py-4" id="noDetectionsMessage">
+                <i class="fas fa-car-side fa-2x mb-2 opacity-50"></i>
+                <p class="small mb-0">Noch keine Erkennungen in dieser Session</p>
+            </div>
+        `;
+    }
+    
+    function playDetectionSound() {
+        const sound = document.getElementById('detectionSound');
+        sound.currentTime = 0;
+        sound.play().catch(() => {});
+    }
+    
+    // ============================================
+    // SETTINGS CONTROLS
+    // ============================================
+    
+    function updateInterval(value) {
+        const interval = value / 10;
+        document.getElementById('intervalValue').textContent = interval.toFixed(1) + 's';
+        
+        // Save setting
+        fetch('/api/config/detection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ process_interval: interval })
+        });
+    }
+    
+    function updateLiveConfidence(value) {
+        document.getElementById('liveConfidenceValue').textContent = value + '%';
+        
+        fetch('/api/config/detection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confidence_threshold: value / 100 })
+        });
+    }
+    
+    // ============================================
+    // FULLSCREEN & SNAPSHOT
+    // ============================================
+    
+    function toggleFullscreen() {
+        const container = document.getElementById('streamMain');
+        container.classList.toggle('fullscreen');
+        
+        if (container.classList.contains('fullscreen')) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+    }
+    
+    // ESC key to exit fullscreen
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const container = document.getElementById('streamMain');
+            if (container.classList.contains('fullscreen')) {
+                toggleFullscreen();
+            }
+        }
+    });
+    
+    function takeSnapshot() {
+        if (!isStreaming) {
+            showToast('Snapshot', 'Stream muss aktiv sein', 'warning');
+            return;
+        }
+        
+        // Create canvas and draw video frame
+        const canvas = document.createElement('canvas');
+        const video = document.getElementById('streamVideo');
+        
+        canvas.width = video.naturalWidth || video.width;
+        canvas.height = video.naturalHeight || video.height;
+        
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+        
+        // Show in modal
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+        document.getElementById('snapshotImage').src = dataUrl;
+        
+        new bootstrap.Modal(document.getElementById('snapshotModal')).show();
+    }
+    
+    function downloadSnapshot() {
+        const img = document.getElementById('snapshotImage');
+        const link = document.createElement('a');
+        link.download = 'snapshot_' + new Date().toISOString().replace(/[:.]/g, '-') + '.jpg';
+        link.href = img.src;
+        link.click();
+        
+        showToast('Download', 'Screenshot heruntergeladen', 'success');
+    }
+    
+    // ============================================
+    // STATUS POLLING
+    // ============================================
+    
+    function checkStreamStatus() {
+        fetch('/api/stream/status')
+            .then(response => response.json())
+            .then(data => {
+                const wasStreaming = isStreaming;
+                
+                if (data.status === 'running' && !isStreaming) {
+                    isStreaming = true;
+                    streamStartTime = streamStartTime || Date.now();
+                    updateUIStreaming();
+                    startStreamFeed();
+                    startUptimeCounter();
+                } else if (data.status === 'stopped' && isStreaming) {
+                    isStreaming = false;
+                    stopStreamFeed();
+                    stopUptimeCounter();
+                    updateUIStopped();
+                } else if (data.status === 'error') {
+                    updateUIError(data.error || 'Unbekannter Fehler');
+                } else if (data.status === 'connecting') {
+                    updateUIConnecting();
+                }
+                
+                // Update reconnect counter
+                document.getElementById('statReconnects').textContent = data.reconnect_attempts || 0;
+            })
+            .catch(error => {
+                console.error('Status check failed:', error);
+            });
+    }
+    
+    // ============================================
+    // INITIALIZATION
+    // ============================================
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        // Check initial status
+        checkStreamStatus();
+        
+        // Poll status every 3 seconds
+        setInterval(checkStreamStatus, 3000);
+        
+        // Load today's detection count
+        fetch('/api/history/statistics')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('statTodayDetections').textContent = data.today_detections || 0;
+            });
+        
+        // Load saved settings
+        fetch('/api/config')
+            .then(response => response.json())
+            .then(config => {
+                if (config.detection) {
+                    const interval = config.detection.process_interval || 0.5;
+                    document.getElementById('intervalSlider').value = interval * 10;
+                    document.getElementById('intervalValue').textContent = interval.toFixed(1) + 's';
+                    
+                    const confidence = (config.detection.confidence_threshold || 0.5) * 100;
+                    document.getElementById('liveConfidenceSlider').value = confidence;
+                    document.getElementById('liveConfidenceValue').textContent = Math.round(confidence) + '%';
+                }
+            });
+    });
+</script>
+{% endblock %}

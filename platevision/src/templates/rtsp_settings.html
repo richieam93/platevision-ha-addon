@@ -1,0 +1,369 @@
+{% extends "base.html" %}
+
+{% block title %}RTSP Einstellungen - PlateVision{% endblock %}
+
+{% block page_title %}
+<i class="fas fa-broadcast-tower me-2"></i>RTSP Stream Einstellungen
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <!-- RTSP URL Configuration -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-link"></i>
+                    Stream Verbindung
+                </h5>
+            </div>
+            <div class="card-body">
+                <form id="rtspForm">
+                    <div class="mb-4">
+                        <label class="form-label">RTSP URL</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-transparent">
+                                <i class="fas fa-video text-primary"></i>
+                            </span>
+                            <input type="text" class="form-control" id="rtspUrl" 
+                                   placeholder="rtsp://username:password@ip:port/stream"
+                                   value="{{ config.url if config else '' }}">
+                            <button type="button" class="btn btn-outline-secondary" onclick="testConnection()">
+                                <i class="fas fa-plug me-1"></i>Testen
+                            </button>
+                        </div>
+                        <small class="text-secondary">
+                            Beispiel: rtsp://admin:password@192.168.1.100:554/stream1
+                        </small>
+                    </div>
+                    
+                    <!-- Common RTSP URL Templates -->
+                    <div class="mb-4">
+                        <label class="form-label">URL Vorlagen</label>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-primary" 
+                                    onclick="setTemplate('hikvision')">
+                                Hikvision
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" 
+                                    onclick="setTemplate('dahua')">
+                                Dahua
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" 
+                                    onclick="setTemplate('reolink')">
+                                Reolink
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" 
+                                    onclick="setTemplate('axis')">
+                                Axis
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" 
+                                    onclick="setTemplate('generic')">
+                                Generisch
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <!-- Connection Settings -->
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Reconnect Verzögerung (Sekunden)</label>
+                            <input type="number" class="form-control" id="reconnectDelay" 
+                                   min="1" max="60" value="{{ config.reconnect_delay if config else 5 }}">
+                            <small class="text-secondary">Zeit bis zum erneuten Verbindungsversuch</small>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label class="form-label">Buffer Größe (Frames)</label>
+                            <input type="number" class="form-control" id="bufferSize" 
+                                   min="1" max="50" value="{{ config.buffer_size if config else 10 }}">
+                            <small class="text-secondary">Größerer Buffer = mehr Latenz, stabiler</small>
+                        </div>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <!-- Resolution Settings -->
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Auflösung Breite</label>
+                            <select class="form-select" id="resolutionWidth">
+                                <option value="640" {{ 'selected' if config and config.resolution.width == 640 else '' }}>640px (SD)</option>
+                                <option value="1280" {{ 'selected' if config and config.resolution.width == 1280 else '' }}>1280px (HD)</option>
+                                <option value="1920" {{ 'selected' if config and config.resolution.width == 1920 else '' }}>1920px (Full HD)</option>
+                                <option value="2560" {{ 'selected' if config and config.resolution.width == 2560 else '' }}>2560px (2K)</option>
+                                <option value="3840" {{ 'selected' if config and config.resolution.width == 3840 else '' }}>3840px (4K)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label class="form-label">Auflösung Höhe</label>
+                            <select class="form-select" id="resolutionHeight">
+                                <option value="480" {{ 'selected' if config and config.resolution.height == 480 else '' }}>480px (SD)</option>
+                                <option value="720" {{ 'selected' if config and config.resolution.height == 720 else '' }}>720px (HD)</option>
+                                <option value="1080" {{ 'selected' if config and config.resolution.height == 1080 else '' }}>1080px (Full HD)</option>
+                                <option value="1440" {{ 'selected' if config and config.resolution.height == 1440 else '' }}>1440px (2K)</option>
+                                <option value="2160" {{ 'selected' if config and config.resolution.height == 2160 else '' }}>2160px (4K)</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save me-2"></i>Einstellungen speichern
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="resetToDefaults()">
+                            <i class="fas fa-undo me-2"></i>Zurücksetzen
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Connection Test Results -->
+        <div class="card" id="testResultCard" style="display: none;">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-vial"></i>
+                    Verbindungstest
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="testResult"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Sidebar -->
+    <div class="col-lg-4">
+        <!-- Stream Status -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-info-circle"></i>
+                    Stream Status
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="d-flex align-items-center gap-3 mb-3">
+                    <div class="rounded-circle p-3 {{ 'bg-success' if stream_status.status == 'running' else 'bg-secondary' }} bg-opacity-25">
+                        <i class="fas fa-{{ 'play' if stream_status.status == 'running' else 'stop' }} fa-lg {{ 'text-success' if stream_status.status == 'running' else 'text-secondary' }}"></i>
+                    </div>
+                    <div>
+                        <div class="fw-bold">{{ stream_status.status|upper if stream_status else 'STOPPED' }}</div>
+                        <small class="text-secondary">Aktueller Status</small>
+                    </div>
+                </div>
+                
+                {% if stream_status and stream_status.error %}
+                <div class="alert alert-danger mb-3">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    {{ stream_status.error }}
+                </div>
+                {% endif %}
+                
+                <div class="d-grid gap-2">
+                    {% if stream_status and stream_status.status == 'running' %}
+                    <button class="btn btn-danger" onclick="stopStream()">
+                        <i class="fas fa-stop me-2"></i>Stream stoppen
+                    </button>
+                    {% else %}
+                    <button class="btn btn-success" onclick="startStream()">
+                        <i class="fas fa-play me-2"></i>Stream starten
+                    </button>
+                    {% endif %}
+                    <a href="{{ url_for('live_view') }}" class="btn btn-outline-primary">
+                        <i class="fas fa-video me-2"></i>Live Ansicht öffnen
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Help -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-question-circle"></i>
+                    Hilfe
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="accordion accordion-flush" id="helpAccordion">
+                    <div class="accordion-item bg-transparent">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed bg-transparent text-light" type="button" 
+                                    data-bs-toggle="collapse" data-bs-target="#help1">
+                                Wie finde ich meine RTSP URL?
+                            </button>
+                        </h2>
+                        <div id="help1" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                            <div class="accordion-body text-secondary small">
+                                Die RTSP URL finden Sie in der Dokumentation Ihrer Kamera oder im Web-Interface 
+                                der Kamera unter "Netzwerk" oder "Stream" Einstellungen.
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="accordion-item bg-transparent">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed bg-transparent text-light" type="button" 
+                                    data-bs-toggle="collapse" data-bs-target="#help2">
+                                Stream verbindet nicht?
+                            </button>
+                        </h2>
+                        <div id="help2" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                            <div class="accordion-body text-secondary small">
+                                <ul class="mb-0 ps-3">
+                                    <li>Überprüfen Sie IP-Adresse und Port</li>
+                                    <li>Stellen Sie sicher, dass RTSP aktiviert ist</li>
+                                    <li>Prüfen Sie Benutzername und Passwort</li>
+                                    <li>Firewall-Einstellungen überprüfen</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="accordion-item bg-transparent">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed bg-transparent text-light" type="button" 
+                                    data-bs-toggle="collapse" data-bs-target="#help3">
+                                Welche Auflösung wählen?
+                            </button>
+                        </h2>
+                        <div id="help3" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                            <div class="accordion-body text-secondary small">
+                                Höhere Auflösung = bessere Erkennung, aber mehr CPU/GPU Last. 
+                                Empfohlen: 1280x720 (HD) für die meisten Anwendungen.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // RTSP URL Templates
+    const templates = {
+        hikvision: 'rtsp://{user}:{pass}@{ip}:554/Streaming/Channels/101',
+        dahua: 'rtsp://{user}:{pass}@{ip}:554/cam/realmonitor?channel=1&subtype=0',
+        reolink: 'rtsp://{user}:{pass}@{ip}:554/h264Preview_01_main',
+        axis: 'rtsp://{user}:{pass}@{ip}/axis-media/media.amp',
+        generic: 'rtsp://{user}:{pass}@{ip}:554/stream1'
+    };
+    
+    function setTemplate(type) {
+        const template = templates[type];
+        if (template) {
+            document.getElementById('rtspUrl').value = template;
+            showToast('Vorlage', `${type.charAt(0).toUpperCase() + type.slice(1)} Vorlage eingefügt`, 'info');
+        }
+    }
+    
+    // Form Submit
+    document.getElementById('rtspForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const data = {
+            url: document.getElementById('rtspUrl').value,
+            reconnect_delay: parseInt(document.getElementById('reconnectDelay').value),
+            buffer_size: parseInt(document.getElementById('bufferSize').value),
+            resolution: {
+                width: parseInt(document.getElementById('resolutionWidth').value),
+                height: parseInt(document.getElementById('resolutionHeight').value)
+            }
+        };
+        
+        fetch('/api/config/rtsp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Erfolg', 'RTSP Einstellungen gespeichert', 'success');
+            } else {
+                showToast('Fehler', result.error || 'Speichern fehlgeschlagen', 'danger');
+            }
+        })
+        .catch(error => {
+            showToast('Fehler', 'Verbindungsfehler', 'danger');
+        });
+    });
+    
+    // Test Connection
+    function testConnection() {
+        const url = document.getElementById('rtspUrl').value;
+        if (!url) {
+            showToast('Fehler', 'Bitte RTSP URL eingeben', 'warning');
+            return;
+        }
+        
+        const resultCard = document.getElementById('testResultCard');
+        const resultDiv = document.getElementById('testResult');
+        
+        resultCard.style.display = 'block';
+        resultDiv.innerHTML = `
+            <div class="d-flex align-items-center gap-3">
+                <div class="spinner-border text-primary" role="status"></div>
+                <span>Teste Verbindung zu ${url}...</span>
+            </div>
+        `;
+        
+        // Simulate test (in reality, this would call backend)
+        setTimeout(() => {
+            // For now, just show info since we can't actually test without starting stream
+            resultDiv.innerHTML = `
+                <div class="alert alert-info mb-0">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <strong>Hinweis:</strong> Speichern Sie die Einstellungen und starten Sie den Stream, 
+                    um die Verbindung zu testen.
+                </div>
+            `;
+        }, 1000);
+    }
+    
+    // Reset to Defaults
+    function resetToDefaults() {
+        if (confirm('Alle RTSP Einstellungen zurücksetzen?')) {
+            document.getElementById('rtspUrl').value = 'rtsp://admin:password@192.168.1.100:554/stream1';
+            document.getElementById('reconnectDelay').value = 5;
+            document.getElementById('bufferSize').value = 10;
+            document.getElementById('resolutionWidth').value = 1280;
+            document.getElementById('resolutionHeight').value = 720;
+            showToast('Zurückgesetzt', 'Standardwerte wiederhergestellt', 'info');
+        }
+    }
+    
+    // Start/Stop Stream
+    function startStream() {
+        fetch('/api/stream/start', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('Stream', 'Stream wird gestartet...', 'success');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast('Fehler', data.status?.error || 'Start fehlgeschlagen', 'danger');
+                }
+            });
+    }
+    
+    function stopStream() {
+        fetch('/api/stream/stop', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                showToast('Stream', 'Stream gestoppt', 'warning');
+                setTimeout(() => location.reload(), 1000);
+            });
+    }
+</script>
+{% endblock %}

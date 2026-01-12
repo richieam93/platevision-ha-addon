@@ -1,0 +1,1594 @@
+{% extends "base.html" %}
+
+{% block title %}Einstellungen - PlateVision{% endblock %}
+
+{% block page_title %}
+<i class="fas fa-cog me-2"></i>Einstellungen
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .settings-nav .nav-link {
+        color: var(--text-secondary);
+        border: none;
+        border-left: 3px solid transparent;
+        border-radius: 0;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.25rem;
+        transition: all 0.2s ease;
+    }
+    
+    .settings-nav .nav-link:hover {
+        color: var(--text-primary);
+        background: rgba(99, 102, 241, 0.1);
+    }
+    
+    .settings-nav .nav-link.active {
+        color: var(--primary-color);
+        background: rgba(99, 102, 241, 0.15);
+        border-left-color: var(--primary-color);
+    }
+    
+    .settings-nav .nav-link i {
+        width: 24px;
+    }
+    
+    .setting-group {
+        background: var(--dark-bg);
+        border-radius: 10px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+    }
+    
+    .setting-group-title {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--primary-color);
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .form-range {
+        height: 0.5rem;
+    }
+    
+    .form-range::-webkit-slider-thumb {
+        background: var(--primary-color);
+    }
+    
+    .value-badge {
+        background: var(--primary-color);
+        color: white;
+        padding: 0.2rem 0.6rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        min-width: 50px;
+        text-align: center;
+    }
+    
+    .info-box {
+        background: rgba(34, 211, 238, 0.1);
+        border-left: 3px solid var(--secondary-color);
+        padding: 1rem;
+        border-radius: 0 8px 8px 0;
+        margin-top: 1rem;
+    }
+    
+    .info-box i {
+        color: var(--secondary-color);
+    }
+    
+    .warning-box {
+        background: rgba(245, 158, 11, 0.1);
+        border-left: 3px solid var(--warning-color);
+        padding: 1rem;
+        border-radius: 0 8px 8px 0;
+        margin-top: 1rem;
+    }
+    
+    .warning-box i {
+        color: var(--warning-color);
+    }
+    
+    .model-status {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 0;
+    }
+    
+    .model-status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+    }
+    
+    .model-status-dot.loaded {
+        background: var(--success-color);
+    }
+    
+    .model-status-dot.not-loaded {
+        background: var(--danger-color);
+    }
+    
+    .preview-box {
+        background: #000;
+        border-radius: 8px;
+        padding: 2rem;
+        text-align: center;
+        min-height: 150px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .preview-box img {
+        max-width: 100%;
+        max-height: 200px;
+        border-radius: 4px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Settings Navigation -->
+    <div class="col-lg-3 mb-4">
+        <div class="card">
+            <div class="card-body p-2">
+                <nav class="nav nav-pills flex-column settings-nav" id="settingsNav" role="tablist">
+                    <a class="nav-link active" data-bs-toggle="pill" href="#detection" role="tab">
+                        <i class="fas fa-crosshairs"></i>
+                        Erkennung
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#ocr" role="tab">
+                        <i class="fas fa-font"></i>
+                        OCR / Texterkennung
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#preprocessing" role="tab">
+                        <i class="fas fa-magic"></i>
+                        Bildvorverarbeitung
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#historySettings" role="tab">
+                        <i class="fas fa-history"></i>
+                        Historie
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#storage" role="tab">
+                        <i class="fas fa-database"></i>
+                        Speicher
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#general" role="tab">
+                        <i class="fas fa-sliders-h"></i>
+                        Allgemein
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#models" role="tab">
+                        <i class="fas fa-brain"></i>
+                        Modelle
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#about" role="tab">
+                        <i class="fas fa-info-circle"></i>
+                        Über
+                    </a>
+                </nav>
+            </div>
+        </div>
+        
+        <!-- Quick Actions -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-bolt text-warning me-2"></i>Schnellaktionen
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <button class="btn btn-outline-primary btn-sm" onclick="saveAllSettings()">
+                        <i class="fas fa-save me-2"></i>Alle speichern
+                    </button>
+                    <button class="btn btn-outline-warning btn-sm" onclick="resetAllSettings()">
+                        <i class="fas fa-undo me-2"></i>Zurücksetzen
+                    </button>
+                    <button class="btn btn-outline-info btn-sm" onclick="exportSettings()">
+                        <i class="fas fa-download me-2"></i>Exportieren
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Settings Content -->
+    <div class="col-lg-9">
+        <div class="tab-content">
+            
+            <!-- ============================================ -->
+            <!-- ERKENNUNG -->
+            <!-- ============================================ -->
+            <div class="tab-pane fade show active" id="detection" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-crosshairs text-primary me-2"></i>
+                            Erkennungs-Einstellungen
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="detectionForm">
+                            <!-- Confidence Threshold -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-percentage"></i>
+                                    Erkennungs-Schwellwerte
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <label class="form-label d-flex justify-content-between align-items-center">
+                                        <span>Confidence Threshold</span>
+                                        <span class="value-badge" id="confidenceDisplay">
+                                            {{ (config.detection.confidence_threshold * 100)|round|int }}%
+                                        </span>
+                                    </label>
+                                    <input type="range" class="form-range" id="confidenceThreshold" 
+                                           min="10" max="95" step="5"
+                                           value="{{ (config.detection.confidence_threshold * 100)|round|int }}">
+                                    <small class="text-secondary">
+                                        Mindest-Konfidenz für Fahrzeug- und Kennzeichenerkennung. Höher = weniger Falsch-Positive.
+                                    </small>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label d-flex justify-content-between align-items-center">
+                                        <span>Verarbeitungsintervall</span>
+                                        <span class="value-badge" id="intervalDisplay">
+                                            {{ config.detection.process_interval }}s
+                                        </span>
+                                    </label>
+                                    <input type="range" class="form-range" id="processInterval" 
+                                           min="1" max="30" step="1"
+                                           value="{{ (config.detection.process_interval * 10)|round|int }}">
+                                    <small class="text-secondary">
+                                        Zeit zwischen Frame-Verarbeitungen bei Live-Stream. Niedriger = mehr CPU-Last.
+                                    </small>
+                                </div>
+                            </div>
+                            
+                            <!-- Fahrzeugerkennung -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-car"></i>
+                                    Fahrzeugerkennung
+                                </div>
+                                
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="carDetectionEnabled"
+                                           {{ 'checked' if config.detection.car_detection_enabled else '' }}>
+                                    <label class="form-check-label" for="carDetectionEnabled">
+                                        <strong>Fahrzeugerkennung aktivieren</strong>
+                                        <br><small class="text-secondary">Erkennt PKW, LKW, Busse und Motorräder</small>
+                                    </label>
+                                </div>
+                                
+                                <div class="info-box">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    Die Fahrzeugerkennung hilft, den Bereich für die Kennzeichenerkennung einzugrenzen 
+                                    und liefert zusätzliche Informationen wie Fahrzeugtyp und -farbe.
+                                </div>
+                            </div>
+                            
+                            <!-- Auto-Zoom -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-search-plus"></i>
+                                    Auto-Zoom (Wichtig für kleine Kennzeichen!)
+                                </div>
+                                
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="zoomEnabled"
+                                           {{ 'checked' if config.detection.zoom_enabled else '' }}>
+                                    <label class="form-check-label" for="zoomEnabled">
+                                        <strong>Auto-Zoom aktivieren</strong>
+                                        <br><small class="text-secondary">Zoomt automatisch auf erkannte Fahrzeuge für bessere OCR</small>
+                                    </label>
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <label class="form-label d-flex justify-content-between align-items-center">
+                                        <span>Zoom-Faktor</span>
+                                        <span class="value-badge" id="zoomDisplay">
+                                            {{ config.detection.zoom_factor }}x
+                                        </span>
+                                    </label>
+                                    <input type="range" class="form-range" id="zoomFactor" 
+                                           min="10" max="50" step="5"
+                                           value="{{ (config.detection.zoom_factor * 10)|round|int }}">
+                                    <small class="text-secondary">
+                                        Wie stark auf das Fahrzeug gezoomt wird. Höher = bessere OCR bei kleinen Kennzeichen.
+                                    </small>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label d-flex justify-content-between align-items-center">
+                                        <span>Zoom-Padding</span>
+                                        <span class="value-badge" id="paddingDisplay">
+                                            {{ config.detection.zoom_padding }}px
+                                        </span>
+                                    </label>
+                                    <input type="range" class="form-range" id="zoomPadding" 
+                                           min="0" max="300" step="10"
+                                           value="{{ config.detection.zoom_padding }}">
+                                    <small class="text-secondary">
+                                        Zusätzlicher Rand um das erkannte Fahrzeug in Pixeln.
+                                    </small>
+                                </div>
+                                
+                                <div class="warning-box">
+                                    <i class="fas fa-lightbulb me-2"></i>
+                                    <strong>Tipp:</strong> Bei kleinen Kennzeichen (unter 50px Höhe) empfehlen wir einen Zoom-Faktor von 3x oder höher.
+                                </div>
+                            </div>
+                            
+                            <!-- Mindestgrößen -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-ruler"></i>
+                                    Mindestgrößen
+                                </div>
+                                
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Mindest-Kennzeichenbreite (px)</label>
+                                        <input type="number" class="form-control" id="minPlateWidth"
+                                               min="20" max="200" value="{{ config.detection.min_plate_width }}">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Mindest-Kennzeichenhöhe (px)</label>
+                                        <input type="number" class="form-control" id="minPlateHeight"
+                                               min="10" max="100" value="{{ config.detection.min_plate_height }}">
+                                    </div>
+                                </div>
+                                <small class="text-secondary d-block mt-2">
+                                    Kennzeichen kleiner als diese Werte werden ignoriert.
+                                </small>
+                            </div>
+                            
+                            <div class="d-flex gap-2 mt-4">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save me-2"></i>Einstellungen speichern
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" onclick="resetDetectionSettings()">
+                                    <i class="fas fa-undo me-2"></i>Zurücksetzen
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- ============================================ -->
+            <!-- OCR EINSTELLUNGEN -->
+            <!-- ============================================ -->
+            <div class="tab-pane fade" id="ocr" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-font text-primary me-2"></i>
+                            OCR / Texterkennung
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="ocrForm">
+                            <!-- Sprachen -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-language"></i>
+                                    Sprachen
+                                </div>
+                                
+                                <p class="text-secondary mb-3">Wählen Sie die Sprachen für die Texterkennung:</p>
+                                
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="langEn" value="en"
+                                                   {{ 'checked' if 'en' in config.ocr.languages else '' }}>
+                                            <label class="form-check-label" for="langEn">
+                                                <span class="fi fi-gb me-2"></span>Englisch
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="langDe" value="de"
+                                                   {{ 'checked' if 'de' in config.ocr.languages else '' }}>
+                                            <label class="form-check-label" for="langDe">
+                                                <span class="fi fi-de me-2"></span>Deutsch
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="langFr" value="fr"
+                                                   {{ 'checked' if 'fr' in config.ocr.languages else '' }}>
+                                            <label class="form-check-label" for="langFr">
+                                                <span class="fi fi-fr me-2"></span>Französisch
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="langIt" value="it"
+                                                   {{ 'checked' if 'it' in config.ocr.languages else '' }}>
+                                            <label class="form-check-label" for="langIt">
+                                                <span class="fi fi-it me-2"></span>Italienisch
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="langEs" value="es"
+                                                   {{ 'checked' if 'es' in config.ocr.languages else '' }}>
+                                            <label class="form-check-label" for="langEs">
+                                                <span class="fi fi-es me-2"></span>Spanisch
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="langPl" value="pl"
+                                                   {{ 'checked' if 'pl' in config.ocr.languages else '' }}>
+                                            <label class="form-check-label" for="langPl">
+                                                <span class="fi fi-pl me-2"></span>Polnisch
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="warning-box">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <strong>Hinweis:</strong> Mehr Sprachen = langsamere Erkennung und höherer Speicherverbrauch.
+                                    Für europäische Kennzeichen reichen meist Englisch und Deutsch.
+                                </div>
+                            </div>
+                            
+                            <!-- Konfidenz -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-chart-line"></i>
+                                    Erkennungsqualität
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <label class="form-label d-flex justify-content-between align-items-center">
+                                        <span>Mindest-OCR-Konfidenz</span>
+                                        <span class="value-badge" id="ocrConfDisplay">
+                                            {{ (config.ocr.min_confidence * 100)|round|int }}%
+                                        </span>
+                                    </label>
+                                    <input type="range" class="form-range" id="ocrMinConfidence" 
+                                           min="10" max="80" step="5"
+                                           value="{{ (config.ocr.min_confidence * 100)|round|int }}">
+                                    <small class="text-secondary">
+                                        Text mit niedrigerer Konfidenz wird verworfen. Niedriger = mehr Ergebnisse, aber auch mehr Fehler.
+                                    </small>
+                                </div>
+                            </div>
+                            
+                            <!-- OCR Modus -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-cogs"></i>
+                                    Erkennungsmodus
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <label class="form-label">OCR-Modus</label>
+                                    <select class="form-select" id="ocrMode">
+                                        <option value="standard" {{ 'selected' if config.ocr.active_mode == 'standard' else '' }}>
+                                            Standard - Schnell, für gute Bildqualität
+                                        </option>
+                                        <option value="enhanced" {{ 'selected' if config.ocr.active_mode == 'enhanced' else '' }}>
+                                            Enhanced - Mehrere Durchgänge, bessere Erkennung
+                                        </option>
+                                        <option value="multi_scale" {{ 'selected' if config.ocr.active_mode == 'multi_scale' else '' }}>
+                                            Multi-Scale - Beste Erkennung, aber langsamer
+                                        </option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="retryOnFail"
+                                           {{ 'checked' if config.ocr.retry_on_fail else '' }}>
+                                    <label class="form-check-label" for="retryOnFail">
+                                        <strong>Bei Fehlschlag wiederholen</strong>
+                                        <br><small class="text-secondary">Probiert aggressive Vorverarbeitung wenn normale OCR fehlschlägt</small>
+                                    </label>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Maximale Wiederholungen</label>
+                                    <input type="number" class="form-control" id="maxRetries" style="max-width: 100px;"
+                                           min="1" max="5" value="{{ config.ocr.max_retries }}">
+                                </div>
+                            </div>
+                            
+                            <!-- GPU -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-microchip"></i>
+                                    Hardware-Beschleunigung
+                                </div>
+                                
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="gpuEnabled"
+                                           {{ 'checked' if config.ocr.gpu_enabled else '' }}>
+                                    <label class="form-check-label" for="gpuEnabled">
+                                        <strong>GPU-Beschleunigung (CUDA)</strong>
+                                        <br><small class="text-secondary">Erfordert NVIDIA GPU mit CUDA-Unterstützung</small>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <!-- Erlaubte Zeichen -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-keyboard"></i>
+                                    Zeichenfilter
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Erlaubte Zeichen</label>
+                                    <input type="text" class="form-control" id="allowedChars"
+                                           value="{{ config.ocr.allowed_characters }}"
+                                           placeholder="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- ">
+                                    <small class="text-secondary">
+                                        Nur diese Zeichen werden erkannt. Leer lassen für alle Zeichen.
+                                    </small>
+                                </div>
+                            </div>
+                            
+                            <div class="d-flex gap-2 mt-4">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save me-2"></i>Speichern
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" onclick="resetOcrSettings()">
+                                    <i class="fas fa-undo me-2"></i>Zurücksetzen
+                                </button>
+                            </div>
+                            
+                            <div class="warning-box mt-4">
+                                <i class="fas fa-sync me-2"></i>
+                                <strong>Hinweis:</strong> Änderungen an OCR-Einstellungen erfordern einen Neustart des OCR-Moduls.
+                                Dies geschieht automatisch beim Speichern.
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- ============================================ -->
+            <!-- BILDVORVERARBEITUNG -->
+            <!-- ============================================ -->
+            <div class="tab-pane fade" id="preprocessing" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-magic text-primary me-2"></i>
+                            Bildvorverarbeitung
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="preprocessingForm">
+                            <!-- Aktivierung -->
+                            <div class="setting-group">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="preprocessingEnabled"
+                                           {{ 'checked' if config.ocr.preprocessing.enabled else '' }}>
+                                    <label class="form-check-label" for="preprocessingEnabled">
+                                        <strong>Vorverarbeitung aktivieren</strong>
+                                        <br><small class="text-secondary">Verbessert die OCR-Erkennung durch Bildoptimierung</small>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <!-- Skalierung (WICHTIG!) -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-expand-arrows-alt"></i>
+                                    Bildskalierung (Wichtig für kleine Kennzeichen!)
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <label class="form-label d-flex justify-content-between align-items-center">
+                                        <span>Ziel-Höhe für Kennzeichen</span>
+                                        <span class="value-badge" id="targetHeightDisplay">
+                                            {{ config.ocr.preprocessing.target_height }}px
+                                        </span>
+                                    </label>
+                                    <input type="range" class="form-range" id="targetHeight" 
+                                           min="60" max="250" step="10"
+                                           value="{{ config.ocr.preprocessing.target_height }}">
+                                    <small class="text-secondary">
+                                        Kleine Kennzeichen werden auf diese Höhe skaliert. Höher = bessere Erkennung.
+                                    </small>
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <label class="form-label d-flex justify-content-between align-items-center">
+                                        <span>Mindest-Breite</span>
+                                        <span class="value-badge" id="minWidthDisplay">
+                                            {{ config.ocr.preprocessing.min_width }}px
+                                        </span>
+                                    </label>
+                                    <input type="range" class="form-range" id="minWidth" 
+                                           min="100" max="400" step="20"
+                                           value="{{ config.ocr.preprocessing.min_width }}">
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label d-flex justify-content-between align-items-center">
+                                        <span>Maximaler Vergrößerungsfaktor</span>
+                                        <span class="value-badge" id="resizeFactorDisplay">
+                                            {{ config.ocr.preprocessing.resize_factor }}x
+                                        </span>
+                                    </label>
+                                    <input type="range" class="form-range" id="resizeFactor" 
+                                           min="15" max="60" step="5"
+                                           value="{{ (config.ocr.preprocessing.resize_factor * 10)|round|int }}">
+                                    <small class="text-secondary">
+                                        Maximale Vergrößerung für sehr kleine Kennzeichen.
+                                    </small>
+                                </div>
+                                
+                                <div class="info-box">
+                                    <i class="fas fa-lightbulb me-2"></i>
+                                    <strong>Empfehlung:</strong> Bei Kennzeichen unter 50px Höhe empfehlen wir eine Ziel-Höhe von 120-150px 
+                                    und einen Vergrößerungsfaktor von 4x oder höher.
+                                </div>
+                            </div>
+                            
+                            <!-- Bildoptimierungen -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-sliders-h"></i>
+                                    Bildoptimierungen
+                                </div>
+                                
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="denoise"
+                                                   {{ 'checked' if config.ocr.preprocessing.denoise else '' }}>
+                                            <label class="form-check-label" for="denoise">
+                                                <strong>Rauschunterdrückung</strong>
+                                                <br><small class="text-secondary">Entfernt Bildrauschen</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="sharpen"
+                                                   {{ 'checked' if config.ocr.preprocessing.sharpen else '' }}>
+                                            <label class="form-check-label" for="sharpen">
+                                                <strong>Schärfen</strong>
+                                                <br><small class="text-secondary">Verbessert Kantenschärfe</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="contrastEnhance"
+                                                   {{ 'checked' if config.ocr.preprocessing.contrast_enhance else '' }}>
+                                            <label class="form-check-label" for="contrastEnhance">
+                                                <strong>Kontrast verbessern</strong>
+                                                <br><small class="text-secondary">Erhöht Schrift-Kontrast (CLAHE)</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="adaptiveThreshold"
+                                                   {{ 'checked' if config.ocr.preprocessing.adaptive_threshold else '' }}>
+                                            <label class="form-check-label" for="adaptiveThreshold">
+                                                <strong>Adaptive Schwellwerte</strong>
+                                                <br><small class="text-secondary">Mehrere Binarisierungs-Varianten</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="deskew"
+                                                   {{ 'checked' if config.ocr.preprocessing.deskew else '' }}>
+                                            <label class="form-check-label" for="deskew">
+                                                <strong>Schräge korrigieren</strong>
+                                                <br><small class="text-secondary">Begradigt schräge Kennzeichen</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="morphology"
+                                                   {{ 'checked' if config.ocr.preprocessing.morphology else '' }}>
+                                            <label class="form-check-label" for="morphology">
+                                                <strong>Morphologische Operationen</strong>
+                                                <br><small class="text-secondary">Verbessert Zeichenformen</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="d-flex gap-2 mt-4">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save me-2"></i>Speichern
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" onclick="resetPreprocessingSettings()">
+                                    <i class="fas fa-undo me-2"></i>Zurücksetzen
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- ============================================ -->
+            <!-- HISTORIE EINSTELLUNGEN -->
+            <!-- ============================================ -->
+            <div class="tab-pane fade" id="historySettings" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-history text-primary me-2"></i>
+                            Historie-Einstellungen
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="historyForm">
+                            <!-- Duplikat-Filter -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-filter"></i>
+                                    Duplikat-Filter
+                                </div>
+                                
+                                <div class="form-check form-switch mb-4">
+                                    <input class="form-check-input" type="checkbox" id="filterDuplicates"
+                                           {{ 'checked' if config.history.filter_duplicates else '' }}>
+                                    <label class="form-check-label" for="filterDuplicates">
+                                        <strong>Duplikate filtern</strong>
+                                        <br><small class="text-secondary">Gleiche Kennzeichen werden nicht mehrfach hintereinander gespeichert</small>
+                                    </label>
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <label class="form-label d-flex justify-content-between align-items-center">
+                                        <span>Duplikat-Timeout</span>
+                                        <span class="value-badge" id="duplicateTimeoutDisplay">
+                                            {{ config.history.duplicate_timeout }}s
+                                        </span>
+                                    </label>
+                                    <input type="range" class="form-range" id="duplicateTimeout" 
+                                           min="10" max="600" step="10"
+                                           value="{{ config.history.duplicate_timeout }}">
+                                    <small class="text-secondary">
+                                        Zeit in Sekunden, bis ein gleiches Kennzeichen erneut gespeichert wird.
+                                    </small>
+                                </div>
+                            </div>
+                            
+                            <!-- Speicher-Schwelle -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-check-circle"></i>
+                                    Qualitätsfilter
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label d-flex justify-content-between align-items-center">
+                                        <span>Mindest-Konfidenz zum Speichern</span>
+                                        <span class="value-badge" id="minSaveConfDisplay">
+                                            {{ (config.history.min_confidence_to_save * 100)|round|int }}%
+                                        </span>
+                                    </label>
+                                    <input type="range" class="form-range" id="minConfidenceToSave" 
+                                           min="10" max="80" step="5"
+                                           value="{{ (config.history.min_confidence_to_save * 100)|round|int }}">
+                                    <small class="text-secondary">
+                                        Erkennungen unter dieser Konfidenz werden nicht in der Historie gespeichert.
+                                    </small>
+                                </div>
+                            </div>
+                            
+                            <!-- Bilder speichern -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-images"></i>
+                                    Bilder speichern
+                                </div>
+                                
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="saveVehicleImage"
+                                           {{ 'checked' if config.history.save_vehicle_image else '' }}>
+                                    <label class="form-check-label" for="saveVehicleImage">
+                                        <strong>Fahrzeug-Bild speichern</strong>
+                                        <br><small class="text-secondary">Speichert das erkannte Fahrzeug als Bild</small>
+                                    </label>
+                                </div>
+                                
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="savePlateImage"
+                                           {{ 'checked' if config.history.save_plate_image else '' }}>
+                                    <label class="form-check-label" for="savePlateImage">
+                                        <strong>Kennzeichen-Bild speichern</strong>
+                                        <br><small class="text-secondary">Speichert das erkannte Kennzeichen als Bild</small>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="d-flex gap-2 mt-4">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save me-2"></i>Speichern
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- ============================================ -->
+            <!-- SPEICHER -->
+            <!-- ============================================ -->
+            <div class="tab-pane fade" id="storage" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-database text-primary me-2"></i>
+                            Speicher-Einstellungen
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="storageForm">
+                            <!-- Speicheroptionen -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-save"></i>
+                                    Speicheroptionen
+                                </div>
+                                
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="savePlates"
+                                           {{ 'checked' if config.detection.save_detected_plates else '' }}>
+                                    <label class="form-check-label" for="savePlates">
+                                        <strong>Erkannte Kennzeichen-Bilder speichern</strong>
+                                        <br><small class="text-secondary">Speichert Bilder in data/plates_detected/</small>
+                                    </label>
+                                </div>
+                                
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="saveVehicles"
+                                           {{ 'checked' if config.detection.save_detected_vehicles else '' }}>
+                                    <label class="form-check-label" for="saveVehicles">
+                                        <strong>Erkannte Fahrzeug-Bilder speichern</strong>
+                                        <br><small class="text-secondary">Speichert Bilder in data/vehicles_detected/</small>
+                                    </label>
+                                </div>
+                                
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="saveFrames"
+                                           {{ 'checked' if config.detection.save_full_frame else '' }}>
+                                    <label class="form-check-label" for="saveFrames">
+                                        <strong>Vollständige Frames speichern</strong>
+                                        <br><small class="text-secondary">Speichert das gesamte Bild mit Markierungen</small>
+                                    </label>
+                                </div>
+                                
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="autoSaveHistory"
+                                           {{ 'checked' if config.general.auto_save_history else '' }}>
+                                    <label class="form-check-label" for="autoSaveHistory">
+                                        <strong>Automatisch in Historie speichern</strong>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <!-- Maximale Einträge -->
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-list-ol"></i>
+                                    Historie-Größe
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">Maximale Historie-Einträge</label>
+                                    <input type="number" class="form-control" id="maxHistory" style="max-width: 150px;"
+                                           min="100" max="50000" step="100"
+                                           value="{{ config.general.max_history_entries }}">
+                                    <small class="text-secondary">Älteste Einträge werden automatisch gelöscht</small>
+                                </div>
+                            </div>
+                            
+                            <div class="d-flex gap-2 mt-4">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save me-2"></i>Speichern
+                                </button>
+                            </div>
+                        </form>
+                        
+                        <hr class="my-4">
+                        
+                        <!-- Speicherinfo -->
+                        <h6 class="mb-3"><i class="fas fa-chart-pie me-2"></i>Speicherplatz-Übersicht</h6>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-3">
+                                <div class="bg-dark rounded p-3 text-center">
+                                    <div class="h4 mb-0 text-primary" id="platesCount">--</div>
+                                    <small class="text-secondary">Kennzeichen-Bilder</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="bg-dark rounded p-3 text-center">
+                                    <div class="h4 mb-0 text-success" id="vehiclesCount">--</div>
+                                    <small class="text-secondary">Fahrzeug-Bilder</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="bg-dark rounded p-3 text-center">
+                                    <div class="h4 mb-0 text-info" id="historyCount">--</div>
+                                    <small class="text-secondary">Historie-Einträge</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="bg-dark rounded p-3 text-center">
+                                    <div class="h4 mb-0 text-warning" id="storageSize">--</div>
+                                    <small class="text-secondary">Speicherplatz</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Lösch-Aktionen -->
+                        <h6 class="mb-3"><i class="fas fa-trash me-2"></i>Daten löschen</h6>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button class="btn btn-outline-warning" onclick="clearPlateImages()">
+                                <i class="fas fa-image me-2"></i>Kennzeichen-Bilder löschen
+                            </button>
+                            <button class="btn btn-outline-warning" onclick="clearVehicleImages()">
+                                <i class="fas fa-car me-2"></i>Fahrzeug-Bilder löschen
+                            </button>
+                            <button class="btn btn-outline-danger" onclick="clearAllData()">
+                                <i class="fas fa-trash-alt me-2"></i>Alle Daten löschen
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- ============================================ -->
+            <!-- ALLGEMEIN -->
+            <!-- ============================================ -->
+            <div class="tab-pane fade" id="general" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-sliders-h text-primary me-2"></i>
+                            Allgemeine Einstellungen
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="generalForm">
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-palette"></i>
+                                    Erscheinungsbild
+                                </div>
+                                
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Sprache</label>
+                                        <select class="form-select" id="language">
+                                            <option value="de" {{ 'selected' if config.general.language == 'de' else '' }}>Deutsch</option>
+                                            <option value="en" {{ 'selected' if config.general.language == 'en' else '' }}>English</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Theme</label>
+                                        <select class="form-select" id="theme">
+                                            <option value="dark" {{ 'selected' if config.general.theme == 'dark' else '' }}>Dunkel</option>
+                                            <option value="light" {{ 'selected' if config.general.theme == 'light' else '' }}>Hell (kommt bald)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-bell"></i>
+                                    Benachrichtigungen
+                                </div>
+                                
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="notifications"
+                                           {{ 'checked' if config.general.notification_enabled else '' }}>
+                                    <label class="form-check-label" for="notifications">
+                                        <strong>Browser-Benachrichtigungen</strong>
+                                        <br><small class="text-secondary">Zeigt Benachrichtigungen bei neuen Erkennungen</small>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="setting-group">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-bug"></i>
+                                    Entwickler
+                                </div>
+                                
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="debugMode"
+                                           {{ 'checked' if config.general.debug_mode else '' }}>
+                                    <label class="form-check-label" for="debugMode">
+                                        <strong>Debug-Modus</strong>
+                                        <br><small class="text-secondary">Aktiviert erweiterte Logging-Ausgaben</small>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div class="d-flex gap-2 mt-4">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save me-2"></i>Speichern
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- ============================================ -->
+            <!-- MODELLE -->
+            <!-- ============================================ -->
+            <div class="tab-pane fade" id="models" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-brain text-primary me-2"></i>
+                            ML-Modelle
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Modell-Pfade -->
+                        <div class="setting-group">
+                            <div class="setting-group-title">
+                                <i class="fas fa-folder-open"></i>
+                                Modell-Pfade
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Fahrzeug-Detektor (YOLOv8)</label>
+                                <input type="text" class="form-control" id="vehicleModel" readonly
+                                       value="{{ config.models.vehicle_detector }}">
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">Kennzeichen-Detektor</label>
+                                <input type="text" class="form-control" id="licenseModel" readonly
+                                       value="{{ config.models.license_plate_detector }}">
+                            </div>
+                        </div>
+                        
+                        <!-- Modell-Status -->
+                        <div class="setting-group">
+                            <div class="setting-group-title">
+                                <i class="fas fa-heartbeat"></i>
+                                Modell-Status
+                            </div>
+                            
+                            <div id="modelStatus">
+                                <div class="d-flex align-items-center gap-2 mb-2">
+                                    <div class="spinner-border spinner-border-sm text-primary"></div>
+                                    <span>Lade Status...</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Aktionen -->
+                        <div class="d-flex gap-2 mt-4">
+                            <button class="btn btn-warning" onclick="reloadModels()">
+                                <i class="fas fa-sync me-2"></i>Modelle neu laden
+                            </button>
+                        </div>
+                        
+                        <div class="info-box mt-4">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Die Modelle werden beim Start automatisch geladen. Ein Neuladen kann bei Problemen helfen.
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- ============================================ -->
+            <!-- ÜBER -->
+            <!-- ============================================ -->
+            <div class="tab-pane fade" id="about" role="tabpanel">
+                <div class="card">
+                    <div class="card-body text-center py-5">
+                        <i class="fas fa-car-side fa-5x text-primary mb-4"></i>
+                        <h1 class="display-5 fw-bold">PlateVision</h1>
+                        <p class="lead text-secondary">Automatische Kennzeichenerkennung mit KI</p>
+                        
+                        <hr class="my-4 w-50 mx-auto">
+                        
+                        <div class="row justify-content-center">
+                            <div class="col-md-6">
+                                <table class="table table-sm text-start">
+                                    <tr>
+                                        <td class="text-secondary">Version</td>
+                                        <td class="fw-bold">2.0.0</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="text-secondary">YOLO Version</td>
+                                        <td>YOLOv8 (Ultralytics)</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="text-secondary">OCR Engine</td>
+                                        <td>EasyOCR</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="text-secondary">Backend</td>
+                                        <td>Flask + Socket.IO</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="text-secondary">Frontend</td>
+                                        <td>Bootstrap 5</td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4">
+                            <h6>Funktionen</h6>
+                            <div class="d-flex flex-wrap justify-content-center gap-2 mt-3">
+                                <span class="badge bg-primary"><i class="fas fa-video me-1"></i>RTSP Stream</span>
+                                <span class="badge bg-success"><i class="fas fa-car me-1"></i>Fahrzeugerkennung</span>
+                                <span class="badge bg-info"><i class="fas fa-id-card me-1"></i>Kennzeichenerkennung</span>
+                                <span class="badge bg-warning text-dark"><i class="fas fa-palette me-1"></i>Farberkennung</span>
+                                <span class="badge bg-secondary"><i class="fas fa-history me-1"></i>Historie</span>
+                                <span class="badge bg-danger"><i class="fas fa-bell me-1"></i>Live-Updates</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Modal -->
+<div class="modal fade" id="confirmModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background: var(--card-bg);">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title" id="confirmModalTitle">Bestätigung</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="confirmModalBody">
+                Sind Sie sicher?
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-danger" id="confirmModalBtn">Bestätigen</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // ============================================
+    // RANGE SLIDER UPDATES
+    // ============================================
+    
+    // Detection
+    document.getElementById('confidenceThreshold').addEventListener('input', function() {
+        document.getElementById('confidenceDisplay').textContent = this.value + '%';
+    });
+    
+    document.getElementById('processInterval').addEventListener('input', function() {
+        document.getElementById('intervalDisplay').textContent = (this.value / 10).toFixed(1) + 's';
+    });
+    
+    document.getElementById('zoomFactor').addEventListener('input', function() {
+        document.getElementById('zoomDisplay').textContent = (this.value / 10).toFixed(1) + 'x';
+    });
+    
+    document.getElementById('zoomPadding').addEventListener('input', function() {
+        document.getElementById('paddingDisplay').textContent = this.value + 'px';
+    });
+    
+    // OCR
+    document.getElementById('ocrMinConfidence').addEventListener('input', function() {
+        document.getElementById('ocrConfDisplay').textContent = this.value + '%';
+    });
+    
+    // Preprocessing
+    document.getElementById('targetHeight').addEventListener('input', function() {
+        document.getElementById('targetHeightDisplay').textContent = this.value + 'px';
+    });
+    
+    document.getElementById('minWidth').addEventListener('input', function() {
+        document.getElementById('minWidthDisplay').textContent = this.value + 'px';
+    });
+    
+    document.getElementById('resizeFactor').addEventListener('input', function() {
+        document.getElementById('resizeFactorDisplay').textContent = (this.value / 10).toFixed(1) + 'x';
+    });
+    
+    // History
+    document.getElementById('duplicateTimeout').addEventListener('input', function() {
+        document.getElementById('duplicateTimeoutDisplay').textContent = this.value + 's';
+    });
+    
+    document.getElementById('minConfidenceToSave').addEventListener('input', function() {
+        document.getElementById('minSaveConfDisplay').textContent = this.value + '%';
+    });
+    
+    // ============================================
+    // FORM SUBMISSIONS
+    // ============================================
+    
+    // Detection Form
+    document.getElementById('detectionForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const data = {
+            confidence_threshold: document.getElementById('confidenceThreshold').value / 100,
+            process_interval: document.getElementById('processInterval').value / 10,
+            car_detection_enabled: document.getElementById('carDetectionEnabled').checked,
+            zoom_enabled: document.getElementById('zoomEnabled').checked,
+            zoom_factor: document.getElementById('zoomFactor').value / 10,
+            zoom_padding: parseInt(document.getElementById('zoomPadding').value),
+            min_plate_width: parseInt(document.getElementById('minPlateWidth').value),
+            min_plate_height: parseInt(document.getElementById('minPlateHeight').value)
+        };
+        
+        saveConfig('/api/config/detection', data, 'Erkennungs-Einstellungen');
+    });
+    
+    // OCR Form
+    document.getElementById('ocrForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const languages = [];
+        ['En', 'De', 'Fr', 'It', 'Es', 'Pl'].forEach(lang => {
+            const el = document.getElementById('lang' + lang);
+            if (el && el.checked) languages.push(el.value);
+        });
+        
+        if (languages.length === 0) {
+            showToast('Fehler', 'Bitte mindestens eine Sprache auswählen', 'danger');
+            return;
+        }
+        
+        const data = {
+            languages: languages,
+            min_confidence: document.getElementById('ocrMinConfidence').value / 100,
+            gpu_enabled: document.getElementById('gpuEnabled').checked,
+            allowed_characters: document.getElementById('allowedChars').value,
+            active_mode: document.getElementById('ocrMode').value,
+            retry_on_fail: document.getElementById('retryOnFail').checked,
+            max_retries: parseInt(document.getElementById('maxRetries').value)
+        };
+        
+        saveConfig('/api/config/ocr', data, 'OCR-Einstellungen');
+    });
+    
+    // Preprocessing Form
+    document.getElementById('preprocessingForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const data = {
+            preprocessing: {
+                enabled: document.getElementById('preprocessingEnabled').checked,
+                target_height: parseInt(document.getElementById('targetHeight').value),
+                min_width: parseInt(document.getElementById('minWidth').value),
+                resize_factor: document.getElementById('resizeFactor').value / 10,
+                denoise: document.getElementById('denoise').checked,
+                sharpen: document.getElementById('sharpen').checked,
+                contrast_enhance: document.getElementById('contrastEnhance').checked,
+                adaptive_threshold: document.getElementById('adaptiveThreshold').checked,
+                deskew: document.getElementById('deskew').checked,
+                morphology: document.getElementById('morphology').checked
+            }
+        };
+        
+        saveConfig('/api/config/ocr', data, 'Vorverarbeitungs-Einstellungen');
+    });
+    
+    // History Form
+    document.getElementById('historyForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const data = {
+            filter_duplicates: document.getElementById('filterDuplicates').checked,
+            duplicate_timeout: parseInt(document.getElementById('duplicateTimeout').value),
+            min_confidence_to_save: document.getElementById('minConfidenceToSave').value / 100,
+            save_vehicle_image: document.getElementById('saveVehicleImage').checked,
+            save_plate_image: document.getElementById('savePlateImage').checked
+        };
+        
+        saveConfig('/api/config/history', data, 'Historie-Einstellungen');
+    });
+    
+    // Storage Form
+    document.getElementById('storageForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        // Detection settings
+        fetch('/api/config/detection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                save_detected_plates: document.getElementById('savePlates').checked,
+                save_detected_vehicles: document.getElementById('saveVehicles').checked,
+                save_full_frame: document.getElementById('saveFrames').checked
+            })
+        });
+        
+        // General settings
+        fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                general: {
+                    auto_save_history: document.getElementById('autoSaveHistory').checked,
+                    max_history_entries: parseInt(document.getElementById('maxHistory').value)
+                }
+            })
+        })
+        .then(() => showToast('Erfolg', 'Speicher-Einstellungen gespeichert', 'success'));
+    });
+    
+    // General Form
+    document.getElementById('generalForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const data = {
+            general: {
+                language: document.getElementById('language').value,
+                theme: document.getElementById('theme').value,
+                notification_enabled: document.getElementById('notifications').checked,
+                debug_mode: document.getElementById('debugMode').checked
+            }
+        };
+        
+        fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Erfolg', 'Allgemeine Einstellungen gespeichert', 'success');
+            }
+        });
+    });
+    
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+    
+    function saveConfig(url, data, name) {
+        fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Erfolg', name + ' gespeichert', 'success');
+            } else {
+                showToast('Fehler', result.error || 'Speichern fehlgeschlagen', 'danger');
+            }
+        })
+        .catch(error => {
+            showToast('Fehler', 'Verbindungsfehler', 'danger');
+        });
+    }
+    
+    function saveAllSettings() {
+        document.getElementById('detectionForm').dispatchEvent(new Event('submit'));
+        document.getElementById('ocrForm').dispatchEvent(new Event('submit'));
+        document.getElementById('preprocessingForm').dispatchEvent(new Event('submit'));
+        document.getElementById('historyForm').dispatchEvent(new Event('submit'));
+        document.getElementById('storageForm').dispatchEvent(new Event('submit'));
+        document.getElementById('generalForm').dispatchEvent(new Event('submit'));
+    }
+    
+    function resetAllSettings() {
+        showConfirm('Alle Einstellungen zurücksetzen?', 
+            'Dies setzt alle Einstellungen auf die Standardwerte zurück.', 
+            function() {
+                // Reset would require backend endpoint
+                showToast('Info', 'Bitte Seite neu laden für Standardwerte', 'info');
+            });
+    }
+    
+    function exportSettings() {
+        fetch('/api/config')
+            .then(response => response.json())
+            .then(config => {
+                const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'platevision_config_' + new Date().toISOString().split('T')[0] + '.json';
+                a.click();
+                URL.revokeObjectURL(url);
+                showToast('Erfolg', 'Einstellungen exportiert', 'success');
+            });
+    }
+    
+    // ============================================
+    // MODEL STATUS
+    // ============================================
+    
+    function loadModelStatus() {
+        fetch('/api/models/status')
+            .then(response => response.json())
+            .then(data => {
+                const statusHtml = `
+                    <div class="model-status">
+                        <span class="model-status-dot ${data.coco_model ? 'loaded' : 'not-loaded'}"></span>
+                        <span>Fahrzeug-Modell (YOLOv8): ${data.coco_model ? 'Geladen' : 'Nicht geladen'}</span>
+                    </div>
+                    <div class="model-status">
+                        <span class="model-status-dot ${data.license_model ? 'loaded' : 'not-loaded'}"></span>
+                        <span>Kennzeichen-Modell: ${data.license_model ? 'Geladen' : 'Nicht geladen'}</span>
+                    </div>
+                    <div class="model-status">
+                        <span class="model-status-dot ${data.ocr_reader ? 'loaded' : 'not-loaded'}"></span>
+                        <span>OCR Engine (EasyOCR): ${data.ocr_reader ? 'Geladen' : 'Nicht geladen'}</span>
+                    </div>
+                `;
+                document.getElementById('modelStatus').innerHTML = statusHtml;
+            })
+            .catch(() => {
+                document.getElementById('modelStatus').innerHTML = '<span class="text-danger">Status konnte nicht geladen werden</span>';
+            });
+    }
+    
+    function reloadModels() {
+        showToast('Info', 'Modelle werden neu geladen...', 'info');
+        
+        fetch('/api/models/reload', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                setTimeout(loadModelStatus, 3000);
+                showToast('Erfolg', 'Modelle werden neu geladen', 'success');
+            });
+    }
+    
+    // ============================================
+    // STORAGE INFO
+    // ============================================
+    
+    function loadStorageInfo() {
+        fetch('/api/history/statistics')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('historyCount').textContent = data.total_detections || 0;
+            });
+        
+        // Placeholder for file counts (would need backend endpoint)
+        document.getElementById('platesCount').textContent = '--';
+        document.getElementById('vehiclesCount').textContent = '--';
+        document.getElementById('storageSize').textContent = '--';
+    }
+    
+    // ============================================
+    // DELETE FUNCTIONS
+    // ============================================
+    
+    function showConfirm(title, message, onConfirm) {
+        document.getElementById('confirmModalTitle').textContent = title;
+        document.getElementById('confirmModalBody').textContent = message;
+        
+        const btn = document.getElementById('confirmModalBtn');
+        btn.onclick = function() {
+            onConfirm();
+            bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+        };
+        
+        new bootstrap.Modal(document.getElementById('confirmModal')).show();
+    }
+    
+    function clearPlateImages() {
+        showConfirm('Kennzeichen-Bilder löschen?', 
+            'Alle gespeicherten Kennzeichen-Bilder werden unwiderruflich gelöscht.', 
+            function() {
+                showToast('Info', 'Funktion in Entwicklung', 'info');
+            });
+    }
+    
+    function clearVehicleImages() {
+        showConfirm('Fahrzeug-Bilder löschen?', 
+            'Alle gespeicherten Fahrzeug-Bilder werden unwiderruflich gelöscht.', 
+            function() {
+                showToast('Info', 'Funktion in Entwicklung', 'info');
+            });
+    }
+    
+    function clearAllData() {
+        showConfirm('ALLE Daten löschen?', 
+            'Die gesamte Historie und alle Bilder werden unwiderruflich gelöscht!', 
+            function() {
+                fetch('/api/history/clear', { method: 'POST' })
+                    .then(() => {
+                        showToast('Erfolg', 'Alle Daten gelöscht', 'success');
+                        loadStorageInfo();
+                    });
+            });
+    }
+    
+    // ============================================
+    // RESET FUNCTIONS
+    // ============================================
+    
+    function resetDetectionSettings() {
+        document.getElementById('confidenceThreshold').value = 50;
+        document.getElementById('confidenceDisplay').textContent = '50%';
+        document.getElementById('processInterval').value = 5;
+        document.getElementById('intervalDisplay').textContent = '0.5s';
+        document.getElementById('carDetectionEnabled').checked = true;
+        document.getElementById('zoomEnabled').checked = true;
+        document.getElementById('zoomFactor').value = 25;
+        document.getElementById('zoomDisplay').textContent = '2.5x';
+        document.getElementById('zoomPadding').value = 100;
+        document.getElementById('paddingDisplay').textContent = '100px';
+        document.getElementById('minPlateWidth').value = 60;
+        document.getElementById('minPlateHeight').value = 15;
+        showToast('Info', 'Standardwerte geladen - Speichern nicht vergessen', 'info');
+    }
+    
+    function resetOcrSettings() {
+        document.getElementById('langEn').checked = true;
+        document.getElementById('langDe').checked = true;
+        document.getElementById('ocrMinConfidence').value = 25;
+        document.getElementById('ocrConfDisplay').textContent = '25%';
+        document.getElementById('ocrMode').value = 'enhanced';
+        document.getElementById('retryOnFail').checked = true;
+        document.getElementById('maxRetries').value = 3;
+        document.getElementById('gpuEnabled').checked = false;
+        showToast('Info', 'Standardwerte geladen - Speichern nicht vergessen', 'info');
+    }
+    
+    function resetPreprocessingSettings() {
+        document.getElementById('preprocessingEnabled').checked = true;
+        document.getElementById('targetHeight').value = 120;
+        document.getElementById('targetHeightDisplay').textContent = '120px';
+        document.getElementById('minWidth').value = 200;
+        document.getElementById('minWidthDisplay').textContent = '200px';
+        document.getElementById('resizeFactor').value = 40;
+        document.getElementById('resizeFactorDisplay').textContent = '4.0x';
+        document.getElementById('denoise').checked = true;
+        document.getElementById('sharpen').checked = true;
+        document.getElementById('contrastEnhance').checked = true;
+        document.getElementById('adaptiveThreshold').checked = true;
+        document.getElementById('deskew').checked = true;
+        document.getElementById('morphology').checked = true;
+        showToast('Info', 'Standardwerte geladen - Speichern nicht vergessen', 'info');
+    }
+    
+    // ============================================
+    // INITIALIZATION
+    // ============================================
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        loadModelStatus();
+        loadStorageInfo();
+    });
+</script>
+{% endblock %}
