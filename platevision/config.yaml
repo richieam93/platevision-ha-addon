@@ -1,0 +1,16 @@
+name: PlateVision
+slug: platevision
+description: License plate detection web app (CPU)
+version: "0.2.0"
+arch:
+  - amd64
+startup: services
+boot: auto
+init: false
+
+ports:
+  5000/tcp: 8087
+ports_description:
+  5000/tcp: PlateVision Web UI
+
+webui: "http://[HOST]:[PORT:8087]"
