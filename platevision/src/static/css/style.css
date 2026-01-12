@@ -1,1 +1,400 @@
+/* License Plate Detection - Custom Styles */
 
+:root {
+    --primary-color: #2c3e50;
+    --secondary-color: #3498db;
+    --success-color: #27ae60;
+    --danger-color: #e74c3c;
+    --warning-color: #f39c12;
+    --info-color: #17a2b8;
+    --dark-color: #1a1a2e;
+    --light-color: #f8f9fa;
+}
+
+body {
+    background-color: #f0f2f5;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Navbar */
+.navbar {
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.navbar-brand {
+    font-weight: bold;
+    font-size: 1.3rem;
+}
+
+.nav-link {
+    transition: all 0.3s ease;
+    border-radius: 5px;
+    margin: 0 5px;
+}
+
+.nav-link:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.nav-link.active {
+    background-color: var(--secondary-color) !important;
+}
+
+/* Cards */
+.card {
+    border: none;
+    border-radius: 12px;
+    box-shadow: 0 2px 15px rgba(0, 0, 0, 0.08);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.12);
+}
+
+.card-header {
+    background-color: white;
+    border-bottom: 1px solid #eee;
+    font-weight: 600;
+    padding: 15px 20px;
+    border-radius: 12px 12px 0 0 !important;
+}
+
+.card-body {
+    padding: 20px;
+}
+
+/* Statistik-Karten */
+.card.bg-primary, .card.bg-success, .card.bg-info, .card.bg-warning {
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.card.bg-primary:hover, .card.bg-success:hover, 
+.card.bg-info:hover, .card.bg-warning:hover {
+    transform: translateY(-5px);
+}
+
+/* Drop Zone */
+.drop-zone {
+    border: 3px dashed #ccc;
+    border-radius: 15px;
+    padding: 50px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background-color: #fafafa;
+}
+
+.drop-zone:hover {
+    border-color: var(--secondary-color);
+    background-color: rgba(52, 152, 219, 0.05);
+}
+
+.drop-zone.dragover {
+    border-color: var(--success-color);
+    background-color: rgba(39, 174, 96, 0.1);
+}
+
+.drop-zone i {
+    color: #999;
+    margin-bottom: 15px;
+}
+
+.drop-zone p {
+    margin: 0;
+    color: #666;
+}
+
+/* Stream Container */
+#streamContainer {
+    min-height: 400px;
+    background-color: #1a1a1a;
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.stream-placeholder {
+    color: #666;
+    text-align: center;
+}
+
+.stream-placeholder i {
+    font-size: 4rem;
+    margin-bottom: 20px;
+}
+
+#streamImage {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Tabellen */
+.table {
+    margin-bottom: 0;
+}
+
+.table thead th {
+    background-color: #f8f9fa;
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+    color: #495057;
+}
+
+.table tbody tr:hover {
+    background-color: rgba(52, 152, 219, 0.05);
+}
+
+/* Buttons */
+.btn {
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background-color: var(--secondary-color);
+    border-color: var(--secondary-color);
+}
+
+.btn-primary:hover {
+    background-color: #2980b9;
+    border-color: #2980b9;
+    transform: translateY(-2px);
+}
+
+.btn-success {
+    background-color: var(--success-color);
+    border-color: var(--success-color);
+}
+
+.btn-danger {
+    background-color: var(--danger-color);
+    border-color: var(--danger-color);
+}
+
+/* Form Controls */
+.form-control, .form-select {
+    border-radius: 8px;
+    padding: 12px 15px;
+    border: 1px solid #ddd;
+    transition: all 0.3s ease;
+}
+
+.form-control:focus, .form-select:focus {
+    border-color: var(--secondary-color);
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.2);
+}
+
+.form-range::-webkit-slider-thumb {
+    background-color: var(--secondary-color);
+}
+
+.form-check-input:checked {
+    background-color: var(--secondary-color);
+    border-color: var(--secondary-color);
+}
+
+/* Badges */
+.badge {
+    padding: 8px 12px;
+    font-weight: 500;
+    border-radius: 6px;
+}
+
+/* Alerts */
+.alert {
+    border-radius: 10px;
+    border: none;
+}
+
+/* Progress Bar */
+.progress {
+    height: 10px;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    background-color: var(--secondary-color);
+}
+
+/* Toast */
+.toast {
+    border-radius: 10px;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.15);
+}
+
+/* Pagination */
+.pagination {
+    gap: 5px;
+}
+
+.page-link {
+    border-radius: 8px;
+    padding: 10px 15px;
+    color: var(--secondary-color);
+    border: 1px solid #ddd;
+}
+
+.page-item.active .page-link {
+    background-color: var(--secondary-color);
+    border-color: var(--secondary-color);
+}
+
+/* Result Area */
+#resultArea {
+    min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.placeholder-content {
+    color: #999;
+}
+
+.result-image {
+    max-width: 100%;
+    border-radius: 10px;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.15);
+}
+
+.plate-info {
+    background-color: #f8f9fa;
+    border-radius: 10px;
+    padding: 15px;
+    margin-top: 15px;
+}
+
+.plate-text {
+    font-size: 1.8rem;
+    font-weight: bold;
+    color: var(--primary-color);
+    font-family: 'Courier New', monospace;
+    background-color: #fff3cd;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 2px solid #ffc107;
+}
+
+/* Thumbnail Images in Tables */
+.table-thumbnail {
+    width: 60px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: transform 0.3s ease;
+}
+
+.table-thumbnail:hover {
+    transform: scale(1.1);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .card-body {
+        padding: 15px;
+    }
+    
+    .drop-zone {
+        padding: 30px 15px;
+    }
+    
+    .navbar-brand {
+        font-size: 1.1rem;
+    }
+    
+    .btn {
+        padding: 8px 15px;
+    }
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.tab-content {
+    animation: fadeIn 0.3s ease;
+}
+
+/* Loading Spinner */
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(255,255,255,.3);
+    border-radius: 50%;
+    border-top-color: #fff;
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* License Plate Display */
+.license-plate-display {
+    display: inline-block;
+    background: linear-gradient(145deg, #ffffff, #f0f0f0);
+    border: 3px solid #333;
+    border-radius: 8px;
+    padding: 8px 15px;
+    font-family: 'Courier New', Courier, monospace;
+    font-weight: bold;
+    font-size: 1.2rem;
+    letter-spacing: 2px;
+    box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
+}
+
+/* Status Indicators */
+.status-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 5px;
+}
+
+.status-online {
+    background-color: var(--success-color);
+    box-shadow: 0 0 10px var(--success-color);
+    animation: pulse 2s infinite;
+}
+
+.status-offline {
+    background-color: #999;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
