@@ -76,6 +76,17 @@ class RTSPHandler:
         """Anzahl verarbeiteter Frames"""
         return self.frame_count
     
+    def get_status(self):
+        """Gibt den aktuellen Stream-Status zurück"""
+        return {
+            'status': 'running' if self.running else 'stopped',
+            'connected': self.connected,
+            'fps': self.get_fps(),
+            'frame_count': self.get_frame_count(),
+            'url': self.get_rtsp_url(),
+            'error': None if self.connected else 'Keine Verbindung'
+        }
+    
     def get_current_frame(self):
         """Aktuelles Frame (annotiert) zurückgeben"""
         with self.frame_lock:
