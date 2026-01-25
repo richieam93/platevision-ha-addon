@@ -461,6 +461,9 @@
                 } else {
                     showToast('Fehler', data.status?.error || 'Start fehlgeschlagen', 'danger');
                 }
+            })
+            .catch(error => {
+                showToast('Fehler', 'Verbindungsfehler: ' + error.message, 'danger');
             });
     }
     
@@ -470,6 +473,9 @@
             .then(data => {
                 showToast('Stream', 'Stream gestoppt', 'warning');
                 setTimeout(() => location.reload(), 1000);
+            })
+            .catch(error => {
+                showToast('Fehler', 'Verbindungsfehler: ' + error.message, 'danger');
             });
     }
     
