@@ -123,6 +123,110 @@
                 </form>
             </div>
         </div>
+
+        <!-- Area Selection -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-crop-alt"></i>
+                    Analyse-Bereich festlegen
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-8">
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="enableAreaSelection">
+                                <label class="form-check-label" for="enableAreaSelection">
+                                    Analyse auf bestimmten Bereich beschränken
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div id="areaSelectionControls" style="display: none;">
+                            <div class="mb-3">
+                                <label class="form-label">Bereich auswählen</label>
+                                <div class="alert alert-info small mb-3">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    Klicken und ziehen Sie im Vorschaubild, um den Analysebereich zu definieren.
+                                    Nur Objekte innerhalb dieses Bereichs werden erkannt.
+                                </div>
+                                
+                                <!-- Preview Container -->
+                                <div class="position-relative border rounded" style="height: 400px; background: #000;">
+                                    <img id="previewStream" src="" alt="Stream Vorschau" 
+                                         style="width: 100%; height: 100%; object-fit: contain; display: none;">
+                                    <canvas id="previewCanvas" width="1280" height="720" 
+                                            style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair;"></canvas>
+                                    <div id="noPreviewMessage" class="position-absolute top-50 start-50 translate-middle text-white text-center">
+                                        <i class="fas fa-video-slash fa-3x mb-3"></i>
+                                        <p class="mb-3">Stream nicht aktiv</p>
+                                        <button class="btn btn-primary btn-sm" onclick="startPreviewStream()">
+                                            <i class="fas fa-play me-2"></i>Preview starten
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">X-Position (Links)</label>
+                                    <input type="number" class="form-control" id="areaX" min="0" max="1920" value="0">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Y-Position (Oben)</label>
+                                    <input type="number" class="form-control" id="areaY" min="0" max="1080" value="0">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Breite</label>
+                                    <input type="number" class="form-control" id="areaWidth" min="100" max="1920" value="640">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Höhe</label>
+                                    <input type="number" class="form-control" id="areaHeight" min="100" max="1080" value="360">
+                                </div>
+                            </div>
+                            
+                            <div class="mt-3">
+                                <button type="button" class="btn btn-outline-primary" onclick="resetArea()">
+                                    <i class="fas fa-undo me-2"></i>Ganzen Bereich verwenden
+                                </button>
+                                <button type="button" class="btn btn-outline-warning" onclick="centerArea()">
+                                    <i class="fas fa-crosshairs me-2"></i>Mitte zentrieren
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-4">
+                        <div class="alert alert-secondary">
+                            <h6 class="mb-2">Hinweise zur Bereichsauswahl</h6>
+                            <ul class="small mb-0 ps-3">
+                                <li>Wählen Sie nur den Bereich aus, in dem Sie Fahrzeuge erwarten</li>
+                                <li>Kleinere Bereiche verbessern die Erkennungsgeschwindigkeit</li>
+                                <li>Vermeiden Sie Bereiche mit viel Bewegung (Bäume, Wasser)</li>
+                                <li>Der Bereich sollte die typische Position von Nummernschildern abdecken</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="card bg-dark text-white">
+                            <div class="card-body">
+                                <h6 class="card-title">Aktueller Bereich</h6>
+                                <div id="currentAreaInfo" class="small">
+                                    <div class="mb-2">
+                                        <strong>Status:</strong> <span class="badge bg-secondary">Deaktiviert</span>
+                                    </div>
+                                    <div class="mb-1">Position: <span id="areaPosition">0, 0</span></div>
+                                    <div class="mb-1">Größe: <span id="areaSize">0 × 0</span></div>
+                                    <div class="mb-1">Fläche: <span id="areaPixels">0 Pixel</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         
         <!-- Connection Test Results -->
         <div class="card" id="testResultCard" style="display: none;">
@@ -250,6 +354,9 @@
 
 {% block extra_js %}
 <script>
+    // Flask Configuration as JavaScript Object
+    window.flaskConfig = {{ config|tojson|safe }};
+    
     // RTSP URL Templates
     const templates = {
         hikvision: 'rtsp://{user}:{pass}@{ip}:554/Streaming/Channels/101',
@@ -364,6 +471,319 @@
                 showToast('Stream', 'Stream gestoppt', 'warning');
                 setTimeout(() => location.reload(), 1000);
             });
+    }
+    
+    // ============================================
+    // AREA SELECTION LOGIC
+    // ============================================
+    
+    let isAreaSelectionEnabled = false;
+    let isDrawing = false;
+    let startX = 0;
+    let startY = 0;
+    let currentArea = { x: 0, y: 0, width: 640, height: 360 };
+    let previewStreamActive = false;
+    let previewInterval = null;
+    
+    // Initialize area selection
+    document.addEventListener('DOMContentLoaded', function() {
+        // Load saved area configuration from Flask template
+        const flaskConfig = window.flaskConfig || {};
+        const areaConfig = flaskConfig.rtsp?.analysis_area || {};
+        
+        if (areaConfig.enabled && areaConfig.area) {
+            document.getElementById('enableAreaSelection').checked = true;
+            currentArea = areaConfig.area;
+            updateAreaInputs();
+            updateAreaSelectionUI();
+            drawSelection();
+        }
+        
+        // Also fetch latest config to ensure we have current data
+        fetch('/api/config')
+            .then(response => response.json())
+            .then(apiConfig => {
+                const latestAreaConfig = apiConfig.rtsp?.analysis_area || {};
+                if (latestAreaConfig.enabled && latestAreaConfig.area) {
+                    document.getElementById('enableAreaSelection').checked = true;
+                    currentArea = latestAreaConfig.area;
+                    updateAreaInputs();
+                    updateAreaSelectionUI();
+                    drawSelection();
+                }
+            })
+            .catch(error => {
+                console.warn('Konnte aktuelle Konfiguration nicht laden:', error);
+            });
+        
+        // Event listeners for area selection
+        const canvas = document.getElementById('previewCanvas');
+        const enableCheckbox = document.getElementById('enableAreaSelection');
+        
+        enableCheckbox.addEventListener('change', function() {
+            isAreaSelectionEnabled = this.checked;
+            const controls = document.getElementById('areaSelectionControls');
+            if (isAreaSelectionEnabled) {
+                controls.style.display = 'block';
+                if (!previewStreamActive) {
+                    startPreviewStream();
+                }
+            } else {
+                controls.style.display = 'none';
+                stopPreviewStream();
+            }
+            updateAreaSelectionUI();
+        });
+        
+        // Canvas drawing events
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', drawArea);
+        canvas.addEventListener('mouseup', endDrawing);
+        canvas.addEventListener('mouseleave', endDrawing);
+        
+        // Input field events
+        document.getElementById('areaX').addEventListener('input', updateAreaFromInputs);
+        document.getElementById('areaY').addEventListener('input', updateAreaFromInputs);
+        document.getElementById('areaWidth').addEventListener('input', updateAreaFromInputs);
+        document.getElementById('areaHeight').addEventListener('input', updateAreaFromInputs);
+    });
+    
+    function startPreviewStream() {
+        if (previewStreamActive) return;
+        
+        const previewImg = document.getElementById('previewStream');
+        const noPreviewMsg = document.getElementById('noPreviewMessage');
+        
+        previewImg.src = '/api/stream/feed?' + Date.now();
+        previewImg.style.display = 'block';
+        noPreviewMsg.style.display = 'none';
+        previewStreamActive = true;
+        
+        // Update canvas size based on stream resolution
+        updateCanvasSize();
+        
+        // Auto-refresh preview
+        previewInterval = setInterval(() => {
+            if (previewStreamActive) {
+                previewImg.src = '/api/stream/feed?' + Date.now();
+            }
+        }, 1000);
+    }
+    
+    function stopPreviewStream() {
+        if (!previewStreamActive) return;
+        
+        const previewImg = document.getElementById('previewStream');
+        const noPreviewMsg = document.getElementById('noPreviewMessage');
+        
+        previewImg.src = '';
+        previewImg.style.display = 'none';
+        noPreviewMsg.style.display = 'block';
+        previewStreamActive = false;
+        
+        if (previewInterval) {
+            clearInterval(previewInterval);
+            previewInterval = null;
+        }
+    }
+    
+    function updateCanvasSize() {
+        const canvas = document.getElementById('previewCanvas');
+        const img = document.getElementById('previewStream');
+        
+        if (img.naturalWidth && img.naturalHeight) {
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            // Update max values for inputs
+            document.getElementById('areaX').max = img.naturalWidth;
+            document.getElementById('areaY').max = img.naturalHeight;
+            document.getElementById('areaWidth').max = img.naturalWidth;
+            document.getElementById('areaHeight').max = img.naturalHeight;
+        }
+    }
+    
+    function startDrawing(e) {
+        if (!isAreaSelectionEnabled) return;
+        
+        const canvas = document.getElementById('previewCanvas');
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        startX = (e.clientX - rect.left) * scaleX;
+        startY = (e.clientY - rect.top) * scaleY;
+        isDrawing = true;
+    }
+    
+    function drawArea(e) {
+        if (!isDrawing || !isAreaSelectionEnabled) return;
+        
+        const canvas = document.getElementById('previewCanvas');
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        const currentX = (e.clientX - rect.left) * scaleX;
+        const currentY = (e.clientY - rect.top) * scaleY;
+        
+        let x = Math.min(startX, currentX);
+        let y = Math.min(startY, currentY);
+        let width = Math.abs(currentX - startX);
+        let height = Math.abs(currentY - startY);
+        
+        // Minimum size constraints
+        width = Math.max(width, 50);
+        height = Math.max(height, 50);
+        
+        // Boundary constraints
+        x = Math.max(0, Math.min(x, canvas.width - width));
+        y = Math.max(0, Math.min(y, canvas.height - height));
+        width = Math.min(width, canvas.width - x);
+        height = Math.min(height, canvas.height - y);
+        
+        currentArea = { x, y, width, height };
+        updateAreaInputs();
+        drawSelection();
+    }
+    
+    function endDrawing() {
+        isDrawing = false;
+        saveAreaConfiguration();
+    }
+    
+    function drawSelection() {
+        const canvas = document.getElementById('previewCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Clear previous drawing
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (!isAreaSelectionEnabled) return;
+        
+        const { x, y, width, height } = currentArea;
+        
+        // Draw semi-transparent overlay
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Clear the selected area
+        ctx.clearRect(x, y, width, height);
+        
+        // Draw selection border
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, width, height);
+        
+        // Draw selection info
+        ctx.fillStyle = '#00ff00';
+        ctx.font = '14px Arial';
+        ctx.fillText(`Bereich: ${Math.round(width)} × ${Math.round(height)}px`, x + 5, y + 20);
+    }
+    
+    function updateAreaInputs() {
+        document.getElementById('areaX').value = Math.round(currentArea.x);
+        document.getElementById('areaY').value = Math.round(currentArea.y);
+        document.getElementById('areaWidth').value = Math.round(currentArea.width);
+        document.getElementById('areaHeight').value = Math.round(currentArea.height);
+        updateAreaInfo();
+    }
+    
+    function updateAreaFromInputs() {
+        currentArea.x = parseInt(document.getElementById('areaX').value) || 0;
+        currentArea.y = parseInt(document.getElementById('areaY').value) || 0;
+        currentArea.width = parseInt(document.getElementById('areaWidth').value) || 640;
+        currentArea.height = parseInt(document.getElementById('areaHeight').value) || 360;
+        
+        // Boundary constraints
+        const canvas = document.getElementById('previewCanvas');
+        currentArea.x = Math.max(0, Math.min(currentArea.x, canvas.width - currentArea.width));
+        currentArea.y = Math.max(0, Math.min(currentArea.y, canvas.height - currentArea.height));
+        currentArea.width = Math.min(currentArea.width, canvas.width - currentArea.x);
+        currentArea.height = Math.min(currentArea.height, canvas.height - currentArea.y);
+        
+        updateAreaInputs();
+        drawSelection();
+        saveAreaConfiguration();
+    }
+    
+    function updateAreaInfo() {
+        const { x, y, width, height } = currentArea;
+        const totalPixels = width * height;
+        const canvas = document.getElementById('previewCanvas');
+        const totalArea = canvas.width * canvas.height;
+        const percentage = totalArea > 0 ? Math.round((totalPixels / totalArea) * 100) : 0;
+        
+        document.getElementById('areaPosition').textContent = `${Math.round(x)}, ${Math.round(y)}`;
+        document.getElementById('areaSize').textContent = `${Math.round(width)} × ${Math.round(height)}`;
+        document.getElementById('areaPixels').textContent = `${totalPixels.toLocaleString()} Pixel (${percentage}%)`;
+    }
+    
+    function resetArea() {
+        const canvas = document.getElementById('previewCanvas');
+        currentArea = {
+            x: 0,
+            y: 0,
+            width: canvas.width,
+            height: canvas.height
+        };
+        updateAreaInputs();
+        drawSelection();
+        saveAreaConfiguration();
+    }
+    
+    function centerArea() {
+        const canvas = document.getElementById('previewCanvas');
+        const width = Math.min(800, canvas.width);
+        const height = Math.min(450, canvas.height);
+        currentArea = {
+            x: Math.round((canvas.width - width) / 2),
+            y: Math.round((canvas.height - height) / 2),
+            width: width,
+            height: height
+        };
+        updateAreaInputs();
+        drawSelection();
+        saveAreaConfiguration();
+    }
+    
+    function updateAreaSelectionUI() {
+        const statusBadge = document.querySelector('#currentAreaInfo .badge');
+        const controls = document.getElementById('areaSelectionControls');
+        
+        if (isAreaSelectionEnabled) {
+            statusBadge.textContent = 'Aktiv';
+            statusBadge.className = 'badge bg-success';
+            controls.style.display = 'block';
+        } else {
+            statusBadge.textContent = 'Deaktiviert';
+            statusBadge.className = 'badge bg-secondary';
+            controls.style.display = 'none';
+        }
+    }
+    
+    function saveAreaConfiguration() {
+        const data = {
+            analysis_area: {
+                enabled: isAreaSelectionEnabled,
+                area: currentArea
+            }
+        };
+        
+        fetch('/api/config/rtsp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                updateAreaInfo();
+                drawSelection();
+            }
+        })
+        .catch(error => {
+            console.error('Fehler beim Speichern des Analysebereichs:', error);
+        });
     }
 </script>
 {% endblock %}
