@@ -91,6 +91,15 @@ class ConfigManager:
             'resolution': {
                 'width': 1280,
                 'height': 720
+            },
+            'analysis_area': {
+                'enabled': False,
+                'area': {
+                    'x': 0,
+                    'y': 0,
+                    'width': 1280,
+                    'height': 720
+                }
             }
         },
         # Erkennungseinstellungen
@@ -378,180 +387,8 @@ class HistoryManager:
 # RTSP STREAM MANAGER
 # ============================================================
 
-class RTSPStreamManager:
-    """Verwaltet den RTSP Stream im Hintergrund"""
-    
-    def __init__(self, config_manager, history_manager, detector):
-        self.config_manager = config_manager
-        self.history_manager = history_manager
-        self.detector = detector
-        
-        self.stream = None
-        self.running = False
-        self.thread = None
-        self.current_frame = None
-        self.processed_frame = None
-        self.frame_lock = threading.Lock()
-        self.last_process_time = 0
-        self.reconnect_attempts = 0
-        self.status = "stopped"
-        self.error_message = ""
-        self.fps = 0
-        self.frame_count = 0
-        self.start_time = None
-    
-    def start(self):
-        """Startet den RTSP Stream"""
-        if self.running:
-            logger.warning("Stream läuft bereits")
-            return False
-        
-        rtsp_url = self.config_manager.get('rtsp', 'url')
-        if not rtsp_url:
-            self.error_message = "Keine RTSP URL konfiguriert"
-            return False
-        
-        self.running = True
-        self.status = "connecting"
-        self.start_time = time.time()
-        self.thread = threading.Thread(target=self._stream_loop, daemon=True)
-        self.thread.start()
-        
-        logger.info(f"RTSP Stream gestartet: {rtsp_url}")
-        return True
-    
-    def stop(self):
-        """Stoppt den RTSP Stream"""
-        self.running = False
-        if self.stream:
-            self.stream.release()
-            self.stream = None
-        self.status = "stopped"
-        self.start_time = None
-        logger.info("RTSP Stream gestoppt")
-    
-    def _stream_loop(self):
-        """Haupt-Stream-Loop"""
-        rtsp_url = self.config_manager.get('rtsp', 'url')
-        reconnect_delay = self.config_manager.get('rtsp', 'reconnect_delay') or 5
-        
-        while self.running:
-            try:
-                self.status = "connecting"
-                self.stream = cv2.VideoCapture(rtsp_url)
-                
-                if not self.stream.isOpened():
-                    raise Exception("Konnte Stream nicht öffnen")
-                
-                buffer_size = self.config_manager.get('rtsp', 'buffer_size') or 10
-                self.stream.set(cv2.CAP_PROP_BUFFERSIZE, buffer_size)
-                
-                self.status = "running"
-                self.error_message = ""
-                self.reconnect_attempts = 0
-                
-                logger.info("RTSP Stream verbunden")
-                
-                fps_start_time = time.time()
-                fps_frame_count = 0
-                
-                while self.running and self.stream.isOpened():
-                    ret, frame = self.stream.read()
-                    
-                    if not ret:
-                        raise Exception("Frame konnte nicht gelesen werden")
-                    
-                    with self.frame_lock:
-                        self.current_frame = frame.copy()
-                    
-                    fps_frame_count += 1
-                    if time.time() - fps_start_time >= 1.0:
-                        self.fps = fps_frame_count
-                        fps_frame_count = 0
-                        fps_start_time = time.time()
-                    
-                    current_time = time.time()
-                    process_interval = self.config_manager.get('detection', 'process_interval') or 0.5
-                    
-                    if current_time - self.last_process_time >= process_interval:
-                        self._process_frame(frame)
-                        self.last_process_time = current_time
-                    
-                    self.frame_count += 1
-                    time.sleep(0.01)
-                    
-            except Exception as e:
-                self.error_message = str(e)
-                self.status = "error"
-                logger.error(f"RTSP Stream Fehler: {e}")
-                
-                if self.stream:
-                    self.stream.release()
-                
-                self.reconnect_attempts += 1
-                
-                if self.running:
-                    logger.info(f"Reconnect Versuch {self.reconnect_attempts} in {reconnect_delay}s...")
-                    time.sleep(reconnect_delay)
-        
-        if self.stream:
-            self.stream.release()
-        self.status = "stopped"
-    
-    def _process_frame(self, frame):
-        """Verarbeitet einen Frame"""
-        try:
-            result = self.detector.process_frame(frame)
-            
-            with self.frame_lock:
-                self.processed_frame = result['annotated_frame']
-            
-            if result['detections']:
-                for detection in result['detections']:
-                    if detection.get('plate_text'):
-                        entry = {
-                            'plate_text': detection['plate_text'],
-                            'confidence': detection.get('confidence', 0),
-                            'source': 'rtsp_stream',
-                            'plate_image': detection.get('plate_image_base64'),
-                            'vehicle_image': detection.get('vehicle_image_base64'),
-                            'full_frame': detection.get('full_frame_base64'),
-                            'vehicle_type': detection.get('vehicle_type', 'unknown'),
-                            'vehicle_confidence': detection.get('vehicle_confidence', 0),
-                            'vehicle_color': detection.get('vehicle_color', 'unknown'),
-                            'plate_size': detection.get('plate_size'),
-                        }
-                        
-                        saved_entry = self.history_manager.add_entry(entry)
-                        
-                        if saved_entry:
-                            socketio.emit('new_detection', saved_entry)
-        
-        except Exception as e:
-            logger.error(f"Frame-Verarbeitung Fehler: {e}")
-    
-    def get_current_frame(self):
-        """Holt den aktuellen Frame"""
-        with self.frame_lock:
-            if self.processed_frame is not None:
-                return self.processed_frame
-            return self.current_frame
-    
-    def get_status(self):
-        """Holt den Stream-Status"""
-        uptime = 0
-        if self.start_time and self.status == "running":
-            uptime = int(time.time() - self.start_time)
-            
-        return {
-            'status': self.status,
-            'running': self.running,
-            'error': self.error_message,
-            'reconnect_attempts': self.reconnect_attempts,
-            'fps': self.fps,
-            'frame_count': self.frame_count,
-            'uptime': uptime
-        }
+# Import the RTSPHandler from rtsp_handler.py
+from rtsp_handler import RTSPHandler
 
 
 # ============================================================
@@ -1345,7 +1182,7 @@ class LicensePlateDetector:
 config_manager = ConfigManager()
 history_manager = HistoryManager()
 detector = LicensePlateDetector(config_manager)
-stream_manager = RTSPStreamManager(config_manager, history_manager, detector)
+stream_manager = RTSPHandler(config_manager, history_manager, detector)
 
 def init_models():
     """Lädt Modelle im Hintergrund"""
@@ -1364,7 +1201,7 @@ def index():
     return render_template('index.html', 
                           page='dashboard',
                           stats=history_manager.get_statistics(),
-                          stream_status=stream_manager.get_status(),
+                          stream_status=stream_manager.get_status() if hasattr(stream_manager, 'get_status') else {},
                           config=config_manager.config)
 
 
@@ -1374,7 +1211,7 @@ def dashboard():
     return render_template('dashboard.html',
                           page='dashboard',
                           stats=history_manager.get_statistics(),
-                          stream_status=stream_manager.get_status(),
+                          stream_status=stream_manager.get_status() if hasattr(stream_manager, 'get_status') else {},
                           config=config_manager.config)
 
 
@@ -1409,7 +1246,7 @@ def rtsp_settings():
     return render_template('rtsp_settings.html',
                           page='rtsp',
                           config=config_manager.config.get('rtsp', {}),
-                          stream_status=stream_manager.get_status())
+                          stream_status=stream_manager.get_status() if hasattr(stream_manager, 'get_status') else {})
 
 
 @app.route('/settings')
@@ -1433,7 +1270,7 @@ def live_view():
     """Live Stream Ansicht"""
     return render_template('live.html',
                           page='live',
-                          stream_status=stream_manager.get_status(),
+                          stream_status=stream_manager.get_status() if hasattr(stream_manager, 'get_status') else {},
                           config=config_manager.config)
 
 
@@ -1530,6 +1367,11 @@ def api_save_rtsp_config():
         data = request.json
         config_manager.config['rtsp'].update(data)
         config_manager.save_config()
+        
+        # RTSP Handler mit neuer Konfiguration aktualisieren
+        if hasattr(stream_manager, 'update_config'):
+            stream_manager.update_config(config_manager.config)
+        
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400

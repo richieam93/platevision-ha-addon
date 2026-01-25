@@ -14,18 +14,18 @@ from datetime import datetime
 class RTSPHandler:
     """Handler für RTSP Videostreams"""
     
-    def __init__(self, config, detector, history_callback=None):
+    def __init__(self, config_manager, history_manager, detector):
         """
         Initialisiert den RTSP Handler
         
         Args:
-            config: Konfigurationsdictionary
+            config_manager: ConfigManager Instanz
+            history_manager: HistoryManager Instanz
             detector: LicensePlateDetector Instanz
-            history_callback: Callback für neue Erkennungen
         """
-        self.config = config
+        self.config_manager = config_manager
+        self.history_manager = history_manager
         self.detector = detector
-        self.history_callback = history_callback
         
         # Stream-Variablen
         self.cap = None
@@ -58,7 +58,7 @@ class RTSPHandler:
     
     def get_rtsp_url(self):
         """RTSP URL aus Konfiguration holen"""
-        return self.config.get('rtsp', {}).get('url', '')
+        return self.config_manager.get('rtsp', 'url') or ''
     
     def is_running(self):
         """Prüft ob Stream läuft"""
@@ -98,7 +98,7 @@ class RTSPHandler:
             
             # Puffer-Einstellungen
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 
-                        self.config.get('rtsp', {}).get('buffer_size', 1))
+                        self.config_manager.get('rtsp', 'buffer_size') or 1)
             
             if self.cap.isOpened():
                 # Test-Frame lesen
@@ -155,7 +155,7 @@ class RTSPHandler:
     
     def _capture_loop(self):
         """Capture-Schleife für RTSP Stream"""
-        reconnect_delay = self.config.get('rtsp', {}).get('reconnect_delay', 5)
+        reconnect_delay = self.config_manager.get('rtsp', 'reconnect_delay') or 5
         
         while self.running:
             if not self.connected:
@@ -207,6 +207,10 @@ class RTSPHandler:
                 
                 # Erkennung durchführen
                 if self.detector:
+                    # Update detector config with current RTSP config
+                    if hasattr(self.detector, 'update_config'):
+                        self.detector.update_config(self.config_manager.config)
+                    
                     results = self.detector.detect(frame, source="rtsp")
                     
                     # Annotiertes Frame speichern
@@ -251,11 +255,13 @@ class RTSPHandler:
                              if current_time - v < self.plate_cooldown * 2}
         
         # Zur Historie hinzufügen
-        if self.history_callback:
-            self.history_callback({
-                "license_plate": plate_text,
-                "confidence": plate_info.get('confidence', 0),
-                "source": "rtsp",
-                "car_detected": car_detected
-            })
+        entry = {
+            "plate_text": plate_text,
+            "confidence": plate_info.get('confidence', 0),
+            "source": "rtsp",
+            "car_detected": car_detected
+        }
+        
+        saved_entry = self.history_manager.add_entry(entry)
+        if saved_entry:
             print(f"Nummernschild erkannt: {plate_text}")
