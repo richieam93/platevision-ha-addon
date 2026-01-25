@@ -1,7 +1,7 @@
 name: PlateVision
 slug: platevision
 description: License plate detection web app (CPU)
-version: "0.3.1"
+version: "0.3.2"
 arch:
   - amd64
 startup: services
