@@ -316,7 +316,7 @@
                 </h6>
                 
                 <div class="position-relative">
-                    <pre class="bg-dark p-3 rounded" style="font-size: 0.8rem; overflow-x: auto;"><code id="haYamlConfig"># PlateVision Integration
+                    <pre class="bg-dark p-3 rounded" style="font-size: 0.8rem; overflow-x: auto;"><code id="haYamlConfig">{% raw %}# PlateVision Integration
 
 # REST Sensor für Kennzeichen-Text
 sensor:
@@ -360,7 +360,7 @@ camera:
   - platform: mjpeg
     name: "PlateVision Live"
     mjpeg_url: http://<PLATEVISION_IP>:5000/api/stream/feed
-    verify_ssl: false</code></pre>
+    verify_ssl: false{% endraw %}</code></pre>
                     <button class="btn btn-sm btn-outline-primary position-absolute" style="top: 0.5rem; right: 0.5rem;" onclick="copyYamlConfig()">
                         <i class="fas fa-copy me-1"></i>Kopieren
                     </button>
