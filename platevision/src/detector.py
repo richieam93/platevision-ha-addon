@@ -255,7 +255,8 @@ class LicensePlateDetector:
             'cars': [],
             'car_detected': False,
             'cars_count': 0,
-            'annotated_image': image.copy()
+            'annotated_image': image.copy(),
+            'analysis_area': None
         }
         
         h, w = image.shape[:2]
