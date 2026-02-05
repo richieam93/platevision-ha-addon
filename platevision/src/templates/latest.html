@@ -323,7 +323,7 @@ sensor:
   - platform: rest
     name: "Letztes Kennzeichen"
     resource: http://<PLATEVISION_IP>:5000/api/latest/plate
-    value_template: "{{ value_json.plate_text }}"
+            value_template: "{{ value_json.plate_text }}"
     scan_interval: 10
     json_attributes:
       - confidence
