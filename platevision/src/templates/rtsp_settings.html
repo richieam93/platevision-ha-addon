@@ -41,26 +41,11 @@
                     <div class="mb-4">
                         <label class="form-label">URL Vorlagen</label>
                         <div class="d-flex flex-wrap gap-2">
-                            <button type="button" class="btn btn-sm btn-outline-primary" 
-                                    onclick="setTemplate('hikvision')">
-                                Hikvision
-                            </button>
-                            <button type="button" class="btn btn-sm btn-outline-primary" 
-                                    onclick="setTemplate('dahua')">
-                                Dahua
-                            </button>
-                            <button type="button" class="btn btn-sm btn-outline-primary" 
-                                    onclick="setTemplate('reolink')">
-                                Reolink
-                            </button>
-                            <button type="button" class="btn btn-sm btn-outline-primary" 
-                                    onclick="setTemplate('axis')">
-                                Axis
-                            </button>
-                            <button type="button" class="btn btn-sm btn-outline-primary" 
-                                    onclick="setTemplate('generic')">
-                                Generisch
-                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="setTemplate('hikvision')">Hikvision</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="setTemplate('dahua')">Dahua</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="setTemplate('reolink')">Reolink</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="setTemplate('axis')">Axis</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="setTemplate('generic')">Generisch</button>
                         </div>
                     </div>
                     
@@ -85,33 +70,6 @@
                     
                     <hr class="my-4">
                     
-                    <!-- Resolution Settings -->
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label">Auflösung Breite</label>
-                            <select class="form-select" id="resolutionWidth">
-                                <option value="640" {{ 'selected' if config and config.resolution.width == 640 else '' }}>640px (SD)</option>
-                                <option value="1280" {{ 'selected' if config and config.resolution.width == 1280 else '' }}>1280px (HD)</option>
-                                <option value="1920" {{ 'selected' if config and config.resolution.width == 1920 else '' }}>1920px (Full HD)</option>
-                                <option value="2560" {{ 'selected' if config and config.resolution.width == 2560 else '' }}>2560px (2K)</option>
-                                <option value="3840" {{ 'selected' if config and config.resolution.width == 3840 else '' }}>3840px (4K)</option>
-                            </select>
-                        </div>
-                        
-                        <div class="col-md-6">
-                            <label class="form-label">Auflösung Höhe</label>
-                            <select class="form-select" id="resolutionHeight">
-                                <option value="480" {{ 'selected' if config and config.resolution.height == 480 else '' }}>480px (SD)</option>
-                                <option value="720" {{ 'selected' if config and config.resolution.height == 720 else '' }}>720px (HD)</option>
-                                <option value="1080" {{ 'selected' if config and config.resolution.height == 1080 else '' }}>1080px (Full HD)</option>
-                                <option value="1440" {{ 'selected' if config and config.resolution.height == 1440 else '' }}>1440px (2K)</option>
-                                <option value="2160" {{ 'selected' if config and config.resolution.height == 2160 else '' }}>2160px (4K)</option>
-                            </select>
-                        </div>
-                    </div>
-                    
-                    <hr class="my-4">
-                    
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary">
                             <i class="fas fa-save me-2"></i>Einstellungen speichern
@@ -126,100 +84,148 @@
 
         <!-- Area Selection -->
         <div class="card mb-4">
-            <div class="card-header">
+            <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0">
                     <i class="fas fa-crop-alt"></i>
                     Analyse-Bereich festlegen
                 </h5>
+                <span id="areaStatusBadge" class="badge bg-secondary">Deaktiviert</span>
             </div>
             <div class="card-body">
-                <div class="row">
-                    <div class="col-md-8">
-                        <div class="mb-3">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="enableAreaSelection">
-                                <label class="form-check-label" for="enableAreaSelection">
-                                    Analyse auf bestimmten Bereich beschränken
-                                </label>
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="enableAreaSelection" style="width: 3em; height: 1.5em;">
+                        <label class="form-check-label ms-2" for="enableAreaSelection">
+                            <strong>Analyse auf bestimmten Bereich beschränken</strong>
+                        </label>
+                    </div>
+                    <small class="text-secondary d-block mt-1">
+                        Nur Fahrzeuge und Kennzeichen innerhalb des markierten Bereichs werden erkannt.
+                    </small>
+                </div>
+                
+                <div id="areaSelectionControls" style="display: none;">
+                    <div class="alert alert-info small mb-3">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Anleitung:</strong> Klicken und ziehen Sie im Vorschaubild, um den Analysebereich zu definieren.
+                        Die Koordinaten werden automatisch auf die tatsächliche Stream-Auflösung skaliert.
+                    </div>
+                    
+                    <!-- Preview Container -->
+                    <div class="mb-3">
+                        <label class="form-label">Stream Vorschau</label>
+                        <div id="previewContainer" class="position-relative border rounded overflow-hidden" 
+                             style="background: #1a1a2e; aspect-ratio: 16/9; max-height: 500px;">
+                            
+                            <!-- Stream Image -->
+                            <img id="previewImage" src="" alt="Stream Vorschau" 
+                                 style="width: 100%; height: 100%; object-fit: contain; display: none;"
+                                 crossorigin="anonymous">
+                            
+                            <!-- Canvas Overlay für Zeichnung -->
+                            <canvas id="selectionCanvas" 
+                                    style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair;">
+                            </canvas>
+                            
+                            <!-- Placeholder wenn kein Stream -->
+                            <div id="noStreamPlaceholder" class="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column justify-content-center align-items-center text-white">
+                                <i class="fas fa-video-slash fa-4x mb-3 text-secondary"></i>
+                                <p class="mb-3 text-secondary">Stream nicht aktiv oder lädt...</p>
+                                <button class="btn btn-primary" onclick="loadPreviewImage()">
+                                    <i class="fas fa-sync me-2"></i>Vorschau laden
+                                </button>
                             </div>
                         </div>
                         
-                        <div id="areaSelectionControls" style="display: none;">
-                            <div class="mb-3">
-                                <label class="form-label">Bereich auswählen</label>
-                                <div class="alert alert-info small mb-3">
-                                    <i class="fas fa-info-circle me-2"></i>
-                                    Klicken und ziehen Sie im Vorschaubild, um den Analysebereich zu definieren.
-                                    Nur Objekte innerhalb dieses Bereichs werden erkannt.
-                                </div>
-                                
-                                <!-- Preview Container -->
-                                <div class="position-relative border rounded" style="height: 400px; background: #000;">
-                                    <img id="previewStream" src="" alt="Stream Vorschau" 
-                                         style="width: 100%; height: 100%; object-fit: contain; display: none;">
-                                    <canvas id="previewCanvas" width="1280" height="720" 
-                                            style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair;"></canvas>
-                                    <div id="noPreviewMessage" class="position-absolute top-50 start-50 translate-middle text-white text-center">
-                                        <i class="fas fa-video-slash fa-3x mb-3"></i>
-                                        <p class="mb-3">Stream nicht aktiv</p>
-                                        <button class="btn btn-primary btn-sm" onclick="startPreviewStream()">
-                                            <i class="fas fa-play me-2"></i>Preview starten
-                                        </button>
+                        <!-- Stream Info -->
+                        <div class="d-flex justify-content-between mt-2 small text-secondary">
+                            <span id="streamResolutionInfo">Auflösung: Unbekannt</span>
+                            <span id="displayResolutionInfo">Anzeige: Unbekannt</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Koordinaten-Eingabe -->
+                    <div class="card bg-dark mb-3">
+                        <div class="card-header py-2">
+                            <strong>Bereichs-Koordinaten (in Stream-Pixeln)</strong>
+                        </div>
+                        <div class="card-body py-3">
+                            <div class="row g-3">
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label small">X (Links)</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="areaX" min="0" value="0">
+                                        <span class="input-group-text">px</span>
                                     </div>
                                 </div>
-                            </div>
-                            
-                            <div class="row g-3">
-                                <div class="col-md-6">
-                                    <label class="form-label">X-Position (Links)</label>
-                                    <input type="number" class="form-control" id="areaX" min="0" max="1920" value="0">
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label small">Y (Oben)</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="areaY" min="0" value="0">
+                                        <span class="input-group-text">px</span>
+                                    </div>
                                 </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Y-Position (Oben)</label>
-                                    <input type="number" class="form-control" id="areaY" min="0" max="1080" value="0">
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label small">Breite</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="areaWidth" min="50" value="1280">
+                                        <span class="input-group-text">px</span>
+                                    </div>
                                 </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Breite</label>
-                                    <input type="number" class="form-control" id="areaWidth" min="100" max="1920" value="640">
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label small">Höhe</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="areaHeight" min="50" value="720">
+                                        <span class="input-group-text">px</span>
+                                    </div>
                                 </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Höhe</label>
-                                    <input type="number" class="form-control" id="areaHeight" min="100" max="1080" value="360">
-                                </div>
-                            </div>
-                            
-                            <div class="mt-3">
-                                <button type="button" class="btn btn-outline-primary" onclick="resetArea()">
-                                    <i class="fas fa-undo me-2"></i>Ganzen Bereich verwenden
-                                </button>
-                                <button type="button" class="btn btn-outline-warning" onclick="centerArea()">
-                                    <i class="fas fa-crosshairs me-2"></i>Mitte zentrieren
-                                </button>
                             </div>
                         </div>
                     </div>
                     
-                    <div class="col-md-4">
-                        <div class="alert alert-secondary">
-                            <h6 class="mb-2">Hinweise zur Bereichsauswahl</h6>
-                            <ul class="small mb-0 ps-3">
-                                <li>Wählen Sie nur den Bereich aus, in dem Sie Fahrzeuge erwarten</li>
-                                <li>Kleinere Bereiche verbessern die Erkennungsgeschwindigkeit</li>
-                                <li>Vermeiden Sie Bereiche mit viel Bewegung (Bäume, Wasser)</li>
-                                <li>Der Bereich sollte die typische Position von Nummernschildern abdecken</li>
-                            </ul>
-                        </div>
-                        
-                        <div class="card bg-dark text-white">
-                            <div class="card-body">
-                                <h6 class="card-title">Aktueller Bereich</h6>
-                                <div id="currentAreaInfo" class="small">
-                                    <div class="mb-2">
-                                        <strong>Status:</strong> <span class="badge bg-secondary">Deaktiviert</span>
+                    <!-- Aktions-Buttons -->
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <button type="button" class="btn btn-outline-primary" onclick="resetAreaToFull()">
+                            <i class="fas fa-expand me-2"></i>Ganzes Bild
+                        </button>
+                        <button type="button" class="btn btn-outline-warning" onclick="centerArea()">
+                            <i class="fas fa-crosshairs me-2"></i>Mitte (50%)
+                        </button>
+                        <button type="button" class="btn btn-outline-info" onclick="setLowerHalf()">
+                            <i class="fas fa-arrow-down me-2"></i>Untere Hälfte
+                        </button>
+                        <button type="button" class="btn btn-success" onclick="saveAreaSettings()">
+                            <i class="fas fa-save me-2"></i>Bereich speichern
+                        </button>
+                    </div>
+                    
+                    <!-- Bereichs-Info -->
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card bg-secondary bg-opacity-25">
+                                <div class="card-body py-2">
+                                    <div class="d-flex justify-content-between">
+                                        <span class="text-secondary">Position:</span>
+                                        <strong id="infoPosition">0, 0</strong>
                                     </div>
-                                    <div class="mb-1">Position: <span id="areaPosition">0, 0</span></div>
-                                    <div class="mb-1">Größe: <span id="areaSize">0 × 0</span></div>
-                                    <div class="mb-1">Fläche: <span id="areaPixels">0 Pixel</span></div>
+                                    <div class="d-flex justify-content-between">
+                                        <span class="text-secondary">Größe:</span>
+                                        <strong id="infoSize">0 × 0</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card bg-secondary bg-opacity-25">
+                                <div class="card-body py-2">
+                                    <div class="d-flex justify-content-between">
+                                        <span class="text-secondary">Fläche:</span>
+                                        <strong id="infoPixels">0 Pixel</strong>
+                                    </div>
+                                    <div class="d-flex justify-content-between">
+                                        <span class="text-secondary">Anteil:</span>
+                                        <strong id="infoPercent">0%</strong>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -228,7 +234,7 @@
             </div>
         </div>
         
-        <!-- Connection Test Results -->
+        <!-- Test Results -->
         <div class="card" id="testResultCard" style="display: none;">
             <div class="card-header">
                 <h5 class="card-title mb-0">
@@ -254,32 +260,50 @@
             </div>
             <div class="card-body">
                 <div class="d-flex align-items-center gap-3 mb-3">
-                    <div class="rounded-circle p-3 {{ 'bg-success' if stream_status.status == 'running' else 'bg-secondary' }} bg-opacity-25">
-                        <i class="fas fa-{{ 'play' if stream_status.status == 'running' else 'stop' }} fa-lg {{ 'text-success' if stream_status.status == 'running' else 'text-secondary' }}"></i>
+                    <div id="streamStatusIcon" class="rounded-circle p-3 bg-secondary bg-opacity-25">
+                        <i class="fas fa-stop fa-lg text-secondary"></i>
                     </div>
                     <div>
-                        <div class="fw-bold">{{ stream_status.status|upper if stream_status else 'STOPPED' }}</div>
+                        <div id="streamStatusText" class="fw-bold">STOPPED</div>
                         <small class="text-secondary">Aktueller Status</small>
                     </div>
                 </div>
                 
-                {% if stream_status and stream_status.error %}
-                <div class="alert alert-danger mb-3">
+                <div id="streamError" class="alert alert-danger mb-3" style="display: none;">
                     <i class="fas fa-exclamation-triangle me-2"></i>
-                    {{ stream_status.error }}
+                    <span id="streamErrorText"></span>
                 </div>
-                {% endif %}
+                
+                <div id="streamStats" class="mb-3" style="display: none;">
+                    <div class="row g-2 text-center">
+                        <div class="col-4">
+                            <div class="p-2 bg-dark rounded">
+                                <div id="statFps" class="h5 mb-0 text-primary">0</div>
+                                <small class="text-secondary">FPS</small>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="p-2 bg-dark rounded">
+                                <div id="statFrames" class="h5 mb-0 text-success">0</div>
+                                <small class="text-secondary">Frames</small>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="p-2 bg-dark rounded">
+                                <div id="statDetections" class="h5 mb-0 text-warning">0</div>
+                                <small class="text-secondary">Erkannt</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 
                 <div class="d-grid gap-2">
-                    {% if stream_status and stream_status.status == 'running' %}
-                    <button class="btn btn-danger" onclick="stopStream()">
-                        <i class="fas fa-stop me-2"></i>Stream stoppen
-                    </button>
-                    {% else %}
-                    <button class="btn btn-success" onclick="startStream()">
+                    <button id="btnStartStream" class="btn btn-success" onclick="startStream()">
                         <i class="fas fa-play me-2"></i>Stream starten
                     </button>
-                    {% endif %}
+                    <button id="btnStopStream" class="btn btn-danger" onclick="stopStream()" style="display: none;">
+                        <i class="fas fa-stop me-2"></i>Stream stoppen
+                    </button>
                     <a href="{{ url_for('live_view') }}" class="btn btn-outline-primary">
                         <i class="fas fa-video me-2"></i>Live Ansicht öffnen
                     </a>
@@ -287,7 +311,26 @@
             </div>
         </div>
         
-        <!-- Help -->
+        <!-- Tipps -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-lightbulb"></i>
+                    Tipps für Bereichsauswahl
+                </h5>
+            </div>
+            <div class="card-body">
+                <ul class="small mb-0 ps-3">
+                    <li class="mb-2">Wählen Sie nur den Bereich, in dem Fahrzeuge erscheinen</li>
+                    <li class="mb-2">Kleinere Bereiche = schnellere Verarbeitung</li>
+                    <li class="mb-2">Vermeiden Sie Bereiche mit viel Bewegung (Bäume, Wasser)</li>
+                    <li class="mb-2">Der Bereich sollte Kennzeichen vollständig erfassen</li>
+                    <li>Bei Einfahrten: Untere Bildhälfte oft optimal</li>
+                </ul>
+            </div>
+        </div>
+        
+        <!-- Help Accordion -->
         <div class="card">
             <div class="card-header">
                 <h5 class="card-title mb-0">
@@ -295,53 +338,55 @@
                     Hilfe
                 </h5>
             </div>
-            <div class="card-body">
+            <div class="card-body p-0">
                 <div class="accordion accordion-flush" id="helpAccordion">
-                    <div class="accordion-item bg-transparent">
+                    <div class="accordion-item bg-transparent border-0">
                         <h2 class="accordion-header">
-                            <button class="accordion-button collapsed bg-transparent text-light" type="button" 
+                            <button class="accordion-button collapsed bg-transparent text-light py-3" type="button" 
                                     data-bs-toggle="collapse" data-bs-target="#help1">
                                 Wie finde ich meine RTSP URL?
                             </button>
                         </h2>
                         <div id="help1" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
-                            <div class="accordion-body text-secondary small">
+                            <div class="accordion-body text-secondary small pt-0">
                                 Die RTSP URL finden Sie in der Dokumentation Ihrer Kamera oder im Web-Interface 
-                                der Kamera unter "Netzwerk" oder "Stream" Einstellungen.
+                                unter "Netzwerk" oder "Stream" Einstellungen. Nutzen Sie die Vorlagen als Ausgangspunkt.
                             </div>
                         </div>
                     </div>
                     
-                    <div class="accordion-item bg-transparent">
+                    <div class="accordion-item bg-transparent border-0">
                         <h2 class="accordion-header">
-                            <button class="accordion-button collapsed bg-transparent text-light" type="button" 
+                            <button class="accordion-button collapsed bg-transparent text-light py-3" type="button" 
                                     data-bs-toggle="collapse" data-bs-target="#help2">
                                 Stream verbindet nicht?
                             </button>
                         </h2>
                         <div id="help2" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
-                            <div class="accordion-body text-secondary small">
+                            <div class="accordion-body text-secondary small pt-0">
                                 <ul class="mb-0 ps-3">
                                     <li>Überprüfen Sie IP-Adresse und Port</li>
                                     <li>Stellen Sie sicher, dass RTSP aktiviert ist</li>
                                     <li>Prüfen Sie Benutzername und Passwort</li>
                                     <li>Firewall-Einstellungen überprüfen</li>
+                                    <li>Testen Sie die URL mit VLC Media Player</li>
                                 </ul>
                             </div>
                         </div>
                     </div>
                     
-                    <div class="accordion-item bg-transparent">
+                    <div class="accordion-item bg-transparent border-0">
                         <h2 class="accordion-header">
-                            <button class="accordion-button collapsed bg-transparent text-light" type="button" 
+                            <button class="accordion-button collapsed bg-transparent text-light py-3" type="button" 
                                     data-bs-toggle="collapse" data-bs-target="#help3">
-                                Welche Auflösung wählen?
+                                Bereich wird nicht korrekt angewendet?
                             </button>
                         </h2>
                         <div id="help3" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
-                            <div class="accordion-body text-secondary small">
-                                Höhere Auflösung = bessere Erkennung, aber mehr CPU/GPU Last. 
-                                Empfohlen: 1280x720 (HD) für die meisten Anwendungen.
+                            <div class="accordion-body text-secondary small pt-0">
+                                Die Koordinaten beziehen sich auf die tatsächliche Stream-Auflösung.
+                                Stellen Sie sicher, dass der Stream aktiv ist, bevor Sie den Bereich festlegen.
+                                Nach dem Speichern wird der Bereich bei der nächsten Frame-Verarbeitung angewendet.
                             </div>
                         </div>
                     </div>
@@ -354,442 +399,787 @@
 
 {% block extra_js %}
 <script>
-    // Flask Configuration as JavaScript Object
-    window.flaskConfig = {{ config|tojson|safe }};
+// ============================================
+// GLOBALE VARIABLEN
+// ============================================
+
+let streamWidth = 1280;
+let streamHeight = 720;
+let displayWidth = 0;
+let displayHeight = 0;
+let isDrawing = false;
+let startX = 0;
+let startY = 0;
+let currentArea = { x: 0, y: 0, width: 1280, height: 720 };
+let isAreaEnabled = false;
+let previewLoaded = false;
+let statusInterval = null;
+
+// RTSP URL Templates
+const templates = {
+    hikvision: 'rtsp://{user}:{pass}@{ip}:554/Streaming/Channels/101',
+    dahua: 'rtsp://{user}:{pass}@{ip}:554/cam/realmonitor?channel=1&subtype=0',
+    reolink: 'rtsp://{user}:{pass}@{ip}:554/h264Preview_01_main',
+    axis: 'rtsp://{user}:{pass}@{ip}/axis-media/media.amp',
+    generic: 'rtsp://{user}:{pass}@{ip}:554/stream1'
+};
+
+// ============================================
+// INITIALISIERUNG
+// ============================================
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Konfiguration laden
+    loadConfiguration();
     
-    // RTSP URL Templates
-    const templates = {
-        hikvision: 'rtsp://{user}:{pass}@{ip}:554/Streaming/Channels/101',
-        dahua: 'rtsp://{user}:{pass}@{ip}:554/cam/realmonitor?channel=1&subtype=0',
-        reolink: 'rtsp://{user}:{pass}@{ip}:554/h264Preview_01_main',
-        axis: 'rtsp://{user}:{pass}@{ip}/axis-media/media.amp',
-        generic: 'rtsp://{user}:{pass}@{ip}:554/stream1'
-    };
+    // Event Listeners
+    setupEventListeners();
     
-    function setTemplate(type) {
-        const template = templates[type];
-        if (template) {
-            document.getElementById('rtspUrl').value = template;
-            showToast('Vorlage', `${type.charAt(0).toUpperCase() + type.slice(1)} Vorlage eingefügt`, 'info');
-        }
-    }
+    // Status-Updates starten
+    startStatusUpdates();
     
-    // Form Submit
+    // Canvas initialisieren
+    initCanvas();
+});
+
+function loadConfiguration() {
+    fetch('/api/config')
+        .then(response => response.json())
+        .then(config => {
+            const rtspConfig = config.rtsp || {};
+            
+            // RTSP URL
+            if (rtspConfig.url) {
+                document.getElementById('rtspUrl').value = rtspConfig.url;
+            }
+            
+            // Reconnect Delay
+            if (rtspConfig.reconnect_delay) {
+                document.getElementById('reconnectDelay').value = rtspConfig.reconnect_delay;
+            }
+            
+            // Buffer Size
+            if (rtspConfig.buffer_size) {
+                document.getElementById('bufferSize').value = rtspConfig.buffer_size;
+            }
+            
+            // Analysis Area
+            const areaConfig = rtspConfig.analysis_area || {};
+            isAreaEnabled = areaConfig.enabled || false;
+            
+            document.getElementById('enableAreaSelection').checked = isAreaEnabled;
+            
+            if (areaConfig.area) {
+                currentArea = {
+                    x: parseInt(areaConfig.area.x) || 0,
+                    y: parseInt(areaConfig.area.y) || 0,
+                    width: parseInt(areaConfig.area.width) || 1280,
+                    height: parseInt(areaConfig.area.height) || 720
+                };
+            }
+            
+            // Resolution from config (Fallback)
+            if (rtspConfig.resolution) {
+                streamWidth = rtspConfig.resolution.width || 1280;
+                streamHeight = rtspConfig.resolution.height || 720;
+            }
+            
+            updateAreaUI();
+            updateAreaInputs();
+            updateAreaInfo();
+        })
+        .catch(error => {
+            console.error('Fehler beim Laden der Konfiguration:', error);
+        });
+    
+    // Stream-Auflösung vom Server holen
+    fetch('/api/stream/status')
+        .then(response => response.json())
+        .then(status => {
+            if (status.resolution) {
+                streamWidth = status.resolution.width || 1280;
+                streamHeight = status.resolution.height || 720;
+                updateResolutionInfo();
+            }
+            updateStreamStatusUI(status);
+        })
+        .catch(error => {
+            console.error('Fehler beim Laden des Stream-Status:', error);
+        });
+}
+
+function setupEventListeners() {
+    // Formular Submit
     document.getElementById('rtspForm').addEventListener('submit', function(e) {
         e.preventDefault();
+        saveRtspSettings();
+    });
+    
+    // Area Checkbox
+    document.getElementById('enableAreaSelection').addEventListener('change', function() {
+        isAreaEnabled = this.checked;
+        updateAreaUI();
         
-        const data = {
-            url: document.getElementById('rtspUrl').value,
-            reconnect_delay: parseInt(document.getElementById('reconnectDelay').value),
-            buffer_size: parseInt(document.getElementById('bufferSize').value),
-            resolution: {
-                width: parseInt(document.getElementById('resolutionWidth').value),
-                height: parseInt(document.getElementById('resolutionHeight').value)
-            }
-        };
+        if (isAreaEnabled && !previewLoaded) {
+            loadPreviewImage();
+        }
+    });
+    
+    // Area Input Felder
+    ['areaX', 'areaY', 'areaWidth', 'areaHeight'].forEach(id => {
+        document.getElementById(id).addEventListener('input', function() {
+            updateAreaFromInputs();
+        });
         
-        fetch('/api/config/rtsp', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        })
-        .then(response => response.json())
-        .then(result => {
-            if (result.success) {
-                showToast('Erfolg', 'RTSP Einstellungen gespeichert', 'success');
-            } else {
-                showToast('Fehler', result.error || 'Speichern fehlgeschlagen', 'danger');
-            }
-        })
-        .catch(error => {
-            showToast('Fehler', 'Verbindungsfehler', 'danger');
+        document.getElementById(id).addEventListener('change', function() {
+            updateAreaFromInputs();
+            drawSelection();
         });
     });
     
-    // Test Connection
-    function testConnection() {
-        const url = document.getElementById('rtspUrl').value;
-        if (!url) {
-            showToast('Fehler', 'Bitte RTSP URL eingeben', 'warning');
-            return;
-        }
+    // Canvas Events
+    const canvas = document.getElementById('selectionCanvas');
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseup', endDrawing);
+    canvas.addEventListener('mouseleave', endDrawing);
+    
+    // Touch Events für Mobile
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchend', endDrawing);
+    
+    // Bild geladen
+    document.getElementById('previewImage').addEventListener('load', function() {
+        previewLoaded = true;
+        document.getElementById('noStreamPlaceholder').style.display = 'none';
+        this.style.display = 'block';
         
-        const resultCard = document.getElementById('testResultCard');
-        const resultDiv = document.getElementById('testResult');
-        
-        resultCard.style.display = 'block';
-        resultDiv.innerHTML = `
-            <div class="d-flex align-items-center gap-3">
-                <div class="spinner-border text-primary" role="status"></div>
-                <span>Teste Verbindung zu ${url}...</span>
-            </div>
-        `;
-        
-        // Simulate test (in reality, this would call backend)
-        setTimeout(() => {
-            // For now, just show info since we can't actually test without starting stream
-            resultDiv.innerHTML = `
-                <div class="alert alert-info mb-0">
-                    <i class="fas fa-info-circle me-2"></i>
-                    <strong>Hinweis:</strong> Speichern Sie die Einstellungen und starten Sie den Stream, 
-                    um die Verbindung zu testen.
-                </div>
-            `;
-        }, 1000);
-    }
+        // Canvas-Größe aktualisieren
+        updateCanvasSize();
+        drawSelection();
+    });
     
-    // Reset to Defaults
-    function resetToDefaults() {
-        if (confirm('Alle RTSP Einstellungen zurücksetzen?')) {
-            document.getElementById('rtspUrl').value = 'rtsp://admin:password@192.168.1.100:554/stream1';
-            document.getElementById('reconnectDelay').value = 5;
-            document.getElementById('bufferSize').value = 10;
-            document.getElementById('resolutionWidth').value = 1280;
-            document.getElementById('resolutionHeight').value = 720;
-            showToast('Zurückgesetzt', 'Standardwerte wiederhergestellt', 'info');
-        }
-    }
+    document.getElementById('previewImage').addEventListener('error', function() {
+        previewLoaded = false;
+        this.style.display = 'none';
+        document.getElementById('noStreamPlaceholder').style.display = 'flex';
+    });
     
-    // Start/Stop Stream
-    function startStream() {
-        fetch('/api/stream/start', { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    showToast('Stream', 'Stream wird gestartet...', 'success');
-                    setTimeout(() => location.reload(), 1500);
-                } else {
-                    showToast('Fehler', data.status?.error || 'Start fehlgeschlagen', 'danger');
-                }
-            })
-            .catch(error => {
-                showToast('Fehler', 'Verbindungsfehler: ' + error.message, 'danger');
-            });
-    }
-    
-    function stopStream() {
-        fetch('/api/stream/stop', { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
-                showToast('Stream', 'Stream gestoppt', 'warning');
-                setTimeout(() => location.reload(), 1000);
-            })
-            .catch(error => {
-                showToast('Fehler', 'Verbindungsfehler: ' + error.message, 'danger');
-            });
-    }
-    
-    // ============================================
-    // AREA SELECTION LOGIC
-    // ============================================
-    
-    let isAreaSelectionEnabled = false;
-    let isDrawing = false;
-    let startX = 0;
-    let startY = 0;
-    let currentArea = { x: 0, y: 0, width: 640, height: 360 };
-    let previewStreamActive = false;
-    let previewInterval = null;
-    
-    // Initialize area selection
-    document.addEventListener('DOMContentLoaded', function() {
-        // Load saved area configuration from Flask template
-        const flaskConfig = window.flaskConfig || {};
-        const areaConfig = flaskConfig.analysis_area || {};
-        
-        if (areaConfig.enabled && areaConfig.area) {
-            document.getElementById('enableAreaSelection').checked = true;
-            currentArea = areaConfig.area;
-            updateAreaInputs();
-            updateAreaSelectionUI();
+    // Window Resize
+    window.addEventListener('resize', function() {
+        if (previewLoaded) {
+            updateCanvasSize();
             drawSelection();
         }
-        
-        // Also fetch latest config to ensure we have current data
-        fetch('/api/config')
-            .then(response => response.json())
-            .then(apiConfig => {
-                const latestAreaConfig = apiConfig.rtsp?.analysis_area || {};
-                if (latestAreaConfig.enabled && latestAreaConfig.area) {
-                    document.getElementById('enableAreaSelection').checked = true;
-                    currentArea = latestAreaConfig.area;
-                    updateAreaInputs();
-                    updateAreaSelectionUI();
-                    drawSelection();
-                }
-            })
-            .catch(error => {
-                console.warn('Konnte aktuelle Konfiguration nicht laden:', error);
-            });
-        
-        // Event listeners for area selection
-        const canvas = document.getElementById('previewCanvas');
-        const enableCheckbox = document.getElementById('enableAreaSelection');
-        
-        enableCheckbox.addEventListener('change', function() {
-            isAreaSelectionEnabled = this.checked;
-            const controls = document.getElementById('areaSelectionControls');
-            if (isAreaSelectionEnabled) {
-                controls.style.display = 'block';
-                if (!previewStreamActive) {
-                    startPreviewStream();
-                }
-            } else {
-                controls.style.display = 'none';
-                stopPreviewStream();
-            }
-            updateAreaSelectionUI();
-        });
-        
-        // Canvas drawing events
-        canvas.addEventListener('mousedown', startDrawing);
-        canvas.addEventListener('mousemove', drawArea);
-        canvas.addEventListener('mouseup', endDrawing);
-        canvas.addEventListener('mouseleave', endDrawing);
-        
-        // Input field events
-        document.getElementById('areaX').addEventListener('input', updateAreaFromInputs);
-        document.getElementById('areaY').addEventListener('input', updateAreaFromInputs);
-        document.getElementById('areaWidth').addEventListener('input', updateAreaFromInputs);
-        document.getElementById('areaHeight').addEventListener('input', updateAreaFromInputs);
     });
+}
+
+function initCanvas() {
+    const canvas = document.getElementById('selectionCanvas');
+    const container = document.getElementById('previewContainer');
     
-    function startPreviewStream() {
-        if (previewStreamActive) return;
-        
-        const previewImg = document.getElementById('previewStream');
-        const noPreviewMsg = document.getElementById('noPreviewMessage');
-        
-        previewImg.src = '/api/stream/feed?' + Date.now();
-        previewImg.style.display = 'block';
-        noPreviewMsg.style.display = 'none';
-        previewStreamActive = true;
-        
-        // Update canvas size based on stream resolution
-        updateCanvasSize();
-        
-        // Auto-refresh preview
-        previewInterval = setInterval(() => {
-            if (previewStreamActive) {
-                previewImg.src = '/api/stream/feed?' + Date.now();
-            }
-        }, 1000);
-    }
-    
-    function stopPreviewStream() {
-        if (!previewStreamActive) return;
-        
-        const previewImg = document.getElementById('previewStream');
-        const noPreviewMsg = document.getElementById('noPreviewMessage');
-        
-        previewImg.src = '';
-        previewImg.style.display = 'none';
-        noPreviewMsg.style.display = 'block';
-        previewStreamActive = false;
-        
-        if (previewInterval) {
-            clearInterval(previewInterval);
-            previewInterval = null;
-        }
-    }
-    
-    function updateCanvasSize() {
-        const canvas = document.getElementById('previewCanvas');
-        const img = document.getElementById('previewStream');
-        
-        if (img.naturalWidth && img.naturalHeight) {
-            canvas.width = img.naturalWidth;
-            canvas.height = img.naturalHeight;
-            // Update max values for inputs
-            document.getElementById('areaX').max = img.naturalWidth;
-            document.getElementById('areaY').max = img.naturalHeight;
-            document.getElementById('areaWidth').max = img.naturalWidth;
-            document.getElementById('areaHeight').max = img.naturalHeight;
-        }
-    }
-    
-    function startDrawing(e) {
-        if (!isAreaSelectionEnabled) return;
-        
-        const canvas = document.getElementById('previewCanvas');
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
-        
-        startX = (e.clientX - rect.left) * scaleX;
-        startY = (e.clientY - rect.top) * scaleY;
-        isDrawing = true;
-    }
-    
-    function drawArea(e) {
-        if (!isDrawing || !isAreaSelectionEnabled) return;
-        
-        const canvas = document.getElementById('previewCanvas');
-        const rect = canvas.getBoundingClientRect();
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
-        
-        const currentX = (e.clientX - rect.left) * scaleX;
-        const currentY = (e.clientY - rect.top) * scaleY;
-        
-        let x = Math.min(startX, currentX);
-        let y = Math.min(startY, currentY);
-        let width = Math.abs(currentX - startX);
-        let height = Math.abs(currentY - startY);
-        
-        // Minimum size constraints
-        width = Math.max(width, 50);
-        height = Math.max(height, 50);
-        
-        // Boundary constraints
-        x = Math.max(0, Math.min(x, canvas.width - width));
-        y = Math.max(0, Math.min(y, canvas.height - height));
-        width = Math.min(width, canvas.width - x);
-        height = Math.min(height, canvas.height - y);
-        
-        currentArea = { x, y, width, height };
-        updateAreaInputs();
-        drawSelection();
-    }
-    
-    function endDrawing() {
-        isDrawing = false;
-        saveAreaConfiguration();
-    }
-    
-    function drawSelection() {
-        const canvas = document.getElementById('previewCanvas');
-        const ctx = canvas.getContext('2d');
-        
-        // Clear previous drawing
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        if (!isAreaSelectionEnabled) return;
-        
-        const { x, y, width, height } = currentArea;
-        
-        // Draw semi-transparent overlay
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Clear the selected area
-        ctx.clearRect(x, y, width, height);
-        
-        // Draw selection border
-        ctx.strokeStyle = '#00ff00';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(x, y, width, height);
-        
-        // Draw selection info
-        ctx.fillStyle = '#00ff00';
-        ctx.font = '14px Arial';
-        ctx.fillText(`Bereich: ${Math.round(width)} × ${Math.round(height)}px`, x + 5, y + 20);
-    }
-    
-    function updateAreaInputs() {
-        document.getElementById('areaX').value = Math.round(currentArea.x);
-        document.getElementById('areaY').value = Math.round(currentArea.y);
-        document.getElementById('areaWidth').value = Math.round(currentArea.width);
-        document.getElementById('areaHeight').value = Math.round(currentArea.height);
-        updateAreaInfo();
-    }
-    
-    function updateAreaFromInputs() {
-        currentArea.x = parseInt(document.getElementById('areaX').value) || 0;
-        currentArea.y = parseInt(document.getElementById('areaY').value) || 0;
-        currentArea.width = parseInt(document.getElementById('areaWidth').value) || 640;
-        currentArea.height = parseInt(document.getElementById('areaHeight').value) || 360;
-        
-        // Boundary constraints
-        const canvas = document.getElementById('previewCanvas');
-        currentArea.x = Math.max(0, Math.min(currentArea.x, canvas.width - currentArea.width));
-        currentArea.y = Math.max(0, Math.min(currentArea.y, canvas.height - currentArea.height));
-        currentArea.width = Math.min(currentArea.width, canvas.width - currentArea.x);
-        currentArea.height = Math.min(currentArea.height, canvas.height - currentArea.y);
-        
-        updateAreaInputs();
-        drawSelection();
-        saveAreaConfiguration();
-    }
-    
-    function updateAreaInfo() {
-        const { x, y, width, height } = currentArea;
-        const totalPixels = width * height;
-        const canvas = document.getElementById('previewCanvas');
-        const totalArea = canvas.width * canvas.height;
-        const percentage = totalArea > 0 ? Math.round((totalPixels / totalArea) * 100) : 0;
-        
-        document.getElementById('areaPosition').textContent = `${Math.round(x)}, ${Math.round(y)}`;
-        document.getElementById('areaSize').textContent = `${Math.round(width)} × ${Math.round(height)}`;
-        document.getElementById('areaPixels').textContent = `${totalPixels.toLocaleString()} Pixel (${percentage}%)`;
-    }
-    
-    function resetArea() {
-        const canvas = document.getElementById('previewCanvas');
-        currentArea = {
-            x: 0,
-            y: 0,
-            width: canvas.width,
-            height: canvas.height
-        };
-        updateAreaInputs();
-        drawSelection();
-        saveAreaConfiguration();
-    }
-    
-    function centerArea() {
-        const canvas = document.getElementById('previewCanvas');
-        const width = Math.min(800, canvas.width);
-        const height = Math.min(450, canvas.height);
-        currentArea = {
-            x: Math.round((canvas.width - width) / 2),
-            y: Math.round((canvas.height - height) / 2),
-            width: width,
-            height: height
-        };
-        updateAreaInputs();
-        drawSelection();
-        saveAreaConfiguration();
-    }
-    
-    function updateAreaSelectionUI() {
-        const statusBadge = document.querySelector('#currentAreaInfo .badge');
-        const controls = document.getElementById('areaSelectionControls');
-        
-        if (isAreaSelectionEnabled) {
-            statusBadge.textContent = 'Aktiv';
-            statusBadge.className = 'badge bg-success';
-            controls.style.display = 'block';
-        } else {
-            statusBadge.textContent = 'Deaktiviert';
-            statusBadge.className = 'badge bg-secondary';
-            controls.style.display = 'none';
-        }
-    }
-    
-    function saveAreaConfiguration() {
-        const data = {
-            analysis_area: {
-                enabled: isAreaSelectionEnabled,
-                area: currentArea
-            }
-        };
-        
-        fetch('/api/config/rtsp', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        })
+    // Initiale Größe
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+}
+
+// ============================================
+// STREAM STATUS
+// ============================================
+
+function startStatusUpdates() {
+    updateStreamStatus();
+    statusInterval = setInterval(updateStreamStatus, 2000);
+}
+
+function updateStreamStatus() {
+    fetch('/api/stream/status')
         .then(response => response.json())
-        .then(result => {
-            if (result.success) {
-                updateAreaInfo();
-                drawSelection();
+        .then(status => {
+            updateStreamStatusUI(status);
+            
+            // Auflösung aktualisieren wenn verbunden
+            if (status.connected && status.resolution) {
+                streamWidth = status.resolution.width || streamWidth;
+                streamHeight = status.resolution.height || streamHeight;
+                updateResolutionInfo();
             }
         })
         .catch(error => {
-            console.error('Fehler beim Speichern des Analysebereichs:', error);
+            console.error('Status-Update Fehler:', error);
         });
+}
+
+function updateStreamStatusUI(status) {
+    const isRunning = status.status === 'running';
+    const isConnected = status.connected;
+    
+    // Status Icon
+    const iconDiv = document.getElementById('streamStatusIcon');
+    const statusText = document.getElementById('streamStatusText');
+    
+    if (isRunning && isConnected) {
+        iconDiv.className = 'rounded-circle p-3 bg-success bg-opacity-25';
+        iconDiv.innerHTML = '<i class="fas fa-play fa-lg text-success"></i>';
+        statusText.textContent = 'VERBUNDEN';
+        statusText.className = 'fw-bold text-success';
+    } else if (isRunning) {
+        iconDiv.className = 'rounded-circle p-3 bg-warning bg-opacity-25';
+        iconDiv.innerHTML = '<i class="fas fa-spinner fa-spin fa-lg text-warning"></i>';
+        statusText.textContent = 'VERBINDET...';
+        statusText.className = 'fw-bold text-warning';
+    } else {
+        iconDiv.className = 'rounded-circle p-3 bg-secondary bg-opacity-25';
+        iconDiv.innerHTML = '<i class="fas fa-stop fa-lg text-secondary"></i>';
+        statusText.textContent = 'GESTOPPT';
+        statusText.className = 'fw-bold text-secondary';
     }
+    
+    // Buttons
+    document.getElementById('btnStartStream').style.display = isRunning ? 'none' : 'block';
+    document.getElementById('btnStopStream').style.display = isRunning ? 'block' : 'none';
+    
+    // Error
+    const errorDiv = document.getElementById('streamError');
+    if (status.error && !isConnected) {
+        errorDiv.style.display = 'block';
+        document.getElementById('streamErrorText').textContent = status.error;
+    } else {
+        errorDiv.style.display = 'none';
+    }
+    
+    // Stats
+    const statsDiv = document.getElementById('streamStats');
+    if (isRunning) {
+        statsDiv.style.display = 'block';
+        document.getElementById('statFps').textContent = status.fps || 0;
+        document.getElementById('statFrames').textContent = formatNumber(status.frame_count || 0);
+        document.getElementById('statDetections').textContent = status.detection_count || 0;
+    } else {
+        statsDiv.style.display = 'none';
+    }
+}
+
+function formatNumber(num) {
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return num.toString();
+}
+
+// ============================================
+// PREVIEW & CANVAS
+// ============================================
+
+function loadPreviewImage() {
+    const img = document.getElementById('previewImage');
+    const placeholder = document.getElementById('noStreamPlaceholder');
+    
+    placeholder.innerHTML = `
+        <div class="spinner-border text-primary mb-3" role="status"></div>
+        <p class="text-secondary">Lade Vorschau...</p>
+    `;
+    
+    // Snapshot vom Stream laden
+    img.src = '/api/stream/snapshot?' + Date.now();
+}
+
+function updateCanvasSize() {
+    const canvas = document.getElementById('selectionCanvas');
+    const img = document.getElementById('previewImage');
+    const container = document.getElementById('previewContainer');
+    
+    // Container-Größe
+    const containerRect = container.getBoundingClientRect();
+    
+    // Canvas auf Container-Größe setzen
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    
+    // Interne Canvas-Auflösung = Stream-Auflösung für präzise Koordinaten
+    canvas.width = streamWidth;
+    canvas.height = streamHeight;
+    
+    // Display-Größe speichern
+    displayWidth = containerRect.width;
+    displayHeight = containerRect.height;
+    
+    updateResolutionInfo();
+}
+
+function updateResolutionInfo() {
+    document.getElementById('streamResolutionInfo').textContent = `Stream: ${streamWidth} × ${streamHeight}`;
+    document.getElementById('displayResolutionInfo').textContent = `Anzeige: ${Math.round(displayWidth)} × ${Math.round(displayHeight)}`;
+    
+    // Max-Werte für Inputs aktualisieren
+    document.getElementById('areaX').max = streamWidth;
+    document.getElementById('areaY').max = streamHeight;
+    document.getElementById('areaWidth').max = streamWidth;
+    document.getElementById('areaHeight').max = streamHeight;
+}
+
+// ============================================
+// ZEICHENFUNKTIONEN
+// ============================================
+
+function getCanvasCoordinates(e) {
+    const canvas = document.getElementById('selectionCanvas');
+    const rect = canvas.getBoundingClientRect();
+    
+    // Skalierung von Display zu Stream-Koordinaten
+    const scaleX = streamWidth / rect.width;
+    const scaleY = streamHeight / rect.height;
+    
+    let clientX, clientY;
+    
+    if (e.touches) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+    } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+    }
+    
+    return {
+        x: Math.round((clientX - rect.left) * scaleX),
+        y: Math.round((clientY - rect.top) * scaleY)
+    };
+}
+
+function startDrawing(e) {
+    if (!isAreaEnabled) return;
+    
+    e.preventDefault();
+    isDrawing = true;
+    
+    const coords = getCanvasCoordinates(e);
+    startX = coords.x;
+    startY = coords.y;
+}
+
+function handleMouseMove(e) {
+    if (!isDrawing || !isAreaEnabled) return;
+    
+    e.preventDefault();
+    
+    const coords = getCanvasCoordinates(e);
+    updateSelectionFromDrag(coords.x, coords.y);
+}
+
+function handleTouchStart(e) {
+    if (!isAreaEnabled) return;
+    e.preventDefault();
+    startDrawing(e);
+}
+
+function handleTouchMove(e) {
+    if (!isDrawing || !isAreaEnabled) return;
+    e.preventDefault();
+    
+    const coords = getCanvasCoordinates(e);
+    updateSelectionFromDrag(coords.x, coords.y);
+}
+
+function updateSelectionFromDrag(currentX, currentY) {
+    // Berechne Rechteck
+    let x = Math.min(startX, currentX);
+    let y = Math.min(startY, currentY);
+    let width = Math.abs(currentX - startX);
+    let height = Math.abs(currentY - startY);
+    
+    // Minimum-Größe
+    width = Math.max(width, 50);
+    height = Math.max(height, 50);
+    
+    // Grenzen einhalten
+    x = Math.max(0, Math.min(x, streamWidth - width));
+    y = Math.max(0, Math.min(y, streamHeight - height));
+    width = Math.min(width, streamWidth - x);
+    height = Math.min(height, streamHeight - y);
+    
+    currentArea = { x, y, width, height };
+    
+    updateAreaInputs();
+    updateAreaInfo();
+    drawSelection();
+}
+
+function endDrawing() {
+    if (isDrawing) {
+        isDrawing = false;
+        // Auto-Save optional
+        // saveAreaSettings();
+    }
+}
+
+function drawSelection() {
+    const canvas = document.getElementById('selectionCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Canvas löschen
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    if (!isAreaEnabled) return;
+    
+    const { x, y, width, height } = currentArea;
+    
+    // Semi-transparentes Overlay außerhalb des Bereichs
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    
+    // Oben
+    ctx.fillRect(0, 0, canvas.width, y);
+    // Unten
+    ctx.fillRect(0, y + height, canvas.width, canvas.height - y - height);
+    // Links
+    ctx.fillRect(0, y, x, height);
+    // Rechts
+    ctx.fillRect(x + width, y, canvas.width - x - width, height);
+    
+    // Rahmen um ausgewählten Bereich
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x, y, width, height);
+    
+    // Eckpunkte
+    const cornerSize = 15;
+    ctx.fillStyle = '#00ff00';
+    
+    // Oben-Links
+    ctx.fillRect(x - 2, y - 2, cornerSize, 4);
+    ctx.fillRect(x - 2, y - 2, 4, cornerSize);
+    
+    // Oben-Rechts
+    ctx.fillRect(x + width - cornerSize + 2, y - 2, cornerSize, 4);
+    ctx.fillRect(x + width - 2, y - 2, 4, cornerSize);
+    
+    // Unten-Links
+    ctx.fillRect(x - 2, y + height - 2, cornerSize, 4);
+    ctx.fillRect(x - 2, y + height - cornerSize + 2, 4, cornerSize);
+    
+    // Unten-Rechts
+    ctx.fillRect(x + width - cornerSize + 2, y + height - 2, cornerSize, 4);
+    ctx.fillRect(x + width - 2, y + height - cornerSize + 2, 4, cornerSize);
+    
+    // Info-Text im Bereich
+    ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
+    ctx.font = 'bold 16px Arial';
+    const text = `${width} × ${height} px`;
+    const textWidth = ctx.measureText(text).width;
+    
+    // Hintergrund für Text
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(x + 5, y + 5, textWidth + 10, 24);
+    
+    ctx.fillStyle = '#00ff00';
+    ctx.fillText(text, x + 10, y + 22);
+}
+
+// ============================================
+// AREA MANAGEMENT
+// ============================================
+
+function updateAreaUI() {
+    const controls = document.getElementById('areaSelectionControls');
+    const badge = document.getElementById('areaStatusBadge');
+    
+    if (isAreaEnabled) {
+        controls.style.display = 'block';
+        badge.textContent = 'Aktiv';
+        badge.className = 'badge bg-success';
+    } else {
+        controls.style.display = 'none';
+        badge.textContent = 'Deaktiviert';
+        badge.className = 'badge bg-secondary';
+    }
+}
+
+function updateAreaInputs() {
+    document.getElementById('areaX').value = Math.round(currentArea.x);
+    document.getElementById('areaY').value = Math.round(currentArea.y);
+    document.getElementById('areaWidth').value = Math.round(currentArea.width);
+    document.getElementById('areaHeight').value = Math.round(currentArea.height);
+}
+
+function updateAreaFromInputs() {
+    currentArea.x = parseInt(document.getElementById('areaX').value) || 0;
+    currentArea.y = parseInt(document.getElementById('areaY').value) || 0;
+    currentArea.width = parseInt(document.getElementById('areaWidth').value) || 100;
+    currentArea.height = parseInt(document.getElementById('areaHeight').value) || 100;
+    
+    // Grenzen einhalten
+    currentArea.x = Math.max(0, Math.min(currentArea.x, streamWidth - 50));
+    currentArea.y = Math.max(0, Math.min(currentArea.y, streamHeight - 50));
+    currentArea.width = Math.max(50, Math.min(currentArea.width, streamWidth - currentArea.x));
+    currentArea.height = Math.max(50, Math.min(currentArea.height, streamHeight - currentArea.y));
+    
+    updateAreaInfo();
+    drawSelection();
+}
+
+function updateAreaInfo() {
+    const { x, y, width, height } = currentArea;
+    const pixels = width * height;
+    const totalPixels = streamWidth * streamHeight;
+    const percent = totalPixels > 0 ? Math.round((pixels / totalPixels) * 100) : 0;
+    
+    document.getElementById('infoPosition').textContent = `${x}, ${y}`;
+    document.getElementById('infoSize').textContent = `${width} × ${height}`;
+    document.getElementById('infoPixels').textContent = pixels.toLocaleString() + ' px';
+    document.getElementById('infoPercent').textContent = percent + '%';
+}
+
+function resetAreaToFull() {
+    currentArea = { x: 0, y: 0, width: streamWidth, height: streamHeight };
+    updateAreaInputs();
+    updateAreaInfo();
+    drawSelection();
+}
+
+function centerArea() {
+    const width = Math.round(streamWidth * 0.5);
+    const height = Math.round(streamHeight * 0.5);
+    currentArea = {
+        x: Math.round((streamWidth - width) / 2),
+        y: Math.round((streamHeight - height) / 2),
+        width: width,
+        height: height
+    };
+    updateAreaInputs();
+    updateAreaInfo();
+    drawSelection();
+}
+
+function setLowerHalf() {
+    currentArea = {
+        x: 0,
+        y: Math.round(streamHeight / 2),
+        width: streamWidth,
+        height: Math.round(streamHeight / 2)
+    };
+    updateAreaInputs();
+    updateAreaInfo();
+    drawSelection();
+}
+
+// ============================================
+// SPEICHERN & API
+// ============================================
+
+function saveRtspSettings() {
+    const data = {
+        url: document.getElementById('rtspUrl').value,
+        reconnect_delay: parseInt(document.getElementById('reconnectDelay').value) || 5,
+        buffer_size: parseInt(document.getElementById('bufferSize').value) || 10
+    };
+    
+    fetch('/api/config/rtsp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast('Erfolg', 'RTSP Einstellungen gespeichert', 'success');
+        } else {
+            showToast('Fehler', result.error || 'Speichern fehlgeschlagen', 'danger');
+        }
+    })
+    .catch(error => {
+        showToast('Fehler', 'Verbindungsfehler: ' + error.message, 'danger');
+    });
+}
+
+function saveAreaSettings() {
+    const data = {
+        analysis_area: {
+            enabled: isAreaEnabled,
+            area: {
+                x: Math.round(currentArea.x),
+                y: Math.round(currentArea.y),
+                width: Math.round(currentArea.width),
+                height: Math.round(currentArea.height)
+            }
+        }
+    };
+    
+    fetch('/api/config/rtsp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast('Erfolg', 'Analysebereich gespeichert', 'success');
+        } else {
+            showToast('Fehler', result.error || 'Speichern fehlgeschlagen', 'danger');
+        }
+    })
+    .catch(error => {
+        showToast('Fehler', 'Verbindungsfehler: ' + error.message, 'danger');
+    });
+}
+
+// ============================================
+// STREAM KONTROLLE
+// ============================================
+
+function startStream() {
+    fetch('/api/stream/start', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Stream', 'Stream wird gestartet...', 'success');
+                setTimeout(() => {
+                    updateStreamStatus();
+                    if (isAreaEnabled) {
+                        loadPreviewImage();
+                    }
+                }, 1500);
+            } else {
+                showToast('Fehler', data.status?.error || 'Start fehlgeschlagen', 'danger');
+            }
+        })
+        .catch(error => {
+            showToast('Fehler', 'Verbindungsfehler: ' + error.message, 'danger');
+        });
+}
+
+function stopStream() {
+    fetch('/api/stream/stop', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            showToast('Stream', 'Stream gestoppt', 'warning');
+            updateStreamStatus();
+        })
+        .catch(error => {
+            showToast('Fehler', 'Verbindungsfehler: ' + error.message, 'danger');
+        });
+}
+
+function testConnection() {
+    const url = document.getElementById('rtspUrl').value;
+    if (!url) {
+        showToast('Fehler', 'Bitte RTSP URL eingeben', 'warning');
+        return;
+    }
+    
+    const resultCard = document.getElementById('testResultCard');
+    const resultDiv = document.getElementById('testResult');
+    
+    resultCard.style.display = 'block';
+    resultDiv.innerHTML = `
+        <div class="d-flex align-items-center gap-3">
+            <div class="spinner-border text-primary" role="status"></div>
+            <span>Teste Verbindung...</span>
+        </div>
+    `;
+    
+    // Speichern und Stream starten zum Testen
+    saveRtspSettings();
+    
+    setTimeout(() => {
+        fetch('/api/stream/status')
+            .then(response => response.json())
+            .then(status => {
+                if (status.connected) {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-success mb-0">
+                            <i class="fas fa-check-circle me-2"></i>
+                            <strong>Verbindung erfolgreich!</strong><br>
+                            <small>Stream-Auflösung: ${status.resolution?.width || '?'} × ${status.resolution?.height || '?'}</small>
+                        </div>
+                    `;
+                } else if (status.status === 'running') {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-warning mb-0">
+                            <i class="fas fa-hourglass-half me-2"></i>
+                            <strong>Verbindung wird hergestellt...</strong><br>
+                            <small>Bitte warten Sie einen Moment.</small>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-info mb-0">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Stream nicht aktiv</strong><br>
+                            <small>Starten Sie den Stream, um die Verbindung zu testen.</small>
+                        </div>
+                    `;
+                }
+            });
+    }, 2000);
+}
+
+// ============================================
+// HILFSFUNKTIONEN
+// ============================================
+
+function setTemplate(type) {
+    const template = templates[type];
+    if (template) {
+        document.getElementById('rtspUrl').value = template;
+        showToast('Vorlage', `${type.charAt(0).toUpperCase() + type.slice(1)} Vorlage eingefügt`, 'info');
+    }
+}
+
+function resetToDefaults() {
+    if (confirm('Alle RTSP Einstellungen zurücksetzen?')) {
+        document.getElementById('rtspUrl').value = 'rtsp://admin:password@192.168.1.100:554/stream1';
+        document.getElementById('reconnectDelay').value = 5;
+        document.getElementById('bufferSize').value = 10;
+        showToast('Zurückgesetzt', 'Standardwerte wiederhergestellt', 'info');
+    }
+}
+
+function showToast(title, message, type = 'info') {
+    // Prüfen ob showToast global verfügbar ist (aus base.html)
+    if (typeof window.showToast === 'function' && window.showToast !== showToast) {
+        window.showToast(title, message, type);
+        return;
+    }
+    
+    // Fallback: Alert
+    console.log(`[${type.toUpperCase()}] ${title}: ${message}`);
+    
+    // Einfache Toast-Implementierung
+    const toastContainer = document.getElementById('toastContainer') || createToastContainer();
+    
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white bg-${type} border-0`;
+    toast.setAttribute('role', 'alert');
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                <strong>${title}:</strong> ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+    
+    toastContainer.appendChild(toast);
+    
+    const bsToast = new bootstrap.Toast(toast, { delay: 3000 });
+    bsToast.show();
+    
+    toast.addEventListener('hidden.bs.toast', () => toast.remove());
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toastContainer';
+    container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+    container.style.zIndex = '9999';
+    document.body.appendChild(container);
+    return container;
+}
+
+// Cleanup bei Seitenwechsel
+window.addEventListener('beforeunload', function() {
+    if (statusInterval) {
+        clearInterval(statusInterval);
+    }
+});
 </script>
 {% endblock %}
