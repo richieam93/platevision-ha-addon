@@ -222,7 +222,7 @@ class RTSPHandler:
                     if hasattr(self.detector, 'update_config'):
                         self.detector.update_config(self.config_manager.config)
                     
-                    results = self.detector.detect(frame, source="rtsp")
+                    results = self.detector.process_frame(frame)
                     
                     # Annotiertes Frame speichern
                     with self.frame_lock:
