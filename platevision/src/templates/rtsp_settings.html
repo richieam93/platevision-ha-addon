@@ -495,7 +495,7 @@
     document.addEventListener('DOMContentLoaded', function() {
         // Load saved area configuration from Flask template
         const flaskConfig = window.flaskConfig || {};
-        const areaConfig = flaskConfig.rtsp?.analysis_area || {};
+        const areaConfig = flaskConfig.analysis_area || {};
         
         if (areaConfig.enabled && areaConfig.area) {
             document.getElementById('enableAreaSelection').checked = true;
