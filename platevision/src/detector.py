@@ -296,7 +296,8 @@ class LicensePlateDetector:
             results['analysis_area'] = None
         
         # Fahrzeugerkennung
-        car_detections = self.coco_model(image, conf=self.confidence_threshold)[0]
+        detection_image = area_image if area_enabled and area_data else image
+        car_detections = self.coco_model(detection_image, conf=self.confidence_threshold)[0]
         
         cars_found = []
         for detection in car_detections.boxes.data.tolist():
@@ -333,8 +334,8 @@ class LicensePlateDetector:
                 plates = self.detect_in_car_region(image, car['bbox'])
                 results['plates'].extend(plates)
         else:
-            # Direktsuche im gesamten Bild
-            plate_detections = self.plate_model(image, conf=self.confidence_threshold)[0]
+            # Direktsuche im gesamten Bild oder im ausgewählten Bereich
+            plate_detections = self.plate_model(detection_image, conf=self.confidence_threshold)[0]
             
             for detection in plate_detections.boxes.data.tolist():
                 x1, y1, x2, y2, score, class_id = detection
