@@ -2,7 +2,7 @@
 """
 RTSP Stream Handler
 Verwaltet RTSP Videostreams im Hintergrund
-Version 2.1 - Fixed Analysis Area Support
+Version 2.1 - Mit korrekter Analysis Area Unterstützung
 """
 
 import cv2
@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 class RTSPHandler:
-    """Handler für RTSP Videostreams mit Analysis Area Support"""
+    """Handler für RTSP Videostreams"""
     
-    def __init__(self, config_manager, history_manager, detector, socketio=None):
+    def __init__(self, config_manager, history_manager, detector):
         """
         Initialisiert den RTSP Handler
         
@@ -28,12 +28,10 @@ class RTSPHandler:
             config_manager: ConfigManager Instanz
             history_manager: HistoryManager Instanz
             detector: LicensePlateDetector Instanz
-            socketio: SocketIO Instanz für WebSocket Events
         """
         self.config_manager = config_manager
         self.history_manager = history_manager
         self.detector = detector
-        self.socketio = socketio
         
         # Stream-Variablen
         self.cap = None
@@ -41,9 +39,9 @@ class RTSPHandler:
         self.annotated_frame = None
         self.frame_lock = threading.Lock()
         
-        # Stream Info
-        self.stream_width = 0
-        self.stream_height = 0
+        # Stream Auflösung (wird beim Connect gesetzt)
+        self.stream_width = 1280
+        self.stream_height = 720
         
         # Thread-Variablen
         self.capture_thread = None
@@ -66,10 +64,6 @@ class RTSPHandler:
         self.recent_plates = {}
         
         logger.info("RTSP Handler initialisiert")
-    
-    def set_socketio(self, socketio):
-        """Setzt die SocketIO Instanz"""
-        self.socketio = socketio
     
     def update_config(self, config):
         """Konfiguration aktualisieren"""
@@ -96,7 +90,7 @@ class RTSPHandler:
         return self.frame_count
     
     def get_stream_resolution(self):
-        """Gibt die Stream-Auflösung zurück"""
+        """Gibt die aktuelle Stream-Auflösung zurück"""
         return {
             'width': self.stream_width,
             'height': self.stream_height
@@ -126,7 +120,7 @@ class RTSPHandler:
         return None
     
     def get_raw_frame(self):
-        """Rohes Frame ohne Annotationen zurückgeben"""
+        """Aktuelles rohes Frame (ohne Annotationen) zurückgeben"""
         with self.frame_lock:
             if self.current_frame is not None:
                 return self.current_frame.copy()
@@ -184,8 +178,6 @@ class RTSPHandler:
             self.cap.release()
             self.cap = None
         self.connected = False
-        self.stream_width = 0
-        self.stream_height = 0
         logger.info("RTSP Verbindung getrennt")
     
     def start(self):
@@ -196,8 +188,6 @@ class RTSPHandler:
         
         self.running = True
         self.last_error = None
-        self.frame_count = 0
-        self.detection_count = 0
         
         # Capture Thread starten
         self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
@@ -224,10 +214,10 @@ class RTSPHandler:
         
         # Auf Thread-Ende warten
         if self.capture_thread and self.capture_thread.is_alive():
-            self.capture_thread.join(timeout=3)
+            self.capture_thread.join(timeout=2)
         
         if self.process_thread and self.process_thread.is_alive():
-            self.process_thread.join(timeout=3)
+            self.process_thread.join(timeout=2)
         
         self.disconnect()
         logger.info("RTSP Handler gestoppt")
@@ -236,10 +226,6 @@ class RTSPHandler:
         """
         Holt und validiert den Analysebereich
         
-        Args:
-            frame_height: Höhe des Frames
-            frame_width: Breite des Frames
-            
         Returns:
             Tuple (enabled, x, y, width, height)
         """
@@ -251,25 +237,11 @@ class RTSPHandler:
         if not area:
             return False, 0, 0, frame_width, frame_height
         
-        # Koordinaten aus Config
-        x = int(area.get('x', 0))
-        y = int(area.get('y', 0))
-        width = int(area.get('width', frame_width))
-        height = int(area.get('height', frame_height))
-        
-        # Skalierung berücksichtigen (falls Config für andere Auflösung gespeichert wurde)
-        config_width = self.config_manager.get('rtsp', 'resolution', 'width') or frame_width
-        config_height = self.config_manager.get('rtsp', 'resolution', 'height') or frame_height
-        
-        # Skalierungsfaktoren berechnen
-        scale_x = frame_width / config_width if config_width > 0 else 1
-        scale_y = frame_height / config_height if config_height > 0 else 1
-        
-        # Koordinaten skalieren
-        x = int(x * scale_x)
-        y = int(y * scale_y)
-        width = int(width * scale_x)
-        height = int(height * scale_y)
+        # Koordinaten aus Config (können Float sein)
+        x = int(float(area.get('x', 0)))
+        y = int(float(area.get('y', 0)))
+        width = int(float(area.get('width', frame_width)))
+        height = int(float(area.get('height', frame_height)))
         
         # Grenzen prüfen und korrigieren
         x = max(0, min(x, frame_width - 10))
@@ -280,29 +252,6 @@ class RTSPHandler:
         logger.debug(f"Analysis Area: x={x}, y={y}, w={width}, h={height} (Frame: {frame_width}x{frame_height})")
         
         return True, x, y, width, height
-    
-    def _draw_analysis_area(self, frame, x, y, width, height):
-        """Zeichnet den Analysebereich auf das Frame"""
-        # Halbtransparentes Overlay für Bereich außerhalb
-        overlay = frame.copy()
-        
-        # Außenbereich abdunkeln
-        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-        mask[y:y+height, x:x+width] = 255
-        
-        # Bereich außerhalb abdunkeln
-        darkened = cv2.addWeighted(frame, 0.4, np.zeros_like(frame), 0.6, 0)
-        frame_with_overlay = np.where(mask[:, :, np.newaxis] == 255, frame, darkened)
-        
-        # Rahmen zeichnen
-        cv2.rectangle(frame_with_overlay, (x, y), (x + width, y + height), (0, 255, 255), 2)
-        
-        # Label
-        label = f"Analysebereich ({width}x{height})"
-        cv2.putText(frame_with_overlay, label, (x + 5, y + 25),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        
-        return frame_with_overlay
     
     def _capture_loop(self):
         """Capture-Schleife für RTSP Stream"""
@@ -324,12 +273,12 @@ class RTSPHandler:
                     time.sleep(reconnect_delay)
                     continue
                 
-                # Stream-Auflösung aktualisieren
+                # Stream-Auflösung aktualisieren falls sich was geändert hat
                 h, w = frame.shape[:2]
                 if w != self.stream_width or h != self.stream_height:
                     self.stream_width = w
                     self.stream_height = h
-                    logger.info(f"Stream-Auflösung aktualisiert: {w}x{h}")
+                    logger.info(f"Stream-Auflösung geändert: {w}x{h}")
                 
                 # Frame speichern
                 with self.frame_lock:
@@ -358,7 +307,6 @@ class RTSPHandler:
     def _process_loop(self):
         """Verarbeitungs-Schleife für Nummernschilderkennung"""
         process_interval = self.config_manager.get('detection', 'process_interval') or 0.5
-        last_process_time = 0
         
         while self.running:
             try:
@@ -371,33 +319,7 @@ class RTSPHandler:
                 if frame is None:
                     continue
                 
-                current_time = time.time()
-                
-                # Prozess-Intervall einhalten
-                if current_time - last_process_time < process_interval:
-                    # Nur Frame anzeigen ohne Verarbeitung
-                    with self.frame_lock:
-                        h, w = frame.shape[:2]
-                        area_enabled, ax, ay, aw, ah = self._get_analysis_area(h, w)
-                        
-                        if area_enabled:
-                            self.annotated_frame = self._draw_analysis_area(frame, ax, ay, aw, ah)
-                        else:
-                            self.annotated_frame = frame.copy()
-                        
-                        # Status einzeichnen
-                        status_text = f"FPS: {self.get_fps()} | Erkennungen: {self.detection_count}"
-                        cv2.putText(self.annotated_frame, status_text, (10, 30),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    continue
-                
-                last_process_time = current_time
-                
-                # Frame-Dimensionen
-                frame_height, frame_width = frame.shape[:2]
-                
-                # Analysebereich ermitteln
-                area_enabled, ax, ay, aw, ah = self._get_analysis_area(frame_height, frame_width)
+                frame_h, frame_w = frame.shape[:2]
                 
                 # Erkennung durchführen
                 if self.detector:
@@ -408,26 +330,31 @@ class RTSPHandler:
                         continue
                     
                     try:
+                        # Analysis Area holen
+                        area_enabled, ax, ay, aw, ah = self._get_analysis_area(frame_h, frame_w)
+                        
                         # Frame für Verarbeitung vorbereiten
                         if area_enabled:
-                            # Nur den Analysebereich verarbeiten
+                            # Bereich ausschneiden
                             process_frame = frame[ay:ay+ah, ax:ax+aw].copy()
                             offset_x, offset_y = ax, ay
                         else:
                             process_frame = frame
                             offset_x, offset_y = 0, 0
                         
-                        # Erkennung auf dem (zugeschnittenen) Frame
+                        # Erkennung auf (zugeschnittenem) Frame
                         results = self.detector.process_frame(process_frame, apply_analysis_area=False)
                         
                         # Annotiertes Frame erstellen
                         annotated = frame.copy()
                         
-                        # Analysebereich zeichnen
+                        # Analysis Area einzeichnen
                         if area_enabled:
-                            annotated = self._draw_analysis_area(annotated, ax, ay, aw, ah)
+                            cv2.rectangle(annotated, (ax, ay), (ax + aw, ay + ah), (0, 255, 255), 2)
+                            cv2.putText(annotated, "Analysebereich", (ax + 5, ay + 25),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                         
-                        # Fahrzeuge einzeichnen (mit Offset)
+                        # Fahrzeuge mit Offset einzeichnen
                         for vehicle in results.get('vehicles', []):
                             bbox = vehicle.get('bbox', [])
                             if len(bbox) == 4:
@@ -443,7 +370,7 @@ class RTSPHandler:
                                 cv2.putText(annotated, label, (vx1, vy1 - 10),
                                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
                         
-                        # Kennzeichen einzeichnen (mit Offset)
+                        # Erkennungen mit Offset einzeichnen
                         for detection in results.get('detections', []):
                             bbox = detection.get('plate_bbox', [])
                             if len(bbox) == 4:
@@ -454,13 +381,12 @@ class RTSPHandler:
                                 px2 += offset_x
                                 py2 += offset_y
                                 
-                                plate_text = detection.get('plate_text', '')
+                                # Aktualisiere bbox für Historie
+                                detection['plate_bbox'] = [px1, py1, px2, py2]
                                 
+                                plate_text = detection.get('plate_text', '')
                                 if plate_text:
-                                    # Grün für erkannte Kennzeichen
                                     cv2.rectangle(annotated, (px1, py1), (px2, py2), (0, 255, 0), 3)
-                                    
-                                    # Text-Hintergrund
                                     text_size = cv2.getTextSize(plate_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
                                     cv2.rectangle(annotated,
                                                  (px1, py1 - text_size[1] - 15),
@@ -470,7 +396,6 @@ class RTSPHandler:
                                                (px1 + 5, py1 - 8),
                                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
                                 else:
-                                    # Orange für nicht lesbare Kennzeichen
                                     cv2.rectangle(annotated, (px1, py1), (px2, py2), (0, 165, 255), 2)
                         
                         # Status-Info einzeichnen
@@ -478,24 +403,20 @@ class RTSPHandler:
                         cv2.putText(annotated, status_text, (10, 30),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                         
+                        if area_enabled:
+                            area_text = f"Area: {ax},{ay} {aw}x{ah}"
+                            cv2.putText(annotated, area_text, (10, 60),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                        
                         # Annotiertes Frame speichern
                         with self.frame_lock:
                             self.annotated_frame = annotated
                         
                         self.frame_count += 1
                         
-                        # Erkennungen verarbeiten und speichern
+                        # Erkennungen verarbeiten
                         for detection in results.get('detections', []):
                             if detection.get('plate_text'):
-                                # Koordinaten im Detection-Objekt aktualisieren für History
-                                if 'plate_bbox' in detection:
-                                    bbox = detection['plate_bbox']
-                                    detection['plate_bbox'] = [
-                                        bbox[0] + offset_x,
-                                        bbox[1] + offset_y,
-                                        bbox[2] + offset_x,
-                                        bbox[3] + offset_y
-                                    ]
                                 self._handle_detection(detection, results)
                                 
                     except Exception as e:
@@ -503,18 +424,11 @@ class RTSPHandler:
                         import traceback
                         traceback.print_exc()
                 else:
-                    # Wenn kein Detector, nur Frame mit Analysebereich anzeigen
+                    # Wenn kein Detector, nur Frame anzeigen
                     with self.frame_lock:
-                        h, w = frame.shape[:2]
-                        area_enabled, ax, ay, aw, ah = self._get_analysis_area(h, w)
-                        
-                        if area_enabled:
-                            self.annotated_frame = self._draw_analysis_area(frame, ax, ay, aw, ah)
-                        else:
-                            self.annotated_frame = frame.copy()
-                        
-                        cv2.putText(self.annotated_frame, "Warte auf Modelle...", (10, 30),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+                        self.annotated_frame = frame
+                
+                time.sleep(process_interval)
                 
             except Exception as e:
                 logger.error(f"Processing Fehler: {e}")
@@ -567,12 +481,15 @@ class RTSPHandler:
             self.detection_count += 1
             logger.info(f"RTSP Erkennung: {plate_text} (Konfidenz: {detection.get('confidence', 0):.2f})")
             
-            # WebSocket Event senden
-            if self.socketio:
-                self.socketio.emit('plate_detected', {
+            # WebSocket Event senden (falls socketio verfügbar)
+            try:
+                from flask_socketio import emit
+                emit('plate_detected', {
                     'plate_text': plate_text,
                     'confidence': detection.get('confidence', 0),
                     'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
                     'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
                     'timestamp': datetime.now().isoformat()
-                })
+                }, broadcast=True, namespace='/')
+            except:
+                pass  # SocketIO nicht verfügbar oder Fehler
