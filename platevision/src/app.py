@@ -70,7 +70,8 @@ for directory in DIRECTORIES:
 # VIDEO PROCESSING JOBS
 # ============================================================
 
-video_processing_jobs = {}  # {job_id: {'progress': 0, 'status': 'processing', ...}}
+video_processing_jobs = {}
+
 
 # ============================================================
 # KONFIGURATIONSMANAGER
@@ -82,27 +83,25 @@ class ConfigManager:
     CONFIG_FILE = 'data/config.json'
     
     DEFAULT_CONFIG = {
-        # RTSP Einstellungen
         'rtsp': {
             'url': 'rtsp://admin:password@192.168.1.100:554/stream1',
             'enabled': False,
             'reconnect_delay': 5,
             'buffer_size': 10,
             'resolution': {
-                'width': 1920,
-                'height': 1080
+                'width': 1280,
+                'height': 720
             },
             'analysis_area': {
                 'enabled': False,
                 'area': {
                     'x': 0,
                     'y': 0,
-                    'width': 1920,
-                    'height': 1080
+                    'width': 1280,
+                    'height': 720
                 }
             }
         },
-        # Erkennungseinstellungen
         'detection': {
             'confidence_threshold': 0.5,
             'car_detection_enabled': True,
@@ -116,7 +115,6 @@ class ConfigManager:
             'min_plate_width': 60,
             'min_plate_height': 15,
         },
-        # Erweiterte OCR Einstellungen
         'ocr': {
             'languages': ['en', 'de'],
             'gpu_enabled': False,
@@ -138,7 +136,6 @@ class ConfigManager:
             'retry_on_fail': True,
             'max_retries': 3,
         },
-        # Allgemeine Einstellungen
         'general': {
             'theme': 'dark',
             'language': 'de',
@@ -147,7 +144,6 @@ class ConfigManager:
             'notification_enabled': True,
             'debug_mode': False
         },
-        # Historie Einstellungen
         'history': {
             'filter_duplicates': True,
             'duplicate_timeout': 60,
@@ -155,7 +151,6 @@ class ConfigManager:
             'save_vehicle_image': True,
             'save_plate_image': True,
         },
-        # Modell Pfade
         'models': {
             'license_plate_detector': 'models/license_plate_detector.pt',
             'vehicle_detector': 'models/yolov8n.pt'
@@ -166,7 +161,6 @@ class ConfigManager:
         self.config = self.load_config()
     
     def load_config(self):
-        """Lädt die Konfiguration aus der Datei"""
         if os.path.exists(self.CONFIG_FILE):
             try:
                 with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
@@ -178,7 +172,6 @@ class ConfigManager:
         return self.DEFAULT_CONFIG.copy()
     
     def _merge_configs(self, default, saved):
-        """Merged gespeicherte Config mit Default für fehlende Werte"""
         result = {}
         for key, value in default.items():
             if key in saved:
@@ -191,7 +184,6 @@ class ConfigManager:
         return result
     
     def save_config(self):
-        """Speichert die Konfiguration"""
         try:
             with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
@@ -201,7 +193,6 @@ class ConfigManager:
             return False
     
     def get(self, *keys):
-        """Holt einen Konfigurationswert"""
         value = self.config
         for key in keys:
             if isinstance(value, dict):
@@ -213,7 +204,6 @@ class ConfigManager:
         return value
     
     def set(self, value, *keys):
-        """Setzt einen Konfigurationswert"""
         config = self.config
         for key in keys[:-1]:
             config = config.setdefault(key, {})
@@ -226,7 +216,7 @@ class ConfigManager:
 # ============================================================
 
 class HistoryManager:
-    """Verwaltet die Erkennungshistorie mit Duplikat-Filter"""
+    """Verwaltet die Erkennungshistorie"""
     
     HISTORY_FILE = 'data/history/detections.json'
     
@@ -235,7 +225,6 @@ class HistoryManager:
         self.lock = threading.Lock()
     
     def load_history(self):
-        """Lädt die Historie"""
         if os.path.exists(self.HISTORY_FILE):
             try:
                 with open(self.HISTORY_FILE, 'r', encoding='utf-8') as f:
@@ -245,7 +234,6 @@ class HistoryManager:
         return []
     
     def save_history(self):
-        """Speichert die Historie"""
         try:
             with open(self.HISTORY_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.history, f, indent=2, ensure_ascii=False)
@@ -255,13 +243,11 @@ class HistoryManager:
             return False
     
     def _normalize_plate(self, plate_text):
-        """Normalisiert Kennzeichentext für Vergleiche"""
         if not plate_text:
             return ""
         return plate_text.upper().replace(' ', '').replace('-', '').strip()
     
     def _is_duplicate_in_history(self, plate_text, timeout_seconds=60):
-        """Prüft ob das Kennzeichen kürzlich in der Historie ist"""
         if not plate_text:
             return True
         
@@ -287,7 +273,6 @@ class HistoryManager:
         return False
     
     def add_entry(self, entry, check_duplicate=True):
-        """Fügt einen neuen Eintrag hinzu"""
         with self.lock:
             if check_duplicate:
                 timeout = config_manager.get('history', 'duplicate_timeout') or 60
@@ -309,7 +294,6 @@ class HistoryManager:
             return entry
     
     def get_all(self, limit=100, offset=0, unique_only=False):
-        """Holt alle Einträge"""
         if unique_only:
             seen = set()
             unique_entries = []
@@ -325,32 +309,27 @@ class HistoryManager:
         return self.history[offset:offset + limit]
     
     def get_by_id(self, entry_id):
-        """Holt einen Eintrag nach ID"""
         for entry in self.history:
             if entry.get('id') == entry_id:
                 return entry
         return None
     
     def delete_entry(self, entry_id):
-        """Löscht einen Eintrag"""
         with self.lock:
             self.history = [e for e in self.history if e.get('id') != entry_id]
             self.save_history()
     
     def clear_history(self):
-        """Löscht die gesamte Historie"""
         with self.lock:
             self.history = []
             self.save_history()
     
     def search(self, query):
-        """Sucht in der Historie"""
         query = self._normalize_plate(query)
         return [e for e in self.history 
                 if query in self._normalize_plate(e.get('plate_text', ''))]
     
     def get_statistics(self):
-        """Holt Statistiken"""
         total = len(self.history)
         today = datetime.now().date().isoformat()
         today_count = sum(1 for e in self.history if e.get('timestamp', '').startswith(today))
@@ -388,21 +367,10 @@ class HistoryManager:
 # ============================================================
 
 class LicensePlateDetector:
-    """Haupt-Erkennungsklasse mit verbesserter OCR und Fahrzeugerkennung"""
+    """Haupt-Erkennungsklasse"""
     
-    VEHICLE_CLASSES = {
-        2: 'PKW',
-        3: 'Motorrad',
-        5: 'Bus',
-        7: 'LKW'
-    }
-    
-    VEHICLE_CLASSES_EN = {
-        2: 'car',
-        3: 'motorcycle', 
-        5: 'bus',
-        7: 'truck'
-    }
+    VEHICLE_CLASSES = {2: 'PKW', 3: 'Motorrad', 5: 'Bus', 7: 'LKW'}
+    VEHICLE_CLASSES_EN = {2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
     
     def __init__(self, config_manager):
         self.config_manager = config_manager
@@ -414,7 +382,6 @@ class LicensePlateDetector:
         self.recent_plates = {}
     
     def load_models(self):
-        """Lädt die ML-Modelle"""
         with self.load_lock:
             if self.models_loaded:
                 return True
@@ -452,7 +419,6 @@ class LicensePlateDetector:
                 return False
     
     def _is_duplicate(self, plate_text):
-        """Prüft ob das Kennzeichen kürzlich erkannt wurde"""
         if not plate_text or len(plate_text) < 3:
             return True
             
@@ -477,7 +443,6 @@ class LicensePlateDetector:
         return False
     
     def _estimate_vehicle_color(self, vehicle_crop):
-        """Schätzt die Fahrzeugfarbe"""
         try:
             if vehicle_crop is None or vehicle_crop.size == 0:
                 return "unbekannt"
@@ -524,11 +489,9 @@ class LicensePlateDetector:
                     return "Lila"
                     
         except Exception as e:
-            logger.error(f"Fehler bei Farbbestimmung: {e}")
             return "unbekannt"
     
     def _preprocess_plate_image(self, plate_image):
-        """Erweiterte Vorverarbeitung für bessere OCR"""
         if plate_image is None or plate_image.size == 0:
             return None, []
         
@@ -574,80 +537,27 @@ class LicensePlateDetector:
             variants.append(gray.copy())
             
             if config.get('sharpen', True):
-                kernel = np.array([[-1, -1, -1],
-                                   [-1,  9, -1],
-                                   [-1, -1, -1]])
+                kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
                 sharpened = cv2.filter2D(gray, -1, kernel)
                 variants.append(sharpened)
             
             if config.get('adaptive_threshold', True):
-                thresh1 = cv2.adaptiveThreshold(
-                    gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                    cv2.THRESH_BINARY, 11, 2
-                )
+                thresh1 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                                cv2.THRESH_BINARY, 11, 2)
                 variants.append(thresh1)
                 
-                thresh2 = cv2.adaptiveThreshold(
-                    gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                    cv2.THRESH_BINARY, 15, 4
-                )
-                variants.append(thresh2)
-                
-                _, thresh3 = cv2.threshold(
-                    gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
-                )
+                _, thresh3 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                 variants.append(thresh3)
-            
-            if config.get('morphology', True):
-                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-                morph = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
-                variants.append(morph)
             
             inverted = cv2.bitwise_not(gray)
             variants.append(inverted)
             
-            if config.get('deskew', True):
-                deskewed = self._deskew_image(gray)
-                if deskewed is not None:
-                    variants.append(deskewed)
-            
             return gray, variants
             
         except Exception as e:
-            logger.error(f"Fehler bei Bildvorverarbeitung: {e}")
             return plate_image, [plate_image]
     
-    def _deskew_image(self, image):
-        """Begradigt ein schräges Bild"""
-        try:
-            coords = np.column_stack(np.where(image > 0))
-            if len(coords) < 10:
-                return image
-                
-            angle = cv2.minAreaRect(coords)[-1]
-            
-            if angle < -45:
-                angle = -(90 + angle)
-            else:
-                angle = -angle
-            
-            if abs(angle) < 0.5 or abs(angle) > 15:
-                return image
-            
-            h, w = image.shape[:2]
-            center = (w // 2, h // 2)
-            M = cv2.getRotationMatrix2D(center, angle, 1.0)
-            rotated = cv2.warpAffine(image, M, (w, h), 
-                                     flags=cv2.INTER_CUBIC,
-                                     borderMode=cv2.BORDER_REPLICATE)
-            
-            return rotated
-            
-        except Exception as e:
-            return image
-    
     def _read_plate_enhanced(self, plate_image):
-        """Verbesserte OCR mit mehreren Durchgängen"""
         if not self.ocr_reader or plate_image is None or plate_image.size == 0:
             return None, 0
         
@@ -661,15 +571,13 @@ class LicensePlateDetector:
             
             min_confidence = self.config_manager.get('ocr', 'min_confidence') or 0.25
             allowed_chars = self.config_manager.get('ocr', 'allowed_characters') or ''
-            active_mode = self.config_manager.get('ocr', 'active_mode') or 'enhanced'
             
             best_result = None
             best_confidence = 0
             
-            for i, variant in enumerate(variants[:8]):
+            for i, variant in enumerate(variants[:6]):
                 try:
                     results = self.ocr_reader.readtext(variant, detail=1)
-                    
                     text, confidence = self._process_ocr_results(results, min_confidence * 0.7, allowed_chars)
                     
                     if text and confidence > best_confidence:
@@ -679,39 +587,8 @@ class LicensePlateDetector:
                     if best_confidence >= 0.85:
                         break
                         
-                except Exception as e:
+                except:
                     continue
-            
-            if active_mode in ['enhanced', 'multi_scale'] and best_confidence < 0.7:
-                for scale in [1.5, 2.0, 0.75]:
-                    try:
-                        h, w = processed.shape[:2]
-                        scaled = cv2.resize(processed, (int(w * scale), int(h * scale)),
-                                           interpolation=cv2.INTER_CUBIC)
-                        results = self.ocr_reader.readtext(scaled, detail=1)
-                        text, confidence = self._process_ocr_results(results, min_confidence * 0.7, allowed_chars)
-                        
-                        if text and confidence > best_confidence:
-                            best_confidence = confidence
-                            best_result = text
-                    except:
-                        continue
-            
-            if best_result is None and self.config_manager.get('ocr', 'retry_on_fail'):
-                max_retries = self.config_manager.get('ocr', 'max_retries') or 3
-                
-                for retry in range(max_retries):
-                    try:
-                        enhanced = self._aggressive_preprocessing(plate_image, retry)
-                        results = self.ocr_reader.readtext(enhanced, detail=1)
-                        text, confidence = self._process_ocr_results(results, min_confidence * 0.6, allowed_chars)
-                        
-                        if text and confidence > best_confidence:
-                            best_confidence = confidence
-                            best_result = text
-                            break
-                    except:
-                        continue
             
             if best_result:
                 best_result = self._correct_common_errors(best_result)
@@ -722,46 +599,7 @@ class LicensePlateDetector:
             logger.error(f"OCR Fehler: {e}")
             return None, 0
     
-    def _aggressive_preprocessing(self, image, level):
-        """Aggressive Vorverarbeitung für schwierige Fälle"""
-        try:
-            scale = 3.0 + level * 0.5
-            h, w = image.shape[:2]
-            new_w, new_h = int(w * scale), int(h * scale)
-            img = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-            
-            if len(img.shape) == 3:
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            else:
-                gray = img
-            
-            if level == 0:
-                gray = cv2.bilateralFilter(gray, 9, 75, 75)
-                kernel = np.array([[-1, -1, -1, -1, -1],
-                                   [-1,  2,  2,  2, -1],
-                                   [-1,  2,  8,  2, -1],
-                                   [-1,  2,  2,  2, -1],
-                                   [-1, -1, -1, -1, -1]]) / 8
-                gray = cv2.filter2D(gray, -1, kernel)
-            
-            elif level == 1:
-                gray = cv2.GaussianBlur(gray, (3, 3), 0)
-                gray = cv2.adaptiveThreshold(gray, 255, 
-                                            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                            cv2.THRESH_BINARY, 11, 2)
-            
-            elif level >= 2:
-                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                gray = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
-                gray = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel)
-            
-            return gray
-            
-        except Exception as e:
-            return image
-    
     def _process_ocr_results(self, results, min_confidence, allowed_chars):
-        """Verarbeitet OCR-Ergebnisse"""
         if not results:
             return None, 0
         
@@ -787,13 +625,11 @@ class LicensePlateDetector:
             combined_text = ''.join(texts)
             combined_text = ' '.join(combined_text.split())
             avg_confidence = sum(confidences) / len(confidences)
-            
             return combined_text, avg_confidence
         
         return None, 0
     
     def _correct_common_errors(self, text):
-        """Korrigiert häufige OCR-Fehler"""
         if not text or len(text) < 2:
             return text
         
@@ -809,26 +645,11 @@ class LicensePlateDetector:
                 result[i] = '1'
             elif char == 'l' and (prev_is_digit or next_is_digit):
                 result[i] = '1'
-            elif char == 'S' and (prev_is_digit and next_is_digit):
-                result[i] = '5'
-            elif char == 'B' and (prev_is_digit and next_is_digit):
-                result[i] = '8'
-            elif char == 'D' and next_is_digit and prev_is_digit:
-                result[i] = '0'
         
         return ''.join(result)
     
     def process_frame(self, frame, apply_analysis_area=False):
-        """
-        Verarbeitet einen einzelnen Frame
-        
-        Args:
-            frame: Input Frame (BGR)
-            apply_analysis_area: Ob Analysis Area angewendet werden soll (für RTSP Handler)
-            
-        Returns:
-            Dictionary mit Erkennungsergebnissen
-        """
+        """Verarbeitet einen einzelnen Frame"""
         if not self.models_loaded:
             self.load_models()
         
@@ -837,8 +658,7 @@ class LicensePlateDetector:
                 'annotated_frame': np.zeros((480, 640, 3), dtype=np.uint8),
                 'detections': [],
                 'vehicles': [],
-                'processing_time': 0,
-                'error': 'Invalid frame'
+                'processing_time': 0
             }
         
         result = {
@@ -858,9 +678,9 @@ class LicensePlateDetector:
             
             annotated = frame.copy()
             detected_vehicles = []
-            frame_height, frame_width = frame.shape[:2]
+            frame_h, frame_w = frame.shape[:2]
             
-            # ============= FAHRZEUGERKENNUNG =============
+            # Fahrzeugerkennung
             if self.coco_model and self.config_manager.get('detection', 'car_detection_enabled'):
                 vehicle_results = self.coco_model(frame, conf=confidence_threshold, verbose=False)[0]
                 
@@ -891,7 +711,7 @@ class LicensePlateDetector:
             
             result['vehicles'] = detected_vehicles
             
-            # ============= KENNZEICHENERKENNUNG =============
+            # Kennzeichenerkennung
             if self.license_model:
                 frames_to_process = []
                 
@@ -902,8 +722,8 @@ class LicensePlateDetector:
                         pad = zoom_padding
                         zx1 = max(0, x1 - pad)
                         zy1 = max(0, y1 - pad)
-                        zx2 = min(frame_width, x2 + pad)
-                        zy2 = min(frame_height, y2 + pad)
+                        zx2 = min(frame_w, x2 + pad)
+                        zy2 = min(frame_h, y2 + pad)
                         
                         vehicle_region = frame[zy1:zy2, zx1:zx2]
                         
@@ -911,16 +731,12 @@ class LicensePlateDetector:
                             continue
                         
                         crop_h, crop_w = vehicle_region.shape[:2]
-                        min_size = 800
-                        scale = max(min_size / max(crop_w, 1), min_size / max(crop_h, 1), zoom_factor)
+                        scale = max(800 / max(crop_w, 1), 800 / max(crop_h, 1), zoom_factor)
                         scale = min(scale, 5.0)
-                        
-                        new_width = int(crop_w * scale)
-                        new_height = int(crop_h * scale)
                         
                         vehicle_region_scaled = cv2.resize(
                             vehicle_region, 
-                            (new_width, new_height), 
+                            (int(crop_w * scale), int(crop_h * scale)), 
                             interpolation=cv2.INTER_CUBIC
                         )
                         
@@ -957,84 +773,43 @@ class LicensePlateDetector:
                         orig_px2 = int(px2 / scale + off_x)
                         orig_py2 = int(py2 / scale + off_y)
                         
-                        plate_w = orig_px2 - orig_px1
-                        plate_h = orig_py2 - orig_py1
-                        
                         plate_crop_scaled = proc_frame[int(py1):int(py2), int(px1):int(px2)]
                         
                         if plate_crop_scaled.size == 0:
                             continue
-                        
-                        scaled_h, scaled_w = plate_crop_scaled.shape[:2]
-                        
-                        target_height = self.config_manager.get('ocr', 'preprocessing', 'target_height') or 120
-                        if scaled_h < target_height:
-                            additional_scale = target_height / scaled_h
-                            additional_scale = min(additional_scale, 4.0)
-                            
-                            plate_crop_scaled = cv2.resize(
-                                plate_crop_scaled,
-                                (int(scaled_w * additional_scale), int(scaled_h * additional_scale)),
-                                interpolation=cv2.INTER_CUBIC
-                            )
                         
                         plate_text, ocr_confidence = self._read_plate_enhanced(plate_crop_scaled)
                         
                         min_save_conf = self.config_manager.get('history', 'min_confidence_to_save') or 0.35
                         
                         if not plate_text or ocr_confidence < min_save_conf:
-                            color = (0, 165, 255)
-                            cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), color, 2)
+                            cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), (0, 165, 255), 2)
                             continue
                         
                         if self._is_duplicate(plate_text):
                             continue
                         
-                        color = (0, 255, 0)
-                        cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), color, 3)
+                        cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), (0, 255, 0), 3)
                         
                         text_size = cv2.getTextSize(plate_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
-                        cv2.rectangle(annotated,
-                                     (orig_px1, orig_py1 - text_size[1] - 15),
-                                     (orig_px1 + text_size[0] + 10, orig_py1),
-                                     color, -1)
-                        cv2.putText(annotated, plate_text,
-                                   (orig_px1 + 5, orig_py1 - 8),
+                        cv2.rectangle(annotated, (orig_px1, orig_py1 - text_size[1] - 15),
+                                     (orig_px1 + text_size[0] + 10, orig_py1), (0, 255, 0), -1)
+                        cv2.putText(annotated, plate_text, (orig_px1 + 5, orig_py1 - 8),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
                         
                         # Bilder speichern
                         plate_image_b64 = None
                         vehicle_image_b64 = None
-                        full_frame_b64 = None
                         
                         if self.config_manager.get('detection', 'save_detected_plates'):
-                            _, buffer = cv2.imencode('.jpg', plate_crop_scaled, 
-                                                    [cv2.IMWRITE_JPEG_QUALITY, 95])
+                            _, buffer = cv2.imencode('.jpg', plate_crop_scaled, [cv2.IMWRITE_JPEG_QUALITY, 95])
                             plate_image_b64 = base64.b64encode(buffer).decode('utf-8')
-                            
-                            plate_filename = f"data/plates_detected/{uuid.uuid4()}.jpg"
-                            cv2.imwrite(plate_filename, plate_crop_scaled)
                         
                         if self.config_manager.get('detection', 'save_detected_vehicles') and vehicle:
                             vehicle_crop = vehicle.get('crop')
                             if vehicle_crop is not None and vehicle_crop.size > 0:
-                                vh, vw = vehicle_crop.shape[:2]
-                                if vh < 200:
-                                    v_scale = 200 / vh
-                                    vehicle_crop = cv2.resize(vehicle_crop, 
-                                                             (int(vw * v_scale), int(vh * v_scale)),
-                                                             interpolation=cv2.INTER_CUBIC)
-                                
-                                _, buffer = cv2.imencode('.jpg', vehicle_crop, 
-                                                        [cv2.IMWRITE_JPEG_QUALITY, 90])
+                                _, buffer = cv2.imencode('.jpg', vehicle_crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
                                 vehicle_image_b64 = base64.b64encode(buffer).decode('utf-8')
-                                
-                                vehicle_filename = f"data/vehicles_detected/{uuid.uuid4()}.jpg"
-                                cv2.imwrite(vehicle_filename, vehicle_crop)
-                        
-                        if self.config_manager.get('detection', 'save_full_frame'):
-                            _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                            full_frame_b64 = base64.b64encode(buffer).decode('utf-8')
                         
                         detection_info = {
                             'plate_text': plate_text,
@@ -1043,17 +818,13 @@ class LicensePlateDetector:
                             'plate_score': plate_score,
                             'plate_image_base64': plate_image_b64,
                             'vehicle_image_base64': vehicle_image_b64,
-                            'full_frame_base64': full_frame_b64,
                             'vehicle_type': vehicle['type'] if vehicle else 'Unbekannt',
                             'vehicle_type_en': vehicle['type_en'] if vehicle else 'unknown',
-                            'vehicle_confidence': vehicle['confidence'] if vehicle else 0,
                             'vehicle_color': vehicle['color'] if vehicle else 'Unbekannt',
-                            'plate_size': f"{plate_crop_scaled.shape[1]}x{plate_crop_scaled.shape[0]}",
-                            'original_plate_size': f"{plate_w}x{plate_h}"
                         }
                         
                         result['detections'].append(detection_info)
-                        logger.info(f"Erkannt: {plate_text} | Fahrzeug: {vehicle['type'] if vehicle else 'N/A'} | Konfidenz: {ocr_confidence:.2f}")
+                        logger.info(f"Erkannt: {plate_text} | Konfidenz: {ocr_confidence:.2f}")
             
             result['annotated_frame'] = annotated
             
@@ -1066,7 +837,6 @@ class LicensePlateDetector:
         return result
     
     def process_image(self, image_path_or_array):
-        """Verarbeitet ein einzelnes Bild"""
         if isinstance(image_path_or_array, str):
             frame = cv2.imread(image_path_or_array)
         else:
@@ -1076,109 +846,6 @@ class LicensePlateDetector:
             return None
         
         return self.process_frame(frame)
-    
-    def process_video(self, video_path, output_path=None, job_id=None):
-        """Verarbeitet ein Video mit Fortschrittsanzeige"""
-        cap = cv2.VideoCapture(video_path)
-        
-        if not cap.isOpened():
-            if job_id:
-                video_processing_jobs[job_id]['status'] = 'error'
-                video_processing_jobs[job_id]['error'] = 'Video konnte nicht geöffnet werden'
-            return None
-        
-        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
-        if job_id:
-            video_processing_jobs[job_id]['total_frames'] = total_frames
-            video_processing_jobs[job_id]['fps'] = fps
-            video_processing_jobs[job_id]['resolution'] = f"{width}x{height}"
-        
-        writer = None
-        if output_path:
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        
-        all_detections = []
-        frame_count = 0
-        start_time = time.time()
-        
-        process_every_n = max(1, fps // 5)
-        
-        try:
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                
-                if frame_count % process_every_n == 0:
-                    result = self.process_frame(frame)
-                    processed_frame = result['annotated_frame']
-                    
-                    if result['detections']:
-                        for det in result['detections']:
-                            det['frame_number'] = frame_count
-                            det['timestamp'] = frame_count / fps
-                            all_detections.append(det)
-                else:
-                    processed_frame = frame
-                
-                if writer:
-                    writer.write(processed_frame)
-                
-                frame_count += 1
-                
-                if job_id:
-                    progress = int((frame_count / total_frames) * 100)
-                    elapsed = time.time() - start_time
-                    frames_per_sec = frame_count / elapsed if elapsed > 0 else 0
-                    eta = (total_frames - frame_count) / frames_per_sec if frames_per_sec > 0 else 0
-                    
-                    video_processing_jobs[job_id].update({
-                        'progress': progress,
-                        'current_frame': frame_count,
-                        'detections_count': len(all_detections),
-                        'elapsed_time': int(elapsed),
-                        'eta': int(eta),
-                        'fps_processing': round(frames_per_sec, 1)
-                    })
-                    
-                    if frame_count % 30 == 0:
-                        socketio.emit('video_progress', {
-                            'job_id': job_id,
-                            **video_processing_jobs[job_id]
-                        })
-        
-        except Exception as e:
-            logger.error(f"Video-Verarbeitungsfehler: {e}")
-            if job_id:
-                video_processing_jobs[job_id]['status'] = 'error'
-                video_processing_jobs[job_id]['error'] = str(e)
-        
-        finally:
-            cap.release()
-            if writer:
-                writer.release()
-        
-        if job_id:
-            video_processing_jobs[job_id]['status'] = 'completed'
-            video_processing_jobs[job_id]['progress'] = 100
-            socketio.emit('video_completed', {
-                'job_id': job_id,
-                'detections_count': len(all_detections),
-                'output_path': output_path
-            })
-        
-        return {
-            'total_frames': total_frames,
-            'processed_frames': frame_count,
-            'detections': all_detections,
-            'output_path': output_path,
-            'processing_time': time.time() - start_time
-        }
 
 
 # ============================================================
@@ -1189,12 +856,11 @@ config_manager = ConfigManager()
 history_manager = HistoryManager()
 detector = LicensePlateDetector(config_manager)
 
-# RTSP Handler importieren und initialisieren
+# RTSP Handler importieren
 from rtsp_handler import RTSPHandler
 stream_manager = RTSPHandler(config_manager, history_manager, detector)
 
 def init_models():
-    """Lädt Modelle im Hintergrund"""
     detector.load_models()
 
 threading.Thread(target=init_models, daemon=True).start()
@@ -1206,27 +872,22 @@ threading.Thread(target=init_models, daemon=True).start()
 
 @app.route('/')
 def index():
-    """Startseite"""
     return render_template('index.html', 
                           page='dashboard',
                           stats=history_manager.get_statistics(),
                           stream_status=stream_manager.get_status(),
                           config=config_manager.config)
 
-
 @app.route('/dashboard')
 def dashboard():
-    """Dashboard Seite"""
     return render_template('dashboard.html',
                           page='dashboard',
                           stats=history_manager.get_statistics(),
                           stream_status=stream_manager.get_status(),
                           config=config_manager.config)
 
-
 @app.route('/history')
 def history():
-    """Historie Seite"""
     page_num = request.args.get('page', 1, type=int)
     per_page = 20
     search = request.args.get('search', '')
@@ -1248,39 +909,33 @@ def history():
                           search=search,
                           unique_only=unique_only)
 
-
 @app.route('/rtsp-settings')
 def rtsp_settings():
-    """RTSP Einstellungen Seite"""
     return render_template('rtsp_settings.html',
                           page='rtsp',
                           config=config_manager.config.get('rtsp', {}),
                           stream_status=stream_manager.get_status())
 
-
 @app.route('/settings')
 def settings():
-    """Allgemeine Einstellungen Seite"""
     return render_template('settings.html',
                           page='settings',
                           config=config_manager.config)
 
-
 @app.route('/test')
 def test_page():
-    """Test-Seite für Bild/Video Upload"""
-    return render_template('test.html', 
-                          page='test',
-                          jobs=video_processing_jobs)
-
+    return render_template('test.html', page='test', jobs=video_processing_jobs)
 
 @app.route('/live')
 def live_view():
-    """Live Stream Ansicht"""
     return render_template('live.html',
                           page='live',
                           stream_status=stream_manager.get_status(),
                           config=config_manager.config)
+
+@app.route('/latest')
+def latest_detection_page():
+    return render_template('latest.html', page='latest')
 
 
 # ============================================================
@@ -1289,41 +944,25 @@ def live_view():
 
 @app.route('/api/stream/start', methods=['POST'])
 def api_stream_start():
-    """Startet den RTSP Stream"""
-    # SocketIO an Handler übergeben
-    stream_manager.set_socketio(socketio)
     success = stream_manager.start()
-    return jsonify({
-        'success': success,
-        'status': stream_manager.get_status()
-    })
-
+    return jsonify({'success': success, 'status': stream_manager.get_status()})
 
 @app.route('/api/stream/stop', methods=['POST'])
 def api_stream_stop():
-    """Stoppt den RTSP Stream"""
     stream_manager.stop()
-    return jsonify({
-        'success': True,
-        'status': stream_manager.get_status()
-    })
-
+    return jsonify({'success': True, 'status': stream_manager.get_status()})
 
 @app.route('/api/stream/status')
 def api_stream_status():
-    """Holt den Stream Status"""
     return jsonify(stream_manager.get_status())
-
 
 @app.route('/api/stream/resolution')
 def api_stream_resolution():
     """Gibt die aktuelle Stream-Auflösung zurück"""
     return jsonify(stream_manager.get_stream_resolution())
 
-
 @app.route('/api/stream/feed')
 def stream_feed():
-    """MJPEG Stream für Live-Ansicht"""
     def generate():
         while True:
             frame = stream_manager.get_current_frame()
@@ -1342,13 +981,11 @@ def stream_feed():
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             time.sleep(0.033)
     
-    return Response(generate(),
-                   mimetype='multipart/x-mixed-replace; boundary=frame')
-
+    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/stream/snapshot')
 def api_stream_snapshot():
-    """Gibt ein aktuelles Snapshot als JPEG zurück"""
+    """Einzelnes Snapshot vom Stream"""
     frame = stream_manager.get_current_frame()
     if frame is not None:
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
@@ -1356,8 +993,7 @@ def api_stream_snapshot():
     
     # Placeholder
     placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-    cv2.putText(placeholder, "Kein Stream", (200, 240),
-               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    cv2.putText(placeholder, "Kein Stream", (200, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     _, buffer = cv2.imencode('.jpg', placeholder)
     return Response(buffer.tobytes(), mimetype='image/jpeg')
 
@@ -1368,13 +1004,10 @@ def api_stream_snapshot():
 
 @app.route('/api/config', methods=['GET'])
 def api_get_config():
-    """Holt die gesamte Konfiguration"""
     return jsonify(config_manager.config)
-
 
 @app.route('/api/config', methods=['POST'])
 def api_save_config():
-    """Speichert die Konfiguration"""
     try:
         data = request.json
         
@@ -1392,47 +1025,29 @@ def api_save_config():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
-
 @app.route('/api/config/rtsp', methods=['POST'])
 def api_save_rtsp_config():
-    """Speichert RTSP Einstellungen"""
     try:
         data = request.json
         
-        # Deep merge für verschachtelte Objekte
+        # Deep merge für analysis_area
         if 'analysis_area' in data:
             if 'analysis_area' not in config_manager.config['rtsp']:
                 config_manager.config['rtsp']['analysis_area'] = {}
             
-            if 'area' in data['analysis_area']:
-                if 'area' not in config_manager.config['rtsp']['analysis_area']:
-                    config_manager.config['rtsp']['analysis_area']['area'] = {}
-                config_manager.config['rtsp']['analysis_area']['area'].update(data['analysis_area']['area'])
-                del data['analysis_area']['area']
-            
-            config_manager.config['rtsp']['analysis_area'].update(data['analysis_area'])
+            for key, value in data['analysis_area'].items():
+                config_manager.config['rtsp']['analysis_area'][key] = value
             del data['analysis_area']
-        
-        if 'resolution' in data:
-            if 'resolution' not in config_manager.config['rtsp']:
-                config_manager.config['rtsp']['resolution'] = {}
-            config_manager.config['rtsp']['resolution'].update(data['resolution'])
-            del data['resolution']
         
         config_manager.config['rtsp'].update(data)
         config_manager.save_config()
         
         return jsonify({'success': True})
     except Exception as e:
-        logger.error(f"Fehler beim Speichern der RTSP Config: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 400
-
 
 @app.route('/api/config/detection', methods=['POST'])
 def api_save_detection_config():
-    """Speichert Erkennungs-Einstellungen"""
     try:
         data = request.json
         config_manager.config['detection'].update(data)
@@ -1441,10 +1056,8 @@ def api_save_detection_config():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
-
 @app.route('/api/config/ocr', methods=['POST'])
 def api_save_ocr_config():
-    """Speichert OCR Einstellungen"""
     try:
         data = request.json
         
@@ -1465,10 +1078,8 @@ def api_save_ocr_config():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
-
 @app.route('/api/config/history', methods=['POST'])
 def api_save_history_config():
-    """Speichert Historie-Einstellungen"""
     try:
         data = request.json
         config_manager.config['history'].update(data)
@@ -1484,7 +1095,6 @@ def api_save_history_config():
 
 @app.route('/api/history')
 def api_get_history():
-    """Holt die Historie"""
     limit = request.args.get('limit', 100, type=int)
     offset = request.args.get('offset', 0, type=int)
     search = request.args.get('search', '')
@@ -1495,54 +1105,36 @@ def api_get_history():
     else:
         entries = history_manager.get_all(limit=limit, offset=offset, unique_only=unique_only)
     
-    return jsonify({
-        'entries': entries,
-        'total': len(history_manager.history)
-    })
-
+    return jsonify({'entries': entries, 'total': len(history_manager.history)})
 
 @app.route('/api/history/<entry_id>', methods=['GET'])
 def api_get_history_entry(entry_id):
-    """Holt einen einzelnen Historie-Eintrag"""
     entry = history_manager.get_by_id(entry_id)
     if entry:
         return jsonify(entry)
     return jsonify({'error': 'Nicht gefunden'}), 404
 
-
 @app.route('/api/history/<entry_id>', methods=['DELETE'])
 def api_delete_history_entry(entry_id):
-    """Löscht einen Historie-Eintrag"""
     history_manager.delete_entry(entry_id)
     return jsonify({'success': True})
 
-
 @app.route('/api/history/clear', methods=['POST'])
 def api_clear_history():
-    """Löscht die gesamte Historie"""
     history_manager.clear_history()
     return jsonify({'success': True})
 
-
 @app.route('/api/history/statistics')
 def api_history_statistics():
-    """Holt Statistiken"""
     return jsonify(history_manager.get_statistics())
 
 
-@app.route('/api/history/export')
-def api_export_history():
-    """Exportiert die Historie als JSON"""
-    return jsonify(history_manager.history)
-
-
 # ============================================================
-# API ROUTEN - BILD/VIDEO VERARBEITUNG
+# API ROUTEN - BILD VERARBEITUNG
 # ============================================================
 
 @app.route('/api/process/image', methods=['POST'])
 def api_process_image():
-    """Verarbeitet ein hochgeladenes Bild"""
     if 'file' not in request.files:
         return jsonify({'success': False, 'error': 'Keine Datei'}), 400
     
@@ -1586,189 +1178,24 @@ def api_process_image():
         
     except Exception as e:
         logger.error(f"Bildverarbeitung Fehler: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/process/video', methods=['POST'])
-def api_process_video():
-    """Verarbeitet ein hochgeladenes Video"""
-    if 'file' not in request.files:
-        return jsonify({'success': False, 'error': 'Keine Datei'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'success': False, 'error': 'Keine Datei ausgewählt'}), 400
-    
-    try:
-        job_id = str(uuid.uuid4())
-        input_path = f"uploads/videos/{job_id}_input.mp4"
-        output_path = f"uploads/processed/{job_id}_output.mp4"
-        
-        file.save(input_path)
-        
-        video_processing_jobs[job_id] = {
-            'status': 'processing',
-            'progress': 0,
-            'current_frame': 0,
-            'total_frames': 0,
-            'detections_count': 0,
-            'elapsed_time': 0,
-            'eta': 0,
-            'fps_processing': 0,
-            'filename': file.filename,
-            'input_path': input_path,
-            'output_path': output_path,
-            'created_at': datetime.now().isoformat()
-        }
-        
-        def process_video_async():
-            try:
-                result = detector.process_video(input_path, output_path, job_id)
-                
-                if result and result['detections']:
-                    for detection in result['detections']:
-                        if detection.get('plate_text'):
-                            entry = {
-                                'plate_text': detection['plate_text'],
-                                'confidence': detection.get('confidence', 0),
-                                'source': 'video_upload',
-                                'filename': file.filename,
-                                'frame_number': detection.get('frame_number', 0),
-                                'video_timestamp': detection.get('timestamp', 0),
-                                'plate_image': detection.get('plate_image_base64'),
-                                'vehicle_image': detection.get('vehicle_image_base64'),
-                                'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
-                                'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
-                            }
-                            history_manager.add_entry(entry, check_duplicate=True)
-                
-            except Exception as e:
-                logger.error(f"Async Video-Verarbeitung Fehler: {e}")
-                video_processing_jobs[job_id]['status'] = 'error'
-                video_processing_jobs[job_id]['error'] = str(e)
-        
-        threading.Thread(target=process_video_async, daemon=True).start()
-        
-        return jsonify({
-            'success': True,
-            'job_id': job_id,
-            'message': 'Video wird verarbeitet...'
-        })
-        
-    except Exception as e:
-        logger.error(f"Videoverarbeitung Fehler: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/process/video/<job_id>/status')
-def api_video_job_status(job_id):
-    """Holt den Status eines Video-Verarbeitungsjobs"""
-    if job_id in video_processing_jobs:
-        return jsonify(video_processing_jobs[job_id])
-    return jsonify({'error': 'Job nicht gefunden'}), 404
-
-
-@app.route('/api/process/video/<job_id>/output')
-def api_get_processed_video(job_id):
-    """Liefert das verarbeitete Video"""
-    output_path = f"uploads/processed/{job_id}_output.mp4"
-    if os.path.exists(output_path):
-        return send_from_directory('uploads/processed', f"{job_id}_output.mp4",
-                                  mimetype='video/mp4')
-    return jsonify({'error': 'Video nicht gefunden'}), 404
-
-
-@app.route('/api/process/jobs')
-def api_get_all_jobs():
-    """Holt alle Video-Verarbeitungsjobs"""
-    return jsonify(video_processing_jobs)
-
-
-@app.route('/api/process/jobs/<job_id>', methods=['DELETE'])
-def api_delete_job(job_id):
-    """Löscht einen Job und zugehörige Dateien"""
-    if job_id in video_processing_jobs:
-        job = video_processing_jobs[job_id]
-        
-        for path in [job.get('input_path'), job.get('output_path')]:
-            if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except:
-                    pass
-        
-        del video_processing_jobs[job_id]
-        return jsonify({'success': True})
-    
-    return jsonify({'error': 'Job nicht gefunden'}), 404
-
-
 # ============================================================
-# API ROUTEN - UTILITIES
-# ============================================================
-
-@app.route('/api/models/status')
-def api_models_status():
-    """Status der geladenen Modelle"""
-    return jsonify({
-        'loaded': detector.models_loaded,
-        'coco_model': detector.coco_model is not None,
-        'license_model': detector.license_model is not None,
-        'ocr_reader': detector.ocr_reader is not None
-    })
-
-
-@app.route('/api/models/reload', methods=['POST'])
-def api_reload_models():
-    """Lädt die Modelle neu"""
-    detector.models_loaded = False
-    detector.coco_model = None
-    detector.license_model = None
-    detector.ocr_reader = None
-    
-    threading.Thread(target=detector.load_models, daemon=True).start()
-    return jsonify({'success': True, 'message': 'Modelle werden neu geladen...'})
-
-
-@app.route('/api/system/info')
-def api_system_info():
-    """System-Informationen"""
-    import platform
-    
-    return jsonify({
-        'platform': platform.system(),
-        'python_version': platform.python_version(),
-        'opencv_version': cv2.__version__,
-        'models_loaded': detector.models_loaded,
-        'stream_status': stream_manager.get_status(),
-        'history_count': len(history_manager.history),
-        'active_jobs': len([j for j in video_processing_jobs.values() if j['status'] == 'processing'])
-    })
-
-
-# ============================================================
-# API ROUTEN - LETZTE ERKENNUNG (FÜR HOME ASSISTANT)
+# API ROUTEN - LETZTE ERKENNUNG
 # ============================================================
 
 @app.route('/api/latest')
 def api_latest_detection():
-    """Holt die letzte Erkennung als JSON"""
     entries = history_manager.get_all(limit=1)
-    
-    if entries and len(entries) > 0:
+    if entries:
         return jsonify(entries[0])
-    
     return jsonify({'error': 'Keine Erkennung vorhanden', 'plate_text': None})
-
 
 @app.route('/api/latest/plate')
 def api_latest_plate_text():
-    """Holt nur den Kennzeichen-Text der letzten Erkennung"""
     entries = history_manager.get_all(limit=1)
-    
-    if entries and len(entries) > 0:
+    if entries:
         entry = entries[0]
         return jsonify({
             'plate_text': entry.get('plate_text', ''),
@@ -1778,104 +1205,59 @@ def api_latest_plate_text():
             'timestamp': entry.get('timestamp', ''),
             'source': entry.get('source', '')
         })
-    
-    return jsonify({
-        'plate_text': '',
-        'confidence': 0,
-        'vehicle_type': 'unknown',
-        'vehicle_color': 'unknown',
-        'timestamp': '',
-        'source': ''
-    })
-
+    return jsonify({'plate_text': '', 'confidence': 0})
 
 @app.route('/api/latest/plate/image')
 def api_latest_plate_image():
-    """Liefert das Kennzeichen-Bild der letzten Erkennung als JPEG"""
     entries = history_manager.get_all(limit=1)
-    
-    if entries and len(entries) > 0:
-        entry = entries[0]
-        plate_image = entry.get('plate_image')
-        
+    if entries:
+        plate_image = entries[0].get('plate_image')
         if plate_image:
             try:
-                image_data = base64.b64decode(plate_image)
-                return Response(image_data, mimetype='image/jpeg')
-            except Exception as e:
-                logger.error(f"Fehler beim Dekodieren des Kennzeichenbildes: {e}")
+                return Response(base64.b64decode(plate_image), mimetype='image/jpeg')
+            except:
+                pass
     
-    placeholder = create_placeholder_image("Kein Kennzeichen", 400, 100)
-    return Response(placeholder, mimetype='image/jpeg')
-
-
-@app.route('/api/latest/vehicle/image')
-def api_latest_vehicle_image():
-    """Liefert das Fahrzeug-Bild der letzten Erkennung als JPEG"""
-    entries = history_manager.get_all(limit=1)
-    
-    if entries and len(entries) > 0:
-        entry = entries[0]
-        vehicle_image = entry.get('vehicle_image')
-        
-        if vehicle_image:
-            try:
-                image_data = base64.b64decode(vehicle_image)
-                return Response(image_data, mimetype='image/jpeg')
-            except Exception as e:
-                logger.error(f"Fehler beim Dekodieren des Fahrzeugbildes: {e}")
-    
-    placeholder = create_placeholder_image("Kein Fahrzeug", 640, 480)
-    return Response(placeholder, mimetype='image/jpeg')
-
-
-@app.route('/api/latest/full/image')
-def api_latest_full_image():
-    """Liefert das Vollbild der letzten Erkennung als JPEG"""
-    entries = history_manager.get_all(limit=1)
-    
-    if entries and len(entries) > 0:
-        entry = entries[0]
-        full_frame = entry.get('full_frame')
-        
-        if full_frame:
-            try:
-                image_data = base64.b64decode(full_frame)
-                return Response(image_data, mimetype='image/jpeg')
-            except Exception as e:
-                logger.error(f"Fehler beim Dekodieren des Vollbildes: {e}")
-    
-    placeholder = create_placeholder_image("Kein Bild", 1280, 720)
-    return Response(placeholder, mimetype='image/jpeg')
-
-
-def create_placeholder_image(text, width, height):
-    """Erstellt ein Placeholder-Bild mit Text"""
-    img = np.zeros((height, width, 3), dtype=np.uint8)
+    img = np.zeros((100, 400, 3), dtype=np.uint8)
     img[:] = (30, 30, 30)
-    
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = min(width, height) / 300
-    thickness = max(1, int(font_scale * 2))
-    
-    text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-    text_x = (width - text_size[0]) // 2
-    text_y = (height + text_size[1]) // 2
-    
-    cv2.putText(img, text, (text_x, text_y), font, font_scale, (100, 100, 100), thickness)
-    
-    _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    return buffer.tobytes()
+    cv2.putText(img, "Kein Kennzeichen", (100, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 100, 100), 2)
+    _, buffer = cv2.imencode('.jpg', img)
+    return Response(buffer.tobytes(), mimetype='image/jpeg')
 
 
 # ============================================================
-# SEITEN-ROUTE FÜR LETZTE ERKENNUNG
+# API ROUTEN - UTILITIES
 # ============================================================
 
-@app.route('/latest')
-def latest_detection_page():
-    """Seite für die letzte Erkennung"""
-    return render_template('latest.html', page='latest')
+@app.route('/api/models/status')
+def api_models_status():
+    return jsonify({
+        'loaded': detector.models_loaded,
+        'coco_model': detector.coco_model is not None,
+        'license_model': detector.license_model is not None,
+        'ocr_reader': detector.ocr_reader is not None
+    })
+
+@app.route('/api/models/reload', methods=['POST'])
+def api_reload_models():
+    detector.models_loaded = False
+    detector.coco_model = None
+    detector.license_model = None
+    detector.ocr_reader = None
+    threading.Thread(target=detector.load_models, daemon=True).start()
+    return jsonify({'success': True, 'message': 'Modelle werden neu geladen...'})
+
+@app.route('/api/system/info')
+def api_system_info():
+    import platform
+    return jsonify({
+        'platform': platform.system(),
+        'python_version': platform.python_version(),
+        'opencv_version': cv2.__version__,
+        'models_loaded': detector.models_loaded,
+        'stream_status': stream_manager.get_status(),
+        'history_count': len(history_manager.history)
+    })
 
 
 # ============================================================
@@ -1884,39 +1266,20 @@ def latest_detection_page():
 
 @socketio.on('connect')
 def handle_connect():
-    """Client verbindet sich"""
-    emit('connected', {
-        'status': 'ok',
-        'stream_status': stream_manager.get_status()
-    })
+    emit('connected', {'status': 'ok', 'stream_status': stream_manager.get_status()})
     logger.info("WebSocket Client verbunden")
-
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """Client trennt sich"""
     logger.info("WebSocket Client getrennt")
-
 
 @socketio.on('request_frame')
 def handle_frame_request():
-    """Client fordert aktuellen Frame an"""
     frame = stream_manager.get_current_frame()
     if frame is not None:
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
         frame_b64 = base64.b64encode(buffer).decode('utf-8')
         emit('frame', {'image': frame_b64})
-
-
-@socketio.on('get_job_status')
-def handle_job_status(data):
-    """Client fragt Job-Status ab"""
-    job_id = data.get('job_id')
-    if job_id and job_id in video_processing_jobs:
-        emit('job_status', {
-            'job_id': job_id,
-            **video_processing_jobs[job_id]
-        })
 
 
 # ============================================================
@@ -1925,15 +1288,12 @@ def handle_job_status(data):
 
 @app.errorhandler(404)
 def page_not_found(e):
-    """404 Fehlerseite"""
     if request.path.startswith('/api/'):
         return jsonify({'error': 'Nicht gefunden'}), 404
     return render_template('404.html', page='error'), 404
 
-
 @app.errorhandler(500)
 def internal_error(e):
-    """500 Fehlerseite"""
     logger.error(f"Internal Error: {e}")
     if request.path.startswith('/api/'):
         return jsonify({'error': 'Interner Serverfehler'}), 500
@@ -1948,22 +1308,14 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 2.1 - Fixed RTSP & Analysis Area             ║
+    ║     Version 2.1                                          ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║
-    ║     History:       http://localhost:5000/history         ║
     ║     RTSP Settings: http://localhost:5000/rtsp-settings   ║
-    ║     Settings:      http://localhost:5000/settings        ║
-    ║     Test:          http://localhost:5000/test            ║
     ╚══════════════════════════════════════════════════════════╝
     """)
     
-    # SocketIO an Stream Manager übergeben
-    stream_manager.set_socketio(socketio)
-    
-    socketio.run(app, 
-                 host='0.0.0.0', 
-                 port=5000, 
+    socketio.run(app, host='0.0.0.0', port=5000, 
                  debug=config_manager.get('general', 'debug_mode') or False,
                  allow_unsafe_werkzeug=True)
