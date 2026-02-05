@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 2.0 - Enhanced OCR & Vehicle Detection
+Version 2.1 - Fixed RTSP & Analysis Area Support
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -384,15 +384,7 @@ class HistoryManager:
 
 
 # ============================================================
-# RTSP STREAM MANAGER
-# ============================================================
-
-# Import the RTSPHandler from rtsp_handler.py
-from rtsp_handler import RTSPHandler
-
-
-# ============================================================
-# KENNZEICHEN-DETEKTOR (VERBESSERT)
+# KENNZEICHEN-DETEKTOR (MIT ANALYSIS AREA SUPPORT)
 # ============================================================
 
 class LicensePlateDetector:
@@ -836,40 +828,120 @@ class LicensePlateDetector:
         
         return ''.join(result)
     
-    def process_frame(self, frame):
-        """Verarbeitet einen einzelnen Frame"""
+    def _get_analysis_area(self, frame):
+        """
+        Holt und validiert den Analysebereich
+        
+        Returns:
+            Tuple (enabled, x, y, width, height) oder (False, 0, 0, frame_w, frame_h)
+        """
+        h, w = frame.shape[:2]
+        
+        area_enabled = self.config_manager.get('rtsp', 'analysis_area', 'enabled')
+        if not area_enabled:
+            return False, 0, 0, w, h
+        
+        area = self.config_manager.get('rtsp', 'analysis_area', 'area')
+        if not area:
+            return False, 0, 0, w, h
+        
+        x = int(area.get('x', 0))
+        y = int(area.get('y', 0))
+        width = int(area.get('width', w))
+        height = int(area.get('height', h))
+        
+        # Grenzen prüfen und korrigieren
+        x = max(0, min(x, w - 10))
+        y = max(0, min(y, h - 10))
+        width = max(10, min(width, w - x))
+        height = max(10, min(height, h - y))
+        
+        return True, x, y, width, height
+    
+    def process_frame(self, frame, apply_analysis_area=False):
+        """
+        Verarbeitet einen einzelnen Frame
+        
+        Args:
+            frame: Input Frame (BGR)
+            apply_analysis_area: Ob Analysis Area angewendet werden soll
+            
+        Returns:
+            Dictionary mit Erkennungsergebnissen
+        """
         if not self.models_loaded:
             self.load_models()
+        
+        if frame is None or frame.size == 0:
+            return {
+                'annotated_frame': np.zeros((480, 640, 3), dtype=np.uint8),
+                'detections': [],
+                'vehicles': [],
+                'processing_time': 0,
+                'error': 'Invalid frame'
+            }
         
         result = {
             'annotated_frame': frame.copy(),
             'detections': [],
             'vehicles': [],
-            'processing_time': 0
+            'processing_time': 0,
+            'analysis_area_applied': False
         }
         
         start_time = time.time()
         
         try:
+            # ============= ANALYSIS AREA HANDLING =============
+            process_frame = frame.copy()
+            offset_x, offset_y = 0, 0
+            full_frame = frame.copy()
+            
+            if apply_analysis_area:
+                area_enabled, ax, ay, aw, ah = self._get_analysis_area(frame)
+                if area_enabled:
+                    process_frame = frame[ay:ay+ah, ax:ax+aw].copy()
+                    offset_x, offset_y = ax, ay
+                    result['analysis_area_applied'] = True
+                    logger.debug(f"Analysis Area: x={ax}, y={ay}, w={aw}, h={ah}")
+            
             confidence_threshold = self.config_manager.get('detection', 'confidence_threshold') or 0.5
             zoom_enabled = self.config_manager.get('detection', 'zoom_enabled') or True
             zoom_factor = self.config_manager.get('detection', 'zoom_factor') or 2.5
             zoom_padding = self.config_manager.get('detection', 'zoom_padding') or 100
             
-            annotated = frame.copy()
+            annotated = full_frame.copy()
             detected_vehicles = []
             
+            # ============= ANALYSE-BEREICH MARKIEREN =============
+            if result['analysis_area_applied']:
+                area_enabled, ax, ay, aw, ah = self._get_analysis_area(frame)
+                cv2.rectangle(annotated, (ax, ay), (ax + aw, ay + ah), (0, 255, 255), 2)
+                cv2.putText(annotated, "Analysebereich", (ax + 5, ay + 25),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            
+            # ============= FAHRZEUGERKENNUNG =============
             if self.coco_model and self.config_manager.get('detection', 'car_detection_enabled'):
-                vehicle_results = self.coco_model(frame, conf=confidence_threshold, verbose=False)[0]
+                vehicle_results = self.coco_model(process_frame, conf=confidence_threshold, verbose=False)[0]
                 
                 for detection in vehicle_results.boxes.data.tolist():
                     x1, y1, x2, y2, score, class_id = detection
                     class_id = int(class_id)
                     
                     if class_id in self.VEHICLE_CLASSES:
-                        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                        # Offset für Analysis Area hinzufügen
+                        x1 = int(x1) + offset_x
+                        y1 = int(y1) + offset_y
+                        x2 = int(x2) + offset_x
+                        y2 = int(y2) + offset_y
                         
-                        vehicle_crop = frame[y1:y2, x1:x2].copy()
+                        # Vehicle crop vom Original-Frame
+                        crop_x1 = max(0, x1)
+                        crop_y1 = max(0, y1)
+                        crop_x2 = min(full_frame.shape[1], x2)
+                        crop_y2 = min(full_frame.shape[0], y2)
+                        
+                        vehicle_crop = full_frame[crop_y1:crop_y2, crop_x1:crop_x2].copy()
                         vehicle_color = self._estimate_vehicle_color(vehicle_crop)
                         
                         vehicle_info = {
@@ -889,13 +961,15 @@ class LicensePlateDetector:
             
             result['vehicles'] = detected_vehicles
             
+            # ============= KENNZEICHENERKENNUNG =============
             if self.license_model:
                 frames_to_process = []
                 
                 if zoom_enabled and detected_vehicles:
+                    # Zoome auf jedes erkannte Fahrzeug
                     for vehicle in detected_vehicles:
                         x1, y1, x2, y2 = vehicle['bbox']
-                        height, width = frame.shape[:2]
+                        height, width = full_frame.shape[:2]
                         
                         pad = zoom_padding
                         zx1 = max(0, x1 - pad)
@@ -903,14 +977,14 @@ class LicensePlateDetector:
                         zx2 = min(width, x2 + pad)
                         zy2 = min(height, y2 + pad)
                         
-                        vehicle_region = frame[zy1:zy2, zx1:zx2]
+                        vehicle_region = full_frame[zy1:zy2, zx1:zx2]
                         
                         if vehicle_region.size == 0:
                             continue
                         
                         crop_h, crop_w = vehicle_region.shape[:2]
                         min_size = 800
-                        scale = max(min_size / crop_w, min_size / crop_h, zoom_factor)
+                        scale = max(min_size / max(crop_w, 1), min_size / max(crop_h, 1), zoom_factor)
                         scale = min(scale, 5.0)
                         
                         new_width = int(crop_w * scale)
@@ -929,39 +1003,47 @@ class LicensePlateDetector:
                             'vehicle': vehicle
                         })
                 else:
+                    # Ohne Zoom: Verarbeite den zugeschnittenen Bereich oder ganzes Frame
                     frames_to_process.append({
-                        'frame': frame,
-                        'offset': (0, 0),
+                        'frame': process_frame,
+                        'offset': (offset_x, offset_y),
                         'scale': 1,
                         'vehicle': None
                     })
                 
+                # Verarbeite alle Frames
                 for frame_info in frames_to_process:
-                    process_frame = frame_info['frame']
-                    offset_x, offset_y = frame_info['offset']
+                    proc_frame = frame_info['frame']
+                    off_x, off_y = frame_info['offset']
                     scale = frame_info['scale']
                     vehicle = frame_info['vehicle']
                     
-                    license_results = self.license_model(process_frame, conf=0.3, verbose=False)[0]
+                    if proc_frame is None or proc_frame.size == 0:
+                        continue
+                    
+                    license_results = self.license_model(proc_frame, conf=0.3, verbose=False)[0]
                     
                     for plate_detection in license_results.boxes.data.tolist():
                         px1, py1, px2, py2, plate_score, _ = plate_detection
                         
-                        orig_px1 = int(px1 / scale + offset_x)
-                        orig_py1 = int(py1 / scale + offset_y)
-                        orig_px2 = int(px2 / scale + offset_x)
-                        orig_py2 = int(py2 / scale + offset_y)
+                        # Originale Koordinaten zurückrechnen
+                        orig_px1 = int(px1 / scale + off_x)
+                        orig_py1 = int(py1 / scale + off_y)
+                        orig_px2 = int(px2 / scale + off_x)
+                        orig_py2 = int(py2 / scale + off_y)
                         
                         plate_w = orig_px2 - orig_px1
                         plate_h = orig_py2 - orig_py1
                         
-                        plate_crop_scaled = process_frame[int(py1):int(py2), int(px1):int(px2)]
+                        # Kennzeichen aus skaliertem Frame
+                        plate_crop_scaled = proc_frame[int(py1):int(py2), int(px1):int(px2)]
                         
                         if plate_crop_scaled.size == 0:
                             continue
                         
                         scaled_h, scaled_w = plate_crop_scaled.shape[:2]
                         
+                        # Zusätzlich skalieren für OCR wenn nötig
                         target_height = self.config_manager.get('ocr', 'preprocessing', 'target_height') or 120
                         if scaled_h < target_height:
                             additional_scale = target_height / scaled_h
@@ -973,11 +1055,13 @@ class LicensePlateDetector:
                                 interpolation=cv2.INTER_CUBIC
                             )
                         
+                        # OCR durchführen
                         plate_text, ocr_confidence = self._read_plate_enhanced(plate_crop_scaled)
                         
                         min_save_conf = self.config_manager.get('history', 'min_confidence_to_save') or 0.35
                         
                         if not plate_text or ocr_confidence < min_save_conf:
+                            # Markiere unerkannte Kennzeichen orange
                             color = (0, 165, 255)
                             cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), color, 2)
                             continue
@@ -985,9 +1069,11 @@ class LicensePlateDetector:
                         if self._is_duplicate(plate_text):
                             continue
                         
+                        # Markiere erkannte Kennzeichen grün
                         color = (0, 255, 0)
                         cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), color, 3)
                         
+                        # Text über Kennzeichen
                         text_size = cv2.getTextSize(plate_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
                         cv2.rectangle(annotated,
                                      (orig_px1, orig_py1 - text_size[1] - 15),
@@ -997,6 +1083,7 @@ class LicensePlateDetector:
                                    (orig_px1 + 5, orig_py1 - 8),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
                         
+                        # ============= BILDER SPEICHERN =============
                         plate_image_b64 = None
                         vehicle_image_b64 = None
                         full_frame_b64 = None
@@ -1030,6 +1117,7 @@ class LicensePlateDetector:
                             _, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
                             full_frame_b64 = base64.b64encode(buffer).decode('utf-8')
                         
+                        # ============= ERGEBNIS SPEICHERN =============
                         detection_info = {
                             'plate_text': plate_text,
                             'confidence': ocr_confidence,
@@ -1058,6 +1146,21 @@ class LicensePlateDetector:
         
         result['processing_time'] = time.time() - start_time
         return result
+    
+    # Alias für Kompatibilität mit rtsp_handler.py
+    def detect(self, frame, source="unknown"):
+        """Alias für process_frame - für Kompatibilität"""
+        result = self.process_frame(frame, apply_analysis_area=True)
+        
+        # Konvertiere zu altem Format wenn nötig
+        return {
+            'plates': result.get('detections', []),
+            'cars': result.get('vehicles', []),
+            'car_detected': len(result.get('vehicles', [])) > 0,
+            'cars_count': len(result.get('vehicles', [])),
+            'annotated_image': result.get('annotated_frame'),
+            'analysis_area': result.get('analysis_area_applied')
+        }
     
     def process_image(self, image_path_or_array):
         """Verarbeitet ein einzelnes Bild"""
@@ -1176,6 +1279,346 @@ class LicensePlateDetector:
 
 
 # ============================================================
+# RTSP STREAM MANAGER
+# ============================================================
+
+class RTSPHandler:
+    """Handler für RTSP Videostreams"""
+    
+    def __init__(self, config_manager, history_manager, detector):
+        self.config_manager = config_manager
+        self.history_manager = history_manager
+        self.detector = detector
+        
+        # Stream-Variablen
+        self.cap = None
+        self.current_frame = None
+        self.annotated_frame = None
+        self.frame_lock = threading.Lock()
+        
+        # Thread-Variablen
+        self.capture_thread = None
+        self.process_thread = None
+        self.running = False
+        self.connected = False
+        
+        # Statistiken
+        self.frame_count = 0
+        self.detection_count = 0
+        self.fps = 0
+        self.last_fps_time = time.time()
+        self.fps_frame_count = 0
+        self.last_error = None
+        
+        # Frame Queue für Verarbeitung
+        self.frame_queue = queue.Queue(maxsize=10)
+        
+        # Duplikat-Erkennung
+        self.recent_plates = {}
+        
+        logger.info("RTSP Handler initialisiert")
+    
+    def update_config(self, config):
+        """Konfiguration aktualisieren"""
+        pass  # Config wird direkt vom config_manager gelesen
+    
+    def get_rtsp_url(self):
+        """RTSP URL aus Konfiguration holen"""
+        return self.config_manager.get('rtsp', 'url') or ''
+    
+    def is_running(self):
+        """Prüft ob Stream läuft"""
+        return self.running
+    
+    def is_connected(self):
+        """Prüft ob Verbindung besteht"""
+        return self.connected
+    
+    def get_fps(self):
+        """Aktuelle FPS zurückgeben"""
+        return round(self.fps, 1)
+    
+    def get_frame_count(self):
+        """Anzahl verarbeiteter Frames"""
+        return self.frame_count
+    
+    def get_status(self):
+        """Gibt den aktuellen Stream-Status zurück"""
+        return {
+            'status': 'running' if self.running else 'stopped',
+            'connected': self.connected,
+            'fps': self.get_fps(),
+            'frame_count': self.get_frame_count(),
+            'detection_count': self.detection_count,
+            'url': self.get_rtsp_url(),
+            'error': self.last_error if not self.connected else None,
+            'analysis_area_enabled': self.config_manager.get('rtsp', 'analysis_area', 'enabled') or False
+        }
+    
+    def get_current_frame(self):
+        """Aktuelles Frame (annotiert) zurückgeben"""
+        with self.frame_lock:
+            if self.annotated_frame is not None:
+                return self.annotated_frame.copy()
+            elif self.current_frame is not None:
+                return self.current_frame.copy()
+        return None
+    
+    def connect(self):
+        """Verbindung zum RTSP Stream herstellen"""
+        url = self.get_rtsp_url()
+        if not url:
+            self.last_error = "Keine RTSP URL konfiguriert"
+            logger.warning(self.last_error)
+            return False
+        
+        try:
+            logger.info(f"Verbinde zu RTSP: {url}")
+            
+            # OpenCV VideoCapture mit RTSP
+            self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+            
+            # Puffer-Einstellungen
+            buffer_size = self.config_manager.get('rtsp', 'buffer_size') or 1
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, buffer_size)
+            
+            if self.cap.isOpened():
+                # Test-Frame lesen
+                ret, frame = self.cap.read()
+                if ret and frame is not None:
+                    self.connected = True
+                    self.last_error = None
+                    
+                    with self.frame_lock:
+                        self.current_frame = frame
+                    
+                    logger.info(f"RTSP Verbindung hergestellt: {url} - Frame Size: {frame.shape}")
+                    return True
+                else:
+                    self.last_error = "Konnte keinen Frame lesen"
+            else:
+                self.last_error = "Stream konnte nicht geöffnet werden"
+            
+            logger.warning(f"Verbindung fehlgeschlagen: {self.last_error}")
+            return False
+            
+        except Exception as e:
+            self.last_error = str(e)
+            logger.error(f"RTSP Verbindungsfehler: {e}")
+            return False
+    
+    def disconnect(self):
+        """Verbindung trennen"""
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+        self.connected = False
+        logger.info("RTSP Verbindung getrennt")
+    
+    def start(self):
+        """Stream starten"""
+        if self.running:
+            logger.warning("Stream läuft bereits")
+            return True
+        
+        self.running = True
+        self.last_error = None
+        
+        # Capture Thread starten
+        self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.capture_thread.start()
+        
+        # Processing Thread starten
+        self.process_thread = threading.Thread(target=self._process_loop, daemon=True)
+        self.process_thread.start()
+        
+        logger.info("RTSP Handler gestartet")
+        return True
+    
+    def stop(self):
+        """Stream stoppen"""
+        logger.info("Stoppe RTSP Handler...")
+        self.running = False
+        
+        # Queue leeren
+        while not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except:
+                pass
+        
+        # Auf Thread-Ende warten
+        if self.capture_thread and self.capture_thread.is_alive():
+            self.capture_thread.join(timeout=2)
+        
+        if self.process_thread and self.process_thread.is_alive():
+            self.process_thread.join(timeout=2)
+        
+        self.disconnect()
+        logger.info("RTSP Handler gestoppt")
+    
+    def _capture_loop(self):
+        """Capture-Schleife für RTSP Stream"""
+        reconnect_delay = self.config_manager.get('rtsp', 'reconnect_delay') or 5
+        
+        while self.running:
+            if not self.connected:
+                if not self.connect():
+                    logger.debug(f"Reconnect in {reconnect_delay} Sekunden...")
+                    time.sleep(reconnect_delay)
+                    continue
+            
+            try:
+                ret, frame = self.cap.read()
+                
+                if not ret or frame is None:
+                    logger.warning("Frame konnte nicht gelesen werden, reconnecting...")
+                    self.disconnect()
+                    time.sleep(reconnect_delay)
+                    continue
+                
+                # Frame speichern
+                with self.frame_lock:
+                    self.current_frame = frame.copy()
+                
+                # Frame zur Verarbeitung in Queue
+                if not self.frame_queue.full():
+                    self.frame_queue.put(frame.copy())
+                
+                # FPS berechnen
+                self.fps_frame_count += 1
+                current_time = time.time()
+                if current_time - self.last_fps_time >= 1.0:
+                    self.fps = self.fps_frame_count / (current_time - self.last_fps_time)
+                    self.fps_frame_count = 0
+                    self.last_fps_time = current_time
+                
+                time.sleep(0.01)
+                    
+            except Exception as e:
+                logger.error(f"Capture Fehler: {e}")
+                self.last_error = str(e)
+                self.disconnect()
+                time.sleep(reconnect_delay)
+    
+    def _process_loop(self):
+        """Verarbeitungs-Schleife für Nummernschilderkennung"""
+        process_interval = self.config_manager.get('detection', 'process_interval') or 0.5
+        
+        while self.running:
+            try:
+                # Frame aus Queue holen
+                try:
+                    frame = self.frame_queue.get(timeout=1)
+                except queue.Empty:
+                    continue
+                
+                if frame is None:
+                    continue
+                
+                # Erkennung durchführen
+                if self.detector:
+                    # Modelle laden falls nötig
+                    if not self.detector.models_loaded:
+                        self.detector.load_models()
+                        time.sleep(1)
+                        continue
+                    
+                    try:
+                        # process_frame mit Analysis Area aufrufen
+                        results = self.detector.process_frame(frame, apply_analysis_area=True)
+                        
+                        # Annotiertes Frame speichern
+                        with self.frame_lock:
+                            annotated = results.get('annotated_frame', frame)
+                            
+                            # Status-Info einzeichnen
+                            status_text = f"FPS: {self.get_fps()} | Frames: {self.frame_count} | Erkennungen: {self.detection_count}"
+                            cv2.putText(annotated, status_text, (10, 30),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                            
+                            self.annotated_frame = annotated
+                        
+                        self.frame_count += 1
+                        
+                        # Erkennungen verarbeiten
+                        for detection in results.get('detections', []):
+                            if detection.get('plate_text'):
+                                self._handle_detection(detection, results)
+                                
+                    except Exception as e:
+                        logger.error(f"Erkennungsfehler: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    # Wenn kein Detector, nur Frame anzeigen
+                    with self.frame_lock:
+                        self.annotated_frame = frame
+                
+                time.sleep(process_interval)
+                
+            except Exception as e:
+                logger.error(f"Processing Fehler: {e}")
+                import traceback
+                traceback.print_exc()
+                time.sleep(1)
+    
+    def _handle_detection(self, detection, full_results):
+        """Verarbeitet erkanntes Nummernschild"""
+        plate_text = detection.get('plate_text', '')
+        if not plate_text or len(plate_text) < 3:
+            return
+        
+        current_time = time.time()
+        
+        # Duplikat-Timeout
+        timeout = self.config_manager.get('history', 'duplicate_timeout') or 30
+        filter_enabled = self.config_manager.get('history', 'filter_duplicates')
+        
+        normalized = plate_text.upper().replace(' ', '').replace('-', '')
+        
+        if filter_enabled:
+            if normalized in self.recent_plates:
+                last_seen = self.recent_plates[normalized]
+                if current_time - last_seen < timeout:
+                    logger.debug(f"Duplikat übersprungen: {plate_text}")
+                    return
+        
+        self.recent_plates[normalized] = current_time
+        
+        # Alte Einträge bereinigen
+        self.recent_plates = {k: v for k, v in self.recent_plates.items() 
+                             if current_time - v < timeout * 2}
+        
+        # Entry für Historie
+        entry = {
+            "plate_text": plate_text,
+            "confidence": detection.get('confidence', 0),
+            "source": "rtsp",
+            "plate_image": detection.get('plate_image_base64'),
+            "vehicle_image": detection.get('vehicle_image_base64'),
+            "full_frame": detection.get('full_frame_base64'),
+            "vehicle_type": detection.get('vehicle_type', 'Unbekannt'),
+            "vehicle_color": detection.get('vehicle_color', 'Unbekannt'),
+        }
+        
+        saved_entry = self.history_manager.add_entry(entry, check_duplicate=False)
+        
+        if saved_entry:
+            self.detection_count += 1
+            logger.info(f"RTSP Erkennung: {plate_text} (Konfidenz: {detection.get('confidence', 0):.2f})")
+            
+            # WebSocket Event senden
+            socketio.emit('plate_detected', {
+                'plate_text': plate_text,
+                'confidence': detection.get('confidence', 0),
+                'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
+                'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
+                'timestamp': datetime.now().isoformat()
+            })
+
+
+# ============================================================
 # GLOBALE INSTANZEN
 # ============================================================
 
@@ -1201,7 +1644,7 @@ def index():
     return render_template('index.html', 
                           page='dashboard',
                           stats=history_manager.get_statistics(),
-                          stream_status=stream_manager.get_status() if hasattr(stream_manager, 'get_status') else {},
+                          stream_status=stream_manager.get_status(),
                           config=config_manager.config)
 
 
@@ -1211,7 +1654,7 @@ def dashboard():
     return render_template('dashboard.html',
                           page='dashboard',
                           stats=history_manager.get_statistics(),
-                          stream_status=stream_manager.get_status() if hasattr(stream_manager, 'get_status') else {},
+                          stream_status=stream_manager.get_status(),
                           config=config_manager.config)
 
 
@@ -1246,7 +1689,7 @@ def rtsp_settings():
     return render_template('rtsp_settings.html',
                           page='rtsp',
                           config=config_manager.config.get('rtsp', {}),
-                          stream_status=stream_manager.get_status() if hasattr(stream_manager, 'get_status') else {})
+                          stream_status=stream_manager.get_status())
 
 
 @app.route('/settings')
@@ -1270,7 +1713,7 @@ def live_view():
     """Live Stream Ansicht"""
     return render_template('live.html',
                           page='live',
-                          stream_status=stream_manager.get_status() if hasattr(stream_manager, 'get_status') else {},
+                          stream_status=stream_manager.get_status(),
                           config=config_manager.config)
 
 
@@ -1367,10 +1810,6 @@ def api_save_rtsp_config():
         data = request.json
         config_manager.config['rtsp'].update(data)
         config_manager.save_config()
-        
-        # RTSP Handler mit neuer Konfiguration aktualisieren
-        if hasattr(stream_manager, 'update_config'):
-            stream_manager.update_config(config_manager.config)
         
         return jsonify({'success': True})
     except Exception as e:
@@ -1752,7 +2191,6 @@ def api_latest_plate_image():
             except Exception as e:
                 logger.error(f"Fehler beim Dekodieren des Kennzeichenbildes: {e}")
     
-    # Placeholder-Bild zurückgeben wenn kein Bild vorhanden
     placeholder = create_placeholder_image("Kein Kennzeichen", 400, 100)
     return Response(placeholder, mimetype='image/jpeg')
 
@@ -1773,7 +2211,6 @@ def api_latest_vehicle_image():
             except Exception as e:
                 logger.error(f"Fehler beim Dekodieren des Fahrzeugbildes: {e}")
     
-    # Placeholder-Bild zurückgeben wenn kein Bild vorhanden
     placeholder = create_placeholder_image("Kein Fahrzeug", 640, 480)
     return Response(placeholder, mimetype='image/jpeg')
 
@@ -1800,13 +2237,9 @@ def api_latest_full_image():
 
 def create_placeholder_image(text, width, height):
     """Erstellt ein Placeholder-Bild mit Text"""
-    import numpy as np
-    
-    # Schwarzes Bild erstellen
     img = np.zeros((height, width, 3), dtype=np.uint8)
-    img[:] = (30, 30, 30)  # Dunkelgrau
+    img[:] = (30, 30, 30)
     
-    # Text hinzufügen
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = min(width, height) / 300
     thickness = max(1, int(font_scale * 2))
@@ -1817,7 +2250,6 @@ def create_placeholder_image(text, width, height):
     
     cv2.putText(img, text, (text_x, text_y), font, font_scale, (100, 100, 100), thickness)
     
-    # Als JPEG kodieren
     _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
     return buffer.tobytes()
 
@@ -1830,6 +2262,7 @@ def create_placeholder_image(text, width, height):
 def latest_detection_page():
     """Seite für die letzte Erkennung"""
     return render_template('latest.html', page='latest')
+
 
 # ============================================================
 # WEBSOCKET EVENTS
@@ -1892,6 +2325,7 @@ def internal_error(e):
         return jsonify({'error': 'Interner Serverfehler'}), 500
     return render_template('500.html', page='error'), 500
 
+
 # ============================================================
 # HAUPTPROGRAMM
 # ============================================================
@@ -1899,10 +2333,11 @@ def internal_error(e):
 if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
-    ║     LICENSE PLATE DETECTION SYSTEM                       ║
-    ║     Flask Web Application                                ║
+    ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
+    ║     Version 2.1 - Fixed RTSP & Analysis Area             ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
+    ║     Live Stream:   http://localhost:5000/live            ║
     ║     History:       http://localhost:5000/history         ║
     ║     RTSP Settings: http://localhost:5000/rtsp-settings   ║
     ║     Settings:      http://localhost:5000/settings        ║
