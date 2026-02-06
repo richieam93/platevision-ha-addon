@@ -1,63 +1,266 @@
-# PlateVision – Home Assistant Add-on Repository
+# PlateVision – Home Assistant Add-on
 
-PlateVision ist eine Kennzeichen-Erkennungs-Webapp (Flask + Socket.IO + OpenCV + Ultralytics/YOLO + EasyOCR), verpackt als **Home Assistant Add-on**.
+🚗 **Automatic License Plate Recognition for Home Assistant**
 
-Dieses Repository ist als **Add-on Repository** aufgebaut, damit du es direkt in Home Assistant unter  
-**Einstellungen → Add-ons → Add-on Store → (⋮) Repositories** hinzufügen kannst.
+🚗 **Automatische Kennzeichenerkennung für Home Assistant**
 
----
-
-## Inhalte / Features
-
-- Web UI (Flask) zum Live-View und zur Auswertung
-- JSON API (z.B. „latest plate“) für Home Assistant REST-Sensoren
-- Persistente Daten über `/data` (bleibt bei Updates/Rebuild erhalten)
-  - Uploads (Bilder/Videos)
-  - History / Detected Plates
-  - Modelle (optional)
+[English](#-english) | [Deutsch](#-deutsch)
 
 ---
 
-## Voraussetzungen
+# 🇬🇧 English
 
-- Home Assistant OS / Supervised mit Add-on Support
-- Architektur: `amd64` (x86_64)
-- Netzwerkzugriff von Home Assistant auf das Add-on (lokal ist Standard)
-- Hinweis: Der erste Build kann je nach Hardware/RAM länger dauern (Torch/Ultralytics/EasyOCR).
+PlateVision is a license plate recognition webapp (Flask + Socket.IO + OpenCV + Ultralytics/YOLO + EasyOCR), packaged as a **Home Assistant Add-on**.
 
----
-
-## Installation (über Home Assistant UI)
-
-1. In Home Assistant öffnen:
-   - **Einstellungen → Add-ons → Add-on Store**
-   - oben rechts **(⋮) → Repositories**
-2. Repo-URL hinzufügen:
-   - `https://github.com/richieam93/platevision-ha-addon
-3. Danach **Reload** im Add-on Store.
-4. Add-on **PlateVision** installieren und starten.
+**100% local** – no cloud, no subscription, your data stays with you.
 
 ---
 
-## Ports / Web UI
+## 🎯 What does PlateVision do?
 
-Standard:
-- Intern im Container: `5000`
-- Extern am Home Assistant Host: **`8087`**
+PlateVision connects to your **RTSP camera** and automatically recognizes license plates in real-time.
 
-Web UI:
-- `http://<HA-IP>:8087`
+| Use Cases | |
+|-----------|---|
+| 🚘 Monitor driveway | Who comes and goes? |
+| 🚗 Manage parking | Automatic detection |
+| 🔓 Open garage door | When known plate is detected |
+| 📊 Statistics | Which vehicles, how often, when? |
 
 ---
 
-## Persistente Daten (`/data`)
+## ✨ Features
 
-Home Assistant Add-ons speichern persistent nur unter `/data`.
+### 📹 RTSP Camera Integration (Main Feature)
+- **Live connection** to any RTSP-capable camera
+- **Automatic analysis** – runs in background
+- **Real-time recognition** of license plates
+- **Camera crop** adjustable (saves computing power)
 
-Dieses Add-on sorgt beim Start automatisch dafür, dass folgende Pfade persistent sind:
+### 🤖 Recognition
+- **YOLO-based** – runs 100% locally on CPU or GPU
+- **EasyOCR** for text recognition
+- **Vehicle type detection** (car, truck, motorcycle, etc.)
+- **CPU/GPU selectable** in web interface
 
-- `/app/uploads` → `/data/uploads`
-- `/app/models` → `/data/models`
-- `/app/data` → `/data/data`
+### 🖥️ Web UI
+- **Live view** of camera
+- **Detected plates** with timestamp
+- **Statistics & history**
+- **Settings** directly in browser
 
-Damit bleiben Uploads/History/Modelle nach Neustarts und Updates erhalten.
+### 🔌 Home Assistant Integration
+- **JSON API** for REST sensors
+- **Automations** possible (e.g., open gate)
+- **Persistent data** – survives updates
+
+### 🧪 Test Mode
+- **Upload function** for images/videos
+- Perfect for **testing and adjusting** recognition
+- **Optimize** crop and settings before going live
+
+---
+
+## 📋 Requirements
+
+| Requirement | Details |
+|-------------|---------|
+| **Home Assistant** | OS / Supervised with Add-on Support |
+| **Architecture** | `amd64` (x86_64) |
+| **Camera** | RTSP-capable (most IP cameras) |
+| **Hardware** | Min. Intel i3 or comparable recommended |
+
+> ⚠️ **Note:** First build may take longer depending on hardware/RAM (Torch/Ultralytics/EasyOCR).
+
+---
+
+## 🚀 Installation
+
+1. In Home Assistant open:
+   - **Settings → Add-ons → Add-on Store**
+2. Top right **(⋮) → Repositories**
+3. Add repo URL:
+https://github.com/richieam93/platevision-ha-addon
+
+text
+
+4. **Reload** Add-on Store
+5. Install and start **PlateVision**
+
+---
+
+## ⚙️ Setup
+
+### Connect RTSP Camera
+
+1. Open Web UI: `http://<HA-IP>:8087`
+2. Go to **Settings**
+3. Enter your RTSP URL, e.g.:
+rtsp://user:password@192.168.1.100:554/stream
+
+text
+
+4. **Adjust crop** – only analyze relevant area
+5. Select **CPU/GPU**
+6. Save – done! 🎉
+
+---
+
+## 🌐 Ports / Web UI
+
+| Internal (Container) | External (Host) |
+|---------------------|-----------------|
+| 5000 | 8087 |
+
+**Web UI:** `http://<HA-IP>:8087`
+
+---
+
+## 🏠 Home Assistant Integration
+
+### Ready-to-use Examples
+
+In folder **[/examples](https://github.com/richieam93/platevision-ha-addon/tree/main/examples)** you'll find:
+
+| File | Description |
+|------|-------------|
+| 📄 [configuration.yaml](examples/configuration.yaml) | Basic configuration |
+| 📄 [homeassistant_rest.yaml](examples/homeassistant_rest.yaml) | REST sensor integration |
+| 📄 [Automatisierung Beispiele.txt](examples/Automatisierung%20Beispiele.txt) | Various automations |
+| 📄 [Bestimmtes Kennzeichen erkennen.txt](examples/Bestimmtes%20Kennzeichen%20erkennen.txt) | Trigger on specific plate |
+| 📄 [Lovelace Dashboard Card.txt](examples/Lovelace%20Dashboard%20Card.txt) | Dashboard card |
+| 📄 [Erweiterte Karte mit Picture Elements.txt](examples/Erweiterte%20Karte%20mit%20Picture%20Elements.txt) | Advanced UI |
+
+### Quick Start: REST Sensor
+
+```yaml
+sensor:
+- platform: rest
+ name: "PlateVision Last Plate"
+ resource: "http://localhost:8087/api/latest"
+ value_template: "{{ value_json.plate }}"
+ scan_interval: 5
+💾 Persistent Data
+App Path	Persistent
+/app/uploads	/data/uploads
+/app/models	/data/models
+/app/data	/data/data
+🇩🇪 Deutsch
+PlateVision ist eine Kennzeichen-Erkennungs-Webapp (Flask + Socket.IO + OpenCV + Ultralytics/YOLO + EasyOCR), verpackt als Home Assistant Add-on.
+
+100% lokal – keine Cloud, kein Abo, deine Daten bleiben bei dir.
+
+🎯 Was macht PlateVision?
+PlateVision verbindet sich mit deiner RTSP-Kamera und erkennt automatisch Nummernschilder in Echtzeit.
+
+Anwendungsbeispiele	
+🚘 Einfahrt überwachen	Wer kommt und geht?
+🚗 Parkplatz verwalten	Automatische Erfassung
+🔓 Garagentor öffnen	Wenn bekanntes Kennzeichen erkannt
+📊 Statistiken	Welche Fahrzeuge, wie oft, wann?
+✨ Features
+📹 RTSP Kamera-Integration (Hauptfunktion)
+Live-Verbindung zu jeder RTSP-fähigen Kamera
+Automatische Analyse – läuft im Hintergrund
+Echtzeit-Erkennung von Nummernschildern
+Kamera-Zuschnitt einstellbar (spart Rechenleistung)
+🤖 Erkennung
+YOLO-basiert – läuft 100% lokal auf CPU oder GPU
+EasyOCR für Texterkennung
+Fahrzeugtyp-Erkennung (Auto, LKW, Motorrad, etc.)
+CPU/GPU wählbar im Webinterface
+🖥️ Web UI
+Live-View der Kamera
+Erkannte Kennzeichen mit Zeitstempel
+Statistiken & History
+Einstellungen direkt im Browser
+🔌 Home Assistant Integration
+JSON API für REST-Sensoren
+Automatisierungen möglich (z.B. Tor öffnen)
+Persistente Daten – bleibt bei Updates erhalten
+🧪 Test-Modus
+Upload-Funktion für Bilder/Videos
+Perfekt zum Testen und Einstellen der Erkennung
+Optimiere Zuschnitt und Einstellungen bevor du live gehst
+📋 Voraussetzungen
+Anforderung	Details
+Home Assistant	OS / Supervised mit Add-on Support
+Architektur	amd64 (x86_64)
+Kamera	RTSP-fähig (die meisten IP-Kameras)
+Hardware	Min. Intel i3 oder vergleichbar empfohlen
+⚠️ Hinweis: Der erste Build kann je nach Hardware/RAM länger dauern (Torch/Ultralytics/EasyOCR).
+
+🚀 Installation
+In Home Assistant öffnen:
+Einstellungen → Add-ons → Add-on Store
+Oben rechts (⋮) → Repositories
+Repo-URL hinzufügen:
+text
+
+https://github.com/richieam93/platevision-ha-addon
+Reload im Add-on Store
+Add-on PlateVision installieren und starten
+⚙️ Einrichtung
+RTSP-Kamera verbinden
+Öffne das Web UI: http://<HA-IP>:8087
+Gehe zu Einstellungen
+Trage deine RTSP-URL ein, z.B.:
+text
+
+rtsp://benutzer:passwort@192.168.1.100:554/stream
+Zuschnitt anpassen – nur den relevanten Bereich analysieren
+CPU/GPU auswählen
+Speichern – fertig! 🎉
+🌐 Ports / Web UI
+Intern (Container)	Extern (Host)
+5000	8087
+Web UI: http://<HA-IP>:8087
+
+🏠 Home Assistant Integration
+Fertige Beispiele
+Im Ordner /examples findest du:
+
+Datei	Beschreibung
+📄 configuration.yaml	Grundkonfiguration
+📄 homeassistant_rest.yaml	REST-Sensor Einbindung
+📄 Automatisierung Beispiele.txt	Verschiedene Automationen
+📄 Bestimmtes Kennzeichen erkennen.txt	Trigger bei bestimmtem Kennzeichen
+📄 Lovelace Dashboard Card.txt	Dashboard-Karte
+📄 Erweiterte Karte mit Picture Elements.txt	Fortgeschrittene UI
+Schnellstart: REST-Sensor
+YAML
+
+sensor:
+  - platform: rest
+    name: "PlateVision Letztes Kennzeichen"
+    resource: "http://localhost:8087/api/latest"
+    value_template: "{{ value_json.plate }}"
+    scan_interval: 5
+💾 Persistente Daten
+App-Pfad	Persistent
+/app/uploads	/data/uploads
+/app/models	/data/models
+/app/data	/data/data
+☕ Support this Project / Unterstütze dieses Projekt
+This project is 100% free and open source.
+
+Dieses Projekt ist 100% gratis und Open Source.
+
+Over 100+ hours of development went into PlateVision.
+
+Über 100 Stunden Entwicklung stecken in PlateVision.
+
+If it helps you, I'd appreciate a coffee:
+
+Wenn es dir hilft, freue ich mich über einen Kaffee:
+
+<a href="https://www.buymeacoffee.com/geartec" target="_blank"> <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50"> </a>
+📝 Feedback & Support
+🐛 Issues: GitHub Issues
+💬 Questions / Fragen: Just open an issue!
+📜 License / Lizenz
+MIT License – see LICENSE
+
+Made with ❤️ in Switzerland 🇨🇭
+
+Entwickelt mit ❤️ in der Schweiz 🇨🇭
