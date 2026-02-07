@@ -1,41 +1,81 @@
 # ===========================================
-# PLATEVISION - NEUE ERKENNUNG BENACHRICHTIGUNG
+# PLATEVISION - BEKANNTES KENNZEICHEN
 # ===========================================
 
 automation:
-  - id: platevision_neue_erkennung
-    alias: "PlateVision - Neue Erkennung"
-    description: "Benachrichtigung bei neuer Kennzeichenerkennung"
+  - id: platevision_bekanntes_kennzeichen
+    alias: "PlateVision - Bekanntes Kennzeichen"
+    description: "Reagiert auf bekannte/eigene Fahrzeuge"
     trigger:
       - platform: state
         entity_id: sensor.platevision_kennzeichen
     condition:
-      # Nur wenn sich das Kennzeichen geändert hat
       - condition: template
-        value_template: "{{ trigger.to_state.state != trigger.from_state.state }}"
-      # Und mindestens 3 Zeichen hat (gültiges Kennzeichen)
+        value_template: >-
+          {% set plate = states('sensor.platevision_kennzeichen') | upper | replace(' ', '') | replace('-', '') %}
+          {% set known_plates = [
+            'BTEST123',
+            'MAB1234',
+            'HHAB5678',
+            'MXY9999'
+          ] %}
+          {{ plate in known_plates }}
+    action:
+      # Benachrichtigung
+      - service: notify.mobile_app_dein_handy  # <- Anpassen!
+        data:
+          title: "✅ Bekanntes Fahrzeug erkannt"
+          message: "{{ states('sensor.platevision_kennzeichen') }} ist angekommen!"
+          data:
+            image: http://192.168.1.240:8087/api/latest/vehicle/image
+            tag: platevision_known
+            priority: high
+            channel: platevision_important
+      
+      # Optional: Garagentor öffnen
+      # - service: cover.open_cover
+      #   target:
+      #     entity_id: cover.garage_door
+      
+      # Optional: Licht einschalten
+      # - service: light.turn_on
+      #   target:
+      #     entity_id: light.einfahrt
+      
+      # Optional: Willkommensnachricht auf Speaker
+      # - service: tts.google_translate_say
+      #   target:
+      #     entity_id: media_player.wohnzimmer
+      #   data:
+      #     message: "Willkommen zuhause!"
+    mode: single
+
+
+  # Unbekanntes Fahrzeug (optional)
+  - id: platevision_unbekanntes_kennzeichen
+    alias: "PlateVision - Unbekanntes Kennzeichen"
+    description: "Warnung bei unbekannten Fahrzeugen"
+    trigger:
+      - platform: state
+        entity_id: sensor.platevision_kennzeichen
+    condition:
       - condition: template
-        value_template: "{{ trigger.to_state.state | length > 2 }}"
-      # Und nicht "Unbekannt" ist
-      - condition: template
-        value_template: "{{ trigger.to_state.state != 'Unbekannt' }}"
+        value_template: >-
+          {% set plate = states('sensor.platevision_kennzeichen') | upper | replace(' ', '') | replace('-', '') %}
+          {% set known_plates = [
+            'BTEST123',
+            'MAB1234',
+            'HHAB5678'
+          ] %}
+          {{ plate | length > 2 and plate != 'UNBEKANNT' and plate not in known_plates }}
     action:
       - service: notify.mobile_app_dein_handy  # <- Anpassen!
         data:
-          title: "🚗 Kennzeichen erkannt"
-          message: >-
-            {{ states('sensor.platevision_kennzeichen') }} 
-            ({{ states('sensor.platevision_fahrzeugtyp') }}, {{ states('sensor.platevision_fahrzeugfarbe') }})
-            - Konfidenz: {{ states('sensor.platevision_konfidenz') }}%
+          title: "⚠️ Unbekanntes Fahrzeug"
+          message: "{{ states('sensor.platevision_kennzeichen') }} wurde erkannt!"
           data:
-            # Bild im Notification (Android)
             image: http://192.168.1.240:8087/api/latest/vehicle/image
-            # Für iOS:
-            # attachment:
-            #   url: http://192.168.1.240:8087/api/latest/vehicle/image
-            #   content-type: jpeg
-            tag: platevision_detection
-            group: platevision
-            # Klick-Aktion
-            clickAction: /lovelace/platevision
+            tag: platevision_unknown
+            priority: high
+            color: "#FF5722"
     mode: single
