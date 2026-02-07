@@ -1614,7 +1614,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 2.1                                          ║
+    ║     Version 4.0                                          ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║
@@ -1625,4 +1625,5 @@ if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, 
                  debug=config_manager.get('general', 'debug_mode') or False,
                  allow_unsafe_werkzeug=True)
+
 
