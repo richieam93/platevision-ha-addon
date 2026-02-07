@@ -1224,6 +1224,108 @@ def api_latest_plate_image():
     _, buffer = cv2.imencode('.jpg', img)
     return Response(buffer.tobytes(), mimetype='image/jpeg')
 
+# ============================================================
+# API ROUTEN - FAHRZEUG (LETZTE ERKENNUNG)
+# ============================================================
+
+@app.route('/api/latest/vehicle')
+@app.route('/api/latest/vehicle/')
+def api_latest_vehicle():
+    """Gibt die letzte Fahrzeug-Erkennung als JSON zurück"""
+    entries = history_manager.get_all(limit=1)
+    if entries:
+        entry = entries[0]
+        return jsonify({
+            'plate_text': entry.get('plate_text', ''),
+            'confidence': entry.get('confidence', 0),
+            'vehicle_type': entry.get('vehicle_type', 'unknown'),
+            'vehicle_type_en': entry.get('vehicle_type_en', 'unknown'),
+            'vehicle_color': entry.get('vehicle_color', 'unknown'),
+            'timestamp': entry.get('timestamp', ''),
+            'source': entry.get('source', ''),
+            'has_vehicle_image': entry.get('vehicle_image') is not None,
+            'has_plate_image': entry.get('plate_image') is not None
+        })
+    return jsonify({
+        'error': 'Keine Erkennung vorhanden',
+        'plate_text': None,
+        'vehicle_type': None
+    })
+
+
+@app.route('/api/latest/vehicle/image')
+@app.route('/api/latest/vehicle/image/')
+def api_latest_vehicle_image():
+    """Gibt das letzte Fahrzeug-Bild als JPEG zurück"""
+    entries = history_manager.get_all(limit=1)
+    if entries:
+        vehicle_image = entries[0].get('vehicle_image')
+        if vehicle_image:
+            try:
+                return Response(base64.b64decode(vehicle_image), mimetype='image/jpeg')
+            except:
+                pass
+    
+    # Placeholder-Bild
+    img = np.zeros((200, 400, 3), dtype=np.uint8)
+    img[:] = (30, 30, 30)
+    cv2.putText(img, "Kein Fahrzeug", (120, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 100, 100), 2)
+    cv2.putText(img, "vorhanden", (140, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 100, 100), 2)
+    _, buffer = cv2.imencode('.jpg', img)
+    return Response(buffer.tobytes(), mimetype='image/jpeg')
+
+
+@app.route('/api/latest/full')
+@app.route('/api/latest/full/')
+def api_latest_full():
+    """Gibt alle Daten der letzten Erkennung inkl. Base64-Bilder zurück"""
+    entries = history_manager.get_all(limit=1)
+    if entries:
+        entry = entries[0]
+        return jsonify({
+            'success': True,
+            'plate_text': entry.get('plate_text', ''),
+            'confidence': entry.get('confidence', 0),
+            'vehicle_type': entry.get('vehicle_type', 'unknown'),
+            'vehicle_type_en': entry.get('vehicle_type_en', 'unknown'),
+            'vehicle_color': entry.get('vehicle_color', 'unknown'),
+            'timestamp': entry.get('timestamp', ''),
+            'source': entry.get('source', ''),
+            'plate_image_base64': entry.get('plate_image', None),
+            'vehicle_image_base64': entry.get('vehicle_image', None),
+            'id': entry.get('id', '')
+        })
+    return jsonify({
+        'success': False,
+        'error': 'Keine Erkennung vorhanden'
+    })
+
+
+@app.route('/api/latest/image')
+@app.route('/api/latest/image/')
+def api_latest_full_image():
+    """Gibt das volle Bild (Fahrzeug mit Kennzeichen) der letzten Erkennung zurück"""
+    entries = history_manager.get_all(limit=1)
+    if entries:
+        # Zuerst Fahrzeugbild versuchen, dann Kennzeichenbild
+        vehicle_image = entries[0].get('vehicle_image')
+        plate_image = entries[0].get('plate_image')
+        
+        image_data = vehicle_image or plate_image
+        if image_data:
+            try:
+                return Response(base64.b64decode(image_data), mimetype='image/jpeg')
+            except:
+                pass
+    
+    # Placeholder
+    img = np.zeros((200, 400, 3), dtype=np.uint8)
+    img[:] = (30, 30, 30)
+    cv2.putText(img, "Kein Bild", (130, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (100, 100, 100), 2)
+    _, buffer = cv2.imencode('.jpg', img)
+    return Response(buffer.tobytes(), mimetype='image/jpeg')
+
+
 
 # ============================================================
 # API ROUTEN - UTILITIES
@@ -1625,5 +1727,6 @@ if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, 
                  debug=config_manager.get('general', 'debug_mode') or False,
                  allow_unsafe_werkzeug=True)
+
 
 
