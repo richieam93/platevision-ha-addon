@@ -1,0 +1,12 @@
+Entity ID	Typ	Beschreibung
+sensor.platevision_kennzeichen	sensor	Erkanntes Kennzeichen
+sensor.platevision_fahrzeugtyp	sensor	PKW, LKW, Bus, etc.
+sensor.platevision_fahrzeugfarbe	sensor	Erkannte Farbe
+sensor.platevision_konfidenz	sensor	Erkennungsgenauigkeit %
+sensor.platevision_zuletzt_gesehen	sensor	Relative Zeit
+sensor.platevision_erkennungszeit	sensor	Absolute Zeit
+sensor.platevision_quelle	sensor	Stream/Upload/Video
+binary_sensor.platevision_stream	binary_sensor	Stream aktiv?
+camera.platevision_kennzeichen_bild	camera	Kennzeichen-Ausschnitt
+camera.platevision_fahrzeug_bild	camera	Fahrzeug-Bild
+camera.platevision_live_stream	camera	MJPEG Live Stream

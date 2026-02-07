@@ -1,0 +1,44 @@
+# ===========================================
+# PLATEVISION SCRIPTS
+# ===========================================
+
+script:
+  # Stream starten
+  platevision_stream_start:
+    alias: "PlateVision Stream starten"
+    sequence:
+      - service: rest_command.platevision_stream_start
+    icon: mdi:play
+    
+  # Stream stoppen
+  platevision_stream_stop:
+    alias: "PlateVision Stream stoppen"
+    sequence:
+      - service: rest_command.platevision_stream_stop
+    icon: mdi:stop
+
+  # Snapshot aufnehmen und speichern
+  platevision_save_snapshot:
+    alias: "PlateVision Snapshot speichern"
+    sequence:
+      - service: camera.snapshot
+        target:
+          entity_id: camera.platevision_snapshot
+        data:
+          filename: "/config/www/platevision/snapshot_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg"
+    icon: mdi:camera
+
+
+# REST Commands
+rest_command:
+  platevision_stream_start:
+    url: http://192.168.1.240:8087/api/stream/start
+    method: POST
+    
+  platevision_stream_stop:
+    url: http://192.168.1.240:8087/api/stream/stop
+    method: POST
+    
+  platevision_reload_models:
+    url: http://192.168.1.240:8087/api/models/reload
+    method: POST

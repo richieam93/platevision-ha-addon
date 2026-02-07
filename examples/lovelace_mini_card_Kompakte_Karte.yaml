@@ -1,0 +1,33 @@
+# ===========================================
+# PLATEVISION MINI KARTE (für Sidebar etc.)
+# ===========================================
+
+type: custom:stack-in-card
+mode: vertical
+cards:
+  - type: horizontal-stack
+    cards:
+      - type: picture-entity
+        entity: camera.platevision_kennzeichen_bild
+        camera_image: camera.platevision_kennzeichen_bild
+        show_name: false
+        show_state: false
+        style: |
+          ha-card {
+            height: 80px;
+            overflow: hidden;
+          }
+          
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: |
+              **{{ states('sensor.platevision_kennzeichen') }}**
+              {{ states('sensor.platevision_fahrzeugtyp') }} • {{ states('sensor.platevision_fahrzeugfarbe') }}
+              <small>{{ states('sensor.platevision_zuletzt_gesehen') }}</small>
+            style: |
+              ha-card {
+                background: transparent;
+                box-shadow: none;
+                padding: 8px;
+              }

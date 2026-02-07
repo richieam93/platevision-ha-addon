@@ -1,0 +1,86 @@
+# ===========================================
+# PLATEVISION DASHBOARD KARTE
+# ===========================================
+
+type: vertical-stack
+title: 🚗 PlateVision
+cards:
+  # Live Stream oder letztes Fahrzeug
+  - type: conditional
+    conditions:
+      - entity: binary_sensor.platevision_stream
+        state: "on"
+    card:
+      type: picture-entity
+      entity: camera.platevision_live_stream
+      name: Live Stream
+      camera_image: camera.platevision_live_stream
+      camera_view: live
+      show_state: false
+
+  - type: conditional
+    conditions:
+      - entity: binary_sensor.platevision_stream
+        state: "off"
+    card:
+      type: picture-entity
+      entity: camera.platevision_fahrzeug_bild
+      name: Letztes Fahrzeug
+      camera_image: camera.platevision_fahrzeug_bild
+      show_state: false
+    
+  # Kennzeichen groß anzeigen
+  - type: markdown
+    content: |
+      <h1 style="text-align: center; font-family: monospace; letter-spacing: 3px; margin: 0;">
+        🔤 {{ states('sensor.platevision_kennzeichen') }}
+      </h1>
+    
+  # Statistik-Zeile
+  - type: horizontal-stack
+    cards:
+      - type: entity
+        entity: sensor.platevision_konfidenz
+        name: Konfidenz
+        icon: mdi:percent-outline
+        
+      - type: entity
+        entity: sensor.platevision_fahrzeugtyp
+        name: Typ
+        
+      - type: entity
+        entity: sensor.platevision_fahrzeugfarbe
+        name: Farbe
+        
+  # Details
+  - type: entities
+    entities:
+      - entity: sensor.platevision_kennzeichen
+        name: Kennzeichen
+        icon: mdi:card-text-outline
+        
+      - entity: sensor.platevision_zuletzt_gesehen
+        name: Zuletzt gesehen
+        
+      - entity: sensor.platevision_quelle
+        name: Quelle
+        
+      - entity: binary_sensor.platevision_stream
+        name: Stream Status
+        
+      - type: divider
+      
+      # Aktions-Buttons
+      - type: button
+        name: Historie anzeigen
+        icon: mdi:history
+        tap_action:
+          action: url
+          url_path: http://192.168.1.240:8087/history
+          
+      - type: button
+        name: Einstellungen
+        icon: mdi:cog
+        tap_action:
+          action: url
+          url_path: http://192.168.1.240:8087/settings

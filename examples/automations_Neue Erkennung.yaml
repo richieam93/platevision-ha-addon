@@ -1,0 +1,41 @@
+# ===========================================
+# PLATEVISION - NEUE ERKENNUNG BENACHRICHTIGUNG
+# ===========================================
+
+automation:
+  - id: platevision_neue_erkennung
+    alias: "PlateVision - Neue Erkennung"
+    description: "Benachrichtigung bei neuer Kennzeichenerkennung"
+    trigger:
+      - platform: state
+        entity_id: sensor.platevision_kennzeichen
+    condition:
+      # Nur wenn sich das Kennzeichen geändert hat
+      - condition: template
+        value_template: "{{ trigger.to_state.state != trigger.from_state.state }}"
+      # Und mindestens 3 Zeichen hat (gültiges Kennzeichen)
+      - condition: template
+        value_template: "{{ trigger.to_state.state | length > 2 }}"
+      # Und nicht "Unbekannt" ist
+      - condition: template
+        value_template: "{{ trigger.to_state.state != 'Unbekannt' }}"
+    action:
+      - service: notify.mobile_app_dein_handy  # <- Anpassen!
+        data:
+          title: "🚗 Kennzeichen erkannt"
+          message: >-
+            {{ states('sensor.platevision_kennzeichen') }} 
+            ({{ states('sensor.platevision_fahrzeugtyp') }}, {{ states('sensor.platevision_fahrzeugfarbe') }})
+            - Konfidenz: {{ states('sensor.platevision_konfidenz') }}%
+          data:
+            # Bild im Notification (Android)
+            image: http://192.168.1.240:8087/api/latest/vehicle/image
+            # Für iOS:
+            # attachment:
+            #   url: http://192.168.1.240:8087/api/latest/vehicle/image
+            #   content-type: jpeg
+            tag: platevision_detection
+            group: platevision
+            # Klick-Aktion
+            clickAction: /lovelace/platevision
+    mode: single

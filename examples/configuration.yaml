@@ -1,0 +1,131 @@
+# ===========================================
+# PLATEVISION INTEGRATION
+# ===========================================
+
+# REST Sensoren
+rest:
+  # Hauptsensor für Kennzeichen
+  - resource: http://192.168.1.240:8087/api/latest/plate
+    scan_interval: 5
+    sensor:
+      - name: "PlateVision Kennzeichen"
+        unique_id: platevision_last_plate
+        value_template: "{{ value_json.plate_text | default('Unbekannt') }}"
+        json_attributes:
+          - confidence
+          - vehicle_type
+          - vehicle_color
+          - timestamp
+          - source
+
+  # Stream Status
+  - resource: http://192.168.1.240:8087/api/stream/status
+    scan_interval: 10
+    binary_sensor:
+      - name: "PlateVision Stream"
+        unique_id: platevision_stream_status
+        value_template: "{{ value_json.status == 'running' }}"
+        device_class: connectivity
+
+# Template Sensoren für einzelne Attribute
+template:
+  - sensor:
+      - name: "PlateVision Fahrzeugtyp"
+        unique_id: platevision_vehicle_type
+        state: "{{ state_attr('sensor.platevision_kennzeichen', 'vehicle_type') | default('Unbekannt') }}"
+        icon: >-
+          {% set vtype = state_attr('sensor.platevision_kennzeichen', 'vehicle_type') | default('') | lower %}
+          {% if 'pkw' in vtype or 'car' in vtype %}
+            mdi:car
+          {% elif 'lkw' in vtype or 'truck' in vtype %}
+            mdi:truck
+          {% elif 'bus' in vtype %}
+            mdi:bus
+          {% elif 'motor' in vtype %}
+            mdi:motorbike
+          {% else %}
+            mdi:car-outline
+          {% endif %}
+      
+      - name: "PlateVision Fahrzeugfarbe"
+        unique_id: platevision_vehicle_color
+        state: "{{ state_attr('sensor.platevision_kennzeichen', 'vehicle_color') | default('Unbekannt') }}"
+        icon: mdi:palette
+      
+      - name: "PlateVision Konfidenz"
+        unique_id: platevision_confidence
+        state: "{{ (state_attr('sensor.platevision_kennzeichen', 'confidence') | float(0) * 100) | round(1) }}"
+        unit_of_measurement: "%"
+        icon: mdi:percent
+      
+      - name: "PlateVision Erkennungszeit"
+        unique_id: platevision_timestamp
+        state: >-
+          {% set ts = state_attr('sensor.platevision_kennzeichen', 'timestamp') %}
+          {% if ts %}
+            {{ as_timestamp(ts) | timestamp_custom('%d.%m.%Y %H:%M:%S') }}
+          {% else %}
+            Unbekannt
+          {% endif %}
+        icon: mdi:clock-outline
+      
+      - name: "PlateVision Zuletzt gesehen"
+        unique_id: platevision_last_seen
+        state: >-
+          {% set ts = state_attr('sensor.platevision_kennzeichen', 'timestamp') %}
+          {% if ts %}
+            {% set diff = (now().timestamp() - as_timestamp(ts)) | int %}
+            {% if diff < 60 %}
+              vor {{ diff }} Sekunden
+            {% elif diff < 3600 %}
+              vor {{ (diff / 60) | int }} Minuten
+            {% elif diff < 86400 %}
+              vor {{ (diff / 3600) | int }} Stunden
+            {% else %}
+              vor {{ (diff / 86400) | int }} Tagen
+            {% endif %}
+          {% else %}
+            Unbekannt
+          {% endif %}
+        icon: mdi:history
+
+      - name: "PlateVision Quelle"
+        unique_id: platevision_source
+        state: >-
+          {% set src = state_attr('sensor.platevision_kennzeichen', 'source') | default('') %}
+          {% if src == 'rtsp_stream' %}
+            Live Stream
+          {% elif src == 'image_upload' %}
+            Bild Upload
+          {% elif src == 'video_upload' %}
+            Video Upload
+          {% else %}
+            {{ src | default('Unbekannt') }}
+          {% endif %}
+        icon: mdi:source-branch
+
+# Kameras
+camera:
+  # Kennzeichen-Bild
+  - platform: generic
+    name: PlateVision Kennzeichen Bild
+    still_image_url: http://192.168.1.240:8087/api/latest/plate/image
+    verify_ssl: false
+    
+  # Fahrzeug-Bild
+  - platform: generic
+    name: PlateVision Fahrzeug Bild
+    still_image_url: http://192.168.1.240:8087/api/latest/vehicle/image
+    verify_ssl: false
+    
+  # Live Stream
+  - platform: mjpeg
+    name: PlateVision Live Stream
+    mjpeg_url: http://192.168.1.240:8087/api/stream/feed
+    verify_ssl: false
+
+  # Snapshot vom Stream
+  - platform: generic
+    name: PlateVision Snapshot
+    still_image_url: http://192.168.1.240:8087/api/stream/snapshot
+    verify_ssl: false
