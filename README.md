@@ -4,6 +4,10 @@
 
 🚗 **Automatische Kennzeichenerkennung für Home Assistant**
 
+> ⚠️ **Current Status:** German UI only | CPU only (GPU coming soon)
+
+> ⚠️ **Aktueller Status:** Nur deutsche Oberfläche | Nur CPU (GPU kommt bald)
+
 [English](#-english) | [Deutsch](#-deutsch)
 
 ---
@@ -299,4 +303,5 @@ MIT License – see LICENSE
 ---
 
 Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 🇨🇭
+
 
