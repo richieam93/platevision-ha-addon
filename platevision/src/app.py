@@ -1261,6 +1261,312 @@ def api_system_info():
 
 
 # ============================================================
+# API ROUTEN - VIDEO VERARBEITUNG
+# ============================================================
+
+def process_video_job(job_id, video_path, original_filename):
+    """Hintergrund-Thread für Video-Verarbeitung"""
+    global video_processing_jobs
+    
+    try:
+        job = video_processing_jobs[job_id]
+        job['status'] = 'processing'
+        job['started_at'] = datetime.now().isoformat()
+        
+        # Video öffnen
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise Exception("Video konnte nicht geöffnet werden")
+        
+        # Video-Eigenschaften
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        job['total_frames'] = total_frames
+        job['fps'] = fps
+        job['resolution'] = f"{width}x{height}"
+        
+        # Output Video Writer
+        output_path = f"uploads/processed/{job_id}_output.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        
+        # Verarbeitungs-Einstellungen
+        process_every_n_frames = max(1, int(fps / 2))  # ~2 FPS Analyse
+        
+        frame_count = 0
+        detections_count = 0
+        start_time = time.time()
+        all_detections = []
+        
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            frame_count += 1
+            annotated_frame = frame.copy()
+            
+            # Nur jeden n-ten Frame analysieren
+            if frame_count % process_every_n_frames == 0:
+                try:
+                    result = detector.process_frame(frame)
+                    annotated_frame = result['annotated_frame']
+                    
+                    # Neue Erkennungen speichern
+                    for detection in result['detections']:
+                        if detection.get('plate_text'):
+                            detections_count += 1
+                            
+                            entry = {
+                                'plate_text': detection['plate_text'],
+                                'confidence': detection.get('confidence', 0),
+                                'source': 'video_upload',
+                                'filename': original_filename,
+                                'frame_number': frame_count,
+                                'timestamp_video': frame_count / fps,
+                                'plate_image': detection.get('plate_image_base64'),
+                                'vehicle_image': detection.get('vehicle_image_base64'),
+                                'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
+                                'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
+                            }
+                            history_manager.add_entry(entry)
+                            all_detections.append(entry)
+                            
+                except Exception as e:
+                    logger.error(f"Frame-Verarbeitung Fehler: {e}")
+            
+            # Frame schreiben
+            out.write(annotated_frame)
+            
+            # Progress Update
+            elapsed = time.time() - start_time
+            progress = int((frame_count / total_frames) * 100) if total_frames > 0 else 0
+            fps_processing = round(frame_count / elapsed, 1) if elapsed > 0 else 0
+            eta = int((total_frames - frame_count) / fps_processing) if fps_processing > 0 else 0
+            
+            job['current_frame'] = frame_count
+            job['progress'] = progress
+            job['detections_count'] = detections_count
+            job['elapsed_time'] = int(elapsed)
+            job['fps_processing'] = fps_processing
+            job['eta'] = eta
+            
+            # WebSocket Progress (alle 30 Frames)
+            if frame_count % 30 == 0:
+                try:
+                    socketio.emit('video_progress', {
+                        'job_id': job_id,
+                        'progress': progress,
+                        'current_frame': frame_count,
+                        'total_frames': total_frames,
+                        'detections_count': detections_count,
+                        'elapsed_time': int(elapsed),
+                        'fps_processing': fps_processing,
+                        'eta': eta,
+                        'status': 'processing'
+                    })
+                except:
+                    pass
+        
+        # Aufräumen
+        cap.release()
+        out.release()
+        
+        # Job abschließen
+        job['status'] = 'completed'
+        job['completed_at'] = datetime.now().isoformat()
+        job['progress'] = 100
+        job['current_frame'] = total_frames
+        job['output_path'] = output_path
+        job['all_detections'] = all_detections
+        
+        # WebSocket Completion
+        try:
+            socketio.emit('video_completed', {
+                'job_id': job_id,
+                'status': 'completed',
+                'detections_count': detections_count,
+                'total_frames': total_frames,
+                'processing_time': int(time.time() - start_time)
+            })
+        except:
+            pass
+        
+        logger.info(f"Video-Job {job_id} abgeschlossen: {detections_count} Erkennungen in {total_frames} Frames")
+        
+    except Exception as e:
+        logger.error(f"Video-Verarbeitung Fehler: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        video_processing_jobs[job_id]['status'] = 'error'
+        video_processing_jobs[job_id]['error'] = str(e)
+        
+        try:
+            socketio.emit('video_completed', {
+                'job_id': job_id,
+                'status': 'error',
+                'error': str(e)
+            })
+        except:
+            pass
+
+
+@app.route('/api/process/video', methods=['POST'])
+def api_process_video():
+    """Video-Datei hochladen und Verarbeitung starten"""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'Keine Datei'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'success': False, 'error': 'Keine Datei ausgewählt'}), 400
+    
+    # Dateiendung prüfen
+    allowed_extensions = {'mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm'}
+    file_ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+    
+    if file_ext not in allowed_extensions:
+        return jsonify({'success': False, 'error': f'Ungültiges Videoformat. Erlaubt: {", ".join(allowed_extensions)}'}), 400
+    
+    try:
+        # Job erstellen
+        job_id = str(uuid.uuid4())
+        
+        # Video speichern
+        video_filename = f"{job_id}.{file_ext}"
+        video_path = os.path.join('uploads/videos', video_filename)
+        file.save(video_path)
+        
+        # Job registrieren
+        video_processing_jobs[job_id] = {
+            'id': job_id,
+            'filename': file.filename,
+            'video_path': video_path,
+            'status': 'queued',
+            'progress': 0,
+            'current_frame': 0,
+            'total_frames': 0,
+            'detections_count': 0,
+            'created_at': datetime.now().isoformat(),
+            'error': None
+        }
+        
+        # Verarbeitung im Hintergrund starten
+        thread = threading.Thread(
+            target=process_video_job,
+            args=(job_id, video_path, file.filename),
+            daemon=True
+        )
+        thread.start()
+        
+        logger.info(f"Video-Job gestartet: {job_id} - {file.filename}")
+        
+        return jsonify({
+            'success': True,
+            'job_id': job_id,
+            'message': 'Video-Verarbeitung gestartet'
+        })
+        
+    except Exception as e:
+        logger.error(f"Video-Upload Fehler: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/process/video/<job_id>/status')
+def api_video_job_status(job_id):
+    """Status eines Video-Jobs abrufen"""
+    if job_id not in video_processing_jobs:
+        return jsonify({'error': 'Job nicht gefunden'}), 404
+    
+    job = video_processing_jobs[job_id]
+    
+    return jsonify({
+        'job_id': job_id,
+        'status': job.get('status'),
+        'progress': job.get('progress', 0),
+        'current_frame': job.get('current_frame', 0),
+        'total_frames': job.get('total_frames', 0),
+        'detections_count': job.get('detections_count', 0),
+        'elapsed_time': job.get('elapsed_time', 0),
+        'fps_processing': job.get('fps_processing', 0),
+        'eta': job.get('eta', 0),
+        'error': job.get('error'),
+        'filename': job.get('filename'),
+        'created_at': job.get('created_at'),
+        'completed_at': job.get('completed_at')
+    })
+
+
+@app.route('/api/process/video/<job_id>/output')
+def api_video_job_output(job_id):
+    """Verarbeitetes Video herunterladen"""
+    if job_id not in video_processing_jobs:
+        return jsonify({'error': 'Job nicht gefunden'}), 404
+    
+    job = video_processing_jobs[job_id]
+    
+    if job.get('status') != 'completed':
+        return jsonify({'error': 'Video noch nicht fertig'}), 400
+    
+    output_path = job.get('output_path')
+    if not output_path or not os.path.exists(output_path):
+        return jsonify({'error': 'Output-Datei nicht gefunden'}), 404
+    
+    directory = os.path.dirname(output_path)
+    filename = os.path.basename(output_path)
+    
+    # Originaler Dateiname für Download
+    original_name = job.get('filename', 'video')
+    if '.' in original_name:
+        original_name = original_name.rsplit('.', 1)[0]
+    download_name = f"{original_name}_processed.mp4"
+    
+    return send_from_directory(
+        directory,
+        filename,
+        as_attachment=True,
+        download_name=download_name
+    )
+
+
+@app.route('/api/process/jobs')
+def api_get_jobs():
+    """Alle Video-Jobs abrufen"""
+    # Jobs als Dictionary zurückgeben (so erwartet es das Frontend)
+    return jsonify(video_processing_jobs)
+
+
+@app.route('/api/process/jobs/<job_id>', methods=['DELETE'])
+def api_delete_job(job_id):
+    """Video-Job löschen"""
+    if job_id not in video_processing_jobs:
+        return jsonify({'error': 'Job nicht gefunden'}), 404
+    
+    job = video_processing_jobs[job_id]
+    
+    # Dateien löschen
+    try:
+        video_path = job.get('video_path')
+        if video_path and os.path.exists(video_path):
+            os.remove(video_path)
+        
+        output_path = job.get('output_path')
+        if output_path and os.path.exists(output_path):
+            os.remove(output_path)
+    except Exception as e:
+        logger.warning(f"Fehler beim Löschen der Job-Dateien: {e}")
+    
+    # Job entfernen
+    del video_processing_jobs[job_id]
+    
+    return jsonify({'success': True})
+
+
+# ============================================================
 # WEBSOCKET EVENTS
 # ============================================================
 
@@ -1319,3 +1625,4 @@ if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, 
                  debug=config_manager.get('general', 'debug_mode') or False,
                  allow_unsafe_werkzeug=True)
+
