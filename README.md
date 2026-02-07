@@ -74,6 +74,17 @@ PlateVision connects to your **RTSP camera** and automatically recognizes licens
 
 ---
 
+## 📸 Screenshots
+
+| Dashboard | RTSP Stream | Erkennung |
+|-----------|-------------|-----------|
+| ![Dashboard](Bilder/dashboard.JPG) | ![RTSP](Bilder/rtsp.JPG) | ![Erkennung](Bilder/Letzte%20Erkennung.JPG) |
+
+| Historie | Einstellungen | Test-Modus |
+|----------|---------------|------------|
+| ![Historie](Bilder/Historie.JPG) | ![Einstellungen](Bilder/einstellungen.JPG) | ![Test](Bilder/test.JPG) |
+
+
 ## 🚀 Installation
 
 1. In Home Assistant open:
@@ -288,3 +299,4 @@ MIT License – see LICENSE
 ---
 
 Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 🇨🇭
+
