@@ -125,19 +125,45 @@ PlateVision connects to your **RTSP camera** and automatically recognizes licens
 
 ## 🏠 Home Assistant Integration
 
-### Ready-to-use Examples
+### Ready-to-use Examples / Fertige Beispiele
 
 In folder **[/examples](https://github.com/richieam93/platevision-ha-addon/tree/main/examples)** you'll find:
 
-| File | Description |
-|------|-------------|
-| 📄 configuration.yaml | Basic configuration |
-| 📄 homeassistant_rest.yaml | REST sensor integration |
-| 📄 Automatisierung Beispiele.txt | Various automations |
-| 📄 Bestimmtes Kennzeichen erkennen.txt | Trigger on specific plate |
-| 📄 Lovelace Dashboard Card.txt | Dashboard card |
-| 📄 Erweiterte Karte mit Picture Elements.txt | Advanced UI |
+Im Ordner **[/examples](https://github.com/richieam93/platevision-ha-addon/tree/main/examples)** findest du:
 
+#### ⚙️ Configuration / Konfiguration
+
+| File / Datei | Description / Beschreibung |
+|--------------|---------------------------|
+| 📄 [configuration.yaml](examples/configuration.yaml) | Basic configuration / Grundkonfiguration |
+| 📄 [Zusammenfassung der Entity-IDs.txt](examples/Zusammenfassung%20der%20Entity-IDs.txt) | Entity ID overview / Entity-ID Übersicht |
+
+#### 🤖 Automations / Automatisierungen
+
+| File / Datei | Description / Beschreibung |
+|--------------|---------------------------|
+| 📄 [automations_Bekanntes Kennzeichen.yaml](examples/automations_%20Bekanntes%20Kennzeichen.yaml) | Trigger on known plate / Bei bekanntem Kennzeichen |
+| 📄 [automations_Neue Erkennung.yaml](examples/automations_Neue%20Erkennung.yaml) | Trigger on new detection / Bei neuer Erkennung |
+
+#### 🖼️ Lovelace Cards / Dashboard-Karten
+
+| File / Datei | Description / Beschreibung |
+|--------------|---------------------------|
+| 📄 [lovelace_card-Dashboard Karte.yaml](examples/lovelace_card-%20Dashboard%20Karte.yaml) | Standard dashboard card / Standard Dashboard-Karte |
+| 📄 [lovelace_mini_card_Kompakte_Karte.yaml](examples/lovelace_mini_card_Kompakte_Karte.yaml) | Compact card / Kompakte Karte |
+| 📄 [lovelace_picture_elements_Erweiterte Karte.yaml](examples/lovelace_picture_elements_Erweiterte%20Karte.yaml) | Advanced card / Erweiterte Karte |
+
+#### 📜 Scripts
+
+| File / Datei | Description / Beschreibung |
+|--------------|---------------------------|
+| 📄 [scripts_Nützliche Scripts.yaml](examples/scripts_N%C3%BCtzliche%20Scripts.yaml) | Useful scripts / Nützliche Scripts |
+
+#### 📡 API
+
+| File / Datei | Description / Beschreibung |
+|--------------|---------------------------|
+| 📄 [Alle API-Endpunkte - Vollständige Übersicht.txt](examples/Alle%20API-Endpunkte%20-%20Vollst%C3%A4ndige%20%C3%9Cbersicht.txt) | All API endpoints / Alle API-Endpunkte |
 ---
 
 ## 💾 Persistent Data
@@ -216,6 +242,19 @@ PlateVision verbindet sich mit deiner **RTSP-Kamera** und erkennt automatisch Nu
 
 ---
 
+## 📸 Screenshots
+
+| Dashboard | RTSP Stream | Erkennung |
+|-----------|-------------|-----------|
+| ![Dashboard](Bilder/dashboard.JPG) | ![RTSP](Bilder/rtsp.JPG) | ![Erkennung](Bilder/Letzte%20Erkennung.JPG) |
+
+| Historie | Einstellungen | Test-Modus |
+|----------|---------------|------------|
+| ![Historie](Bilder/Historie.JPG) | ![Einstellungen](Bilder/einstellungen.JPG) | ![Test](Bilder/test.JPG) |
+
+---
+
+
 ## 🚀 Installation
 
 1. In Home Assistant öffnen:
@@ -252,18 +291,45 @@ PlateVision verbindet sich mit deiner **RTSP-Kamera** und erkennt automatisch Nu
 
 ## 🏠 Home Assistant Integration
 
-### Fertige Beispiele
+### Ready-to-use Examples / Fertige Beispiele
+
+In folder **[/examples](https://github.com/richieam93/platevision-ha-addon/tree/main/examples)** you'll find:
 
 Im Ordner **[/examples](https://github.com/richieam93/platevision-ha-addon/tree/main/examples)** findest du:
 
-| Datei | Beschreibung |
-|-------|--------------|
-| 📄 configuration.yaml | Grundkonfiguration |
-| 📄 homeassistant_rest.yaml | REST-Sensor Einbindung |
-| 📄 Automatisierung Beispiele.txt | Verschiedene Automationen |
-| 📄 Bestimmtes Kennzeichen erkennen.txt | Trigger bei bestimmtem Kennzeichen |
-| 📄 Lovelace Dashboard Card.txt | Dashboard-Karte |
-| 📄 Erweiterte Karte mit Picture Elements.txt | Fortgeschrittene UI |
+#### ⚙️ Configuration / Konfiguration
+
+| File / Datei | Description / Beschreibung |
+|--------------|---------------------------|
+| 📄 [configuration.yaml](examples/configuration.yaml) | Basic configuration / Grundkonfiguration |
+| 📄 [Zusammenfassung der Entity-IDs.txt](examples/Zusammenfassung%20der%20Entity-IDs.txt) | Entity ID overview / Entity-ID Übersicht |
+
+#### 🤖 Automations / Automatisierungen
+
+| File / Datei | Description / Beschreibung |
+|--------------|---------------------------|
+| 📄 [automations_Bekanntes Kennzeichen.yaml](examples/automations_%20Bekanntes%20Kennzeichen.yaml) | Trigger on known plate / Bei bekanntem Kennzeichen |
+| 📄 [automations_Neue Erkennung.yaml](examples/automations_Neue%20Erkennung.yaml) | Trigger on new detection / Bei neuer Erkennung |
+
+#### 🖼️ Lovelace Cards / Dashboard-Karten
+
+| File / Datei | Description / Beschreibung |
+|--------------|---------------------------|
+| 📄 [lovelace_card-Dashboard Karte.yaml](examples/lovelace_card-%20Dashboard%20Karte.yaml) | Standard dashboard card / Standard Dashboard-Karte |
+| 📄 [lovelace_mini_card_Kompakte_Karte.yaml](examples/lovelace_mini_card_Kompakte_Karte.yaml) | Compact card / Kompakte Karte |
+| 📄 [lovelace_picture_elements_Erweiterte Karte.yaml](examples/lovelace_picture_elements_Erweiterte%20Karte.yaml) | Advanced card / Erweiterte Karte |
+
+#### 📜 Scripts
+
+| File / Datei | Description / Beschreibung |
+|--------------|---------------------------|
+| 📄 [scripts_Nützliche Scripts.yaml](examples/scripts_N%C3%BCtzliche%20Scripts.yaml) | Useful scripts / Nützliche Scripts |
+
+#### 📡 API
+
+| File / Datei | Description / Beschreibung |
+|--------------|---------------------------|
+| 📄 [Alle API-Endpunkte - Vollständige Übersicht.txt](examples/Alle%20API-Endpunkte%20-%20Vollst%C3%A4ndige%20%C3%9Cbersicht.txt) | All API endpoints / Alle API-Endpunkte |
 
 ---
 
@@ -303,5 +369,6 @@ MIT License – see LICENSE
 ---
 
 Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 🇨🇭
+
 
 
