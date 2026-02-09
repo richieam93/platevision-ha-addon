@@ -51,24 +51,144 @@
                     
                     <hr class="my-4">
                     
+                    <!-- ============================================ -->
+                    <!-- STREAM AUFLÖSUNG - NEU HINZUGEFÜGT -->
+                    <!-- ============================================ -->
+                    <h6 class="mb-3">
+                        <i class="fas fa-expand-arrows-alt me-2 text-primary"></i>
+                        Stream Auflösung
+                    </h6>
+                    
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-4">
+                            <label class="form-label">Auflösung Vorlage</label>
+                            <select class="form-select" id="resolutionPreset" onchange="applyResolutionPreset()">
+                                <option value="">Benutzerdefiniert</option>
+                                <option value="640x480">640 × 480 (VGA)</option>
+                                <option value="800x600">800 × 600 (SVGA)</option>
+                                <option value="1280x720" selected>1280 × 720 (HD 720p)</option>
+                                <option value="1920x1080">1920 × 1080 (Full HD 1080p)</option>
+                                <option value="2560x1440">2560 × 1440 (2K QHD)</option>
+                                <option value="3840x2160">3840 × 2160 (4K UHD)</option>
+                            </select>
+                            <small class="text-secondary">Wählen Sie eine Standard-Auflösung</small>
+                        </div>
+                        
+                        <div class="col-md-4">
+                            <label class="form-label">Breite (px)</label>
+                            <div class="input-group">
+                                <input type="number" class="form-control" id="streamWidth" 
+                                       min="320" max="7680" step="1"
+                                       value="{{ config.resolution.width if config and config.resolution else 1280 }}"
+                                       onchange="updateResolutionPreset()">
+                                <span class="input-group-text">px</span>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-4">
+                            <label class="form-label">Höhe (px)</label>
+                            <div class="input-group">
+                                <input type="number" class="form-control" id="streamHeight" 
+                                       min="240" max="4320" step="1"
+                                       value="{{ config.resolution.height if config and config.resolution else 720 }}"
+                                       onchange="updateResolutionPreset()">
+                                <span class="input-group-text">px</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="alert alert-info small mb-4">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Hinweis:</strong> Die Auflösung sollte mit der tatsächlichen Kamera-Auflösung übereinstimmen.
+                        Höhere Auflösungen = bessere Erkennung, aber mehr CPU-Last.
+                        Für die meisten Kameras ist 1280×720 oder 1920×1080 optimal.
+                    </div>
+                    
+                    <hr class="my-4">
+                    
                     <!-- Connection Settings -->
-                    <div class="row g-3">
+                    <h6 class="mb-3">
+                        <i class="fas fa-cogs me-2 text-primary"></i>
+                        Verbindungs-Einstellungen
+                    </h6>
+                    
+                    <div class="row g-3 mb-4">
                         <div class="col-md-6">
                             <label class="form-label">Reconnect Verzögerung (Sekunden)</label>
-                            <input type="number" class="form-control" id="reconnectDelay" 
-                                   min="1" max="60" value="{{ config.reconnect_delay if config else 5 }}">
+                            <div class="input-group">
+                                <input type="number" class="form-control" id="reconnectDelay" 
+                                       min="1" max="60" value="{{ config.reconnect_delay if config else 5 }}">
+                                <span class="input-group-text">Sek.</span>
+                            </div>
                             <small class="text-secondary">Zeit bis zum erneuten Verbindungsversuch</small>
                         </div>
                         
                         <div class="col-md-6">
                             <label class="form-label">Buffer Größe (Frames)</label>
-                            <input type="number" class="form-control" id="bufferSize" 
-                                   min="1" max="50" value="{{ config.buffer_size if config else 10 }}">
+                            <div class="input-group">
+                                <input type="number" class="form-control" id="bufferSize" 
+                                       min="1" max="50" value="{{ config.buffer_size if config else 10 }}">
+                                <span class="input-group-text">Frames</span>
+                            </div>
                             <small class="text-secondary">Größerer Buffer = mehr Latenz, stabiler</small>
                         </div>
                     </div>
                     
                     <hr class="my-4">
+                    
+                    <!-- Erweiterte Optionen -->
+                    <div class="mb-4">
+                        <a class="text-decoration-none" data-bs-toggle="collapse" href="#advancedOptions" role="button">
+                            <i class="fas fa-chevron-down me-2"></i>
+                            <strong>Erweiterte Optionen</strong>
+                        </a>
+                        
+                        <div class="collapse mt-3" id="advancedOptions">
+                            <div class="card bg-dark">
+                                <div class="card-body">
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label">Verbindungs-Timeout (Sekunden)</label>
+                                            <div class="input-group">
+                                                <input type="number" class="form-control" id="connectionTimeout" 
+                                                       min="5" max="120" value="{{ config.connection_timeout if config and config.connection_timeout else 30 }}">
+                                                <span class="input-group-text">Sek.</span>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="col-md-6">
+                                            <label class="form-label">Max. Reconnect Versuche</label>
+                                            <input type="number" class="form-control" id="maxReconnects" 
+                                                   min="0" max="100" value="{{ config.max_reconnects if config and config.max_reconnects else 0 }}">
+                                            <small class="text-secondary">0 = Unbegrenzt</small>
+                                        </div>
+                                        
+                                        <div class="col-md-6">
+                                            <div class="form-check form-switch mt-3">
+                                                <input class="form-check-input" type="checkbox" id="tcpTransport"
+                                                       {{ 'checked' if config and config.tcp_transport else '' }}>
+                                                <label class="form-check-label" for="tcpTransport">
+                                                    TCP Transport verwenden (statt UDP)
+                                                </label>
+                                            </div>
+                                            <small class="text-secondary">TCP ist stabiler bei Netzwerkproblemen</small>
+                                        </div>
+                                        
+                                        <div class="col-md-6">
+                                            <div class="form-check form-switch mt-3">
+                                                <input class="form-check-input" type="checkbox" id="hwAcceleration"
+                                                       {{ 'checked' if config and config.hw_acceleration else '' }}>
+                                                <label class="form-check-label" for="hwAcceleration">
+                                                    Hardware-Beschleunigung (wenn verfügbar)
+                                                </label>
+                                            </div>
+                                            <small class="text-secondary">GPU-Dekodierung für weniger CPU-Last</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary">
@@ -139,7 +259,7 @@
                         
                         <!-- Stream Info -->
                         <div class="d-flex justify-content-between mt-2 small text-secondary">
-                            <span id="streamResolutionInfo">Auflösung: Unbekannt</span>
+                            <span id="streamResolutionInfo">Stream: Unbekannt</span>
                             <span id="displayResolutionInfo">Anzeige: Unbekannt</span>
                         </div>
                     </div>
@@ -269,6 +389,16 @@
                     </div>
                 </div>
                 
+                <!-- Aktuelle Auflösung -->
+                <div class="mb-3 p-2 bg-dark rounded">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-secondary">
+                            <i class="fas fa-expand-arrows-alt me-2"></i>Auflösung:
+                        </span>
+                        <strong id="currentResolution">-- × --</strong>
+                    </div>
+                </div>
+                
                 <div id="streamError" class="alert alert-danger mb-3" style="display: none;">
                     <i class="fas fa-exclamation-triangle me-2"></i>
                     <span id="streamErrorText"></span>
@@ -311,21 +441,59 @@
             </div>
         </div>
         
+        <!-- Auflösungs-Empfehlungen -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-desktop"></i>
+                    Auflösungs-Empfehlungen
+                </h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm table-borderless mb-0" style="font-size: 0.85rem;">
+                    <thead>
+                        <tr class="text-secondary">
+                            <th>Auflösung</th>
+                            <th>Empfehlung</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>640×480</td>
+                            <td><span class="badge bg-warning">Niedrig</span> Schnell, geringe Genauigkeit</td>
+                        </tr>
+                        <tr>
+                            <td>1280×720</td>
+                            <td><span class="badge bg-success">Optimal</span> Gute Balance</td>
+                        </tr>
+                        <tr>
+                            <td>1920×1080</td>
+                            <td><span class="badge bg-primary">Hoch</span> Beste Erkennung</td>
+                        </tr>
+                        <tr>
+                            <td>2K/4K</td>
+                            <td><span class="badge bg-danger">Sehr hoch</span> Hohe CPU-Last</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
         <!-- Tipps -->
         <div class="card mb-4">
             <div class="card-header">
                 <h5 class="card-title mb-0">
                     <i class="fas fa-lightbulb"></i>
-                    Tipps für Bereichsauswahl
+                    Tipps
                 </h5>
             </div>
             <div class="card-body">
                 <ul class="small mb-0 ps-3">
-                    <li class="mb-2">Wählen Sie nur den Bereich, in dem Fahrzeuge erscheinen</li>
-                    <li class="mb-2">Kleinere Bereiche = schnellere Verarbeitung</li>
-                    <li class="mb-2">Vermeiden Sie Bereiche mit viel Bewegung (Bäume, Wasser)</li>
-                    <li class="mb-2">Der Bereich sollte Kennzeichen vollständig erfassen</li>
-                    <li>Bei Einfahrten: Untere Bildhälfte oft optimal</li>
+                    <li class="mb-2">Verwenden Sie die gleiche Auflösung wie Ihre Kamera</li>
+                    <li class="mb-2">1080p ist ideal für Kennzeichenerkennung</li>
+                    <li class="mb-2">Bei langsamer Verarbeitung: Auflösung reduzieren</li>
+                    <li class="mb-2">Analyse-Bereich nutzen für bessere Performance</li>
+                    <li>Bei Problemen: TCP Transport aktivieren</li>
                 </ul>
             </div>
         </div>
@@ -379,14 +547,14 @@
                         <h2 class="accordion-header">
                             <button class="accordion-button collapsed bg-transparent text-light py-3" type="button" 
                                     data-bs-toggle="collapse" data-bs-target="#help3">
-                                Bereich wird nicht korrekt angewendet?
+                                Welche Auflösung soll ich wählen?
                             </button>
                         </h2>
                         <div id="help3" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
                             <div class="accordion-body text-secondary small pt-0">
-                                Die Koordinaten beziehen sich auf die tatsächliche Stream-Auflösung.
-                                Stellen Sie sicher, dass der Stream aktiv ist, bevor Sie den Bereich festlegen.
-                                Nach dem Speichern wird der Bereich bei der nächsten Frame-Verarbeitung angewendet.
+                                Für die beste Kennzeichenerkennung empfehlen wir 1080p (1920×1080).
+                                Wenn Ihr System langsam ist, reduzieren Sie auf 720p (1280×720).
+                                Die Auflösung sollte der Kamera-Ausgabe entsprechen.
                             </div>
                         </div>
                     </div>
@@ -463,6 +631,32 @@ function loadConfiguration() {
                 document.getElementById('bufferSize').value = rtspConfig.buffer_size;
             }
             
+            // Resolution
+            if (rtspConfig.resolution) {
+                streamWidth = rtspConfig.resolution.width || 1280;
+                streamHeight = rtspConfig.resolution.height || 720;
+                
+                document.getElementById('streamWidth').value = streamWidth;
+                document.getElementById('streamHeight').value = streamHeight;
+                
+                updateResolutionPreset();
+                updateCurrentResolutionDisplay();
+            }
+            
+            // Erweiterte Optionen
+            if (rtspConfig.connection_timeout) {
+                document.getElementById('connectionTimeout').value = rtspConfig.connection_timeout;
+            }
+            if (rtspConfig.max_reconnects !== undefined) {
+                document.getElementById('maxReconnects').value = rtspConfig.max_reconnects;
+            }
+            if (rtspConfig.tcp_transport) {
+                document.getElementById('tcpTransport').checked = rtspConfig.tcp_transport;
+            }
+            if (rtspConfig.hw_acceleration) {
+                document.getElementById('hwAcceleration').checked = rtspConfig.hw_acceleration;
+            }
+            
             // Analysis Area
             const areaConfig = rtspConfig.analysis_area || {};
             isAreaEnabled = areaConfig.enabled || false;
@@ -473,15 +667,11 @@ function loadConfiguration() {
                 currentArea = {
                     x: parseInt(areaConfig.area.x) || 0,
                     y: parseInt(areaConfig.area.y) || 0,
-                    width: parseInt(areaConfig.area.width) || 1280,
-                    height: parseInt(areaConfig.area.height) || 720
+                    width: parseInt(areaConfig.area.width) || streamWidth,
+                    height: parseInt(areaConfig.area.height) || streamHeight
                 };
-            }
-            
-            // Resolution from config (Fallback)
-            if (rtspConfig.resolution) {
-                streamWidth = rtspConfig.resolution.width || 1280;
-                streamHeight = rtspConfig.resolution.height || 720;
+            } else {
+                currentArea = { x: 0, y: 0, width: streamWidth, height: streamHeight };
             }
             
             updateAreaUI();
@@ -492,20 +682,8 @@ function loadConfiguration() {
             console.error('Fehler beim Laden der Konfiguration:', error);
         });
     
-    // Stream-Auflösung vom Server holen
-    fetch('/api/stream/status')
-        .then(response => response.json())
-        .then(status => {
-            if (status.resolution) {
-                streamWidth = status.resolution.width || 1280;
-                streamHeight = status.resolution.height || 720;
-                updateResolutionInfo();
-            }
-            updateStreamStatusUI(status);
-        })
-        .catch(error => {
-            console.error('Fehler beim Laden des Stream-Status:', error);
-        });
+    // Stream-Status holen
+    updateStreamStatus();
 }
 
 function setupEventListeners() {
@@ -555,7 +733,6 @@ function setupEventListeners() {
         document.getElementById('noStreamPlaceholder').style.display = 'none';
         this.style.display = 'block';
         
-        // Canvas-Größe aktualisieren
         updateCanvasSize();
         drawSelection();
     });
@@ -579,9 +756,74 @@ function initCanvas() {
     const canvas = document.getElementById('selectionCanvas');
     const container = document.getElementById('previewContainer');
     
-    // Initiale Größe
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
+}
+
+// ============================================
+// AUFLÖSUNGS-FUNKTIONEN (NEU)
+// ============================================
+
+function applyResolutionPreset() {
+    const preset = document.getElementById('resolutionPreset').value;
+    
+    if (preset) {
+        const [width, height] = preset.split('x').map(Number);
+        document.getElementById('streamWidth').value = width;
+        document.getElementById('streamHeight').value = height;
+        
+        streamWidth = width;
+        streamHeight = height;
+        
+        // Area an neue Auflösung anpassen
+        if (currentArea.x + currentArea.width > streamWidth) {
+            currentArea.width = streamWidth - currentArea.x;
+        }
+        if (currentArea.y + currentArea.height > streamHeight) {
+            currentArea.height = streamHeight - currentArea.y;
+        }
+        
+        updateAreaInputs();
+        updateAreaInfo();
+        updateResolutionInfo();
+        
+        if (previewLoaded) {
+            updateCanvasSize();
+            drawSelection();
+        }
+    }
+}
+
+function updateResolutionPreset() {
+    const width = parseInt(document.getElementById('streamWidth').value) || 1280;
+    const height = parseInt(document.getElementById('streamHeight').value) || 720;
+    
+    streamWidth = width;
+    streamHeight = height;
+    
+    // Passende Vorlage finden
+    const presetSelect = document.getElementById('resolutionPreset');
+    const presetValue = `${width}x${height}`;
+    
+    let found = false;
+    for (let option of presetSelect.options) {
+        if (option.value === presetValue) {
+            presetSelect.value = presetValue;
+            found = true;
+            break;
+        }
+    }
+    
+    if (!found) {
+        presetSelect.value = '';  // Benutzerdefiniert
+    }
+    
+    updateResolutionInfo();
+    updateCurrentResolutionDisplay();
+}
+
+function updateCurrentResolutionDisplay() {
+    document.getElementById('currentResolution').textContent = `${streamWidth} × ${streamHeight}`;
 }
 
 // ============================================
@@ -601,9 +843,12 @@ function updateStreamStatus() {
             
             // Auflösung aktualisieren wenn verbunden
             if (status.connected && status.resolution) {
-                streamWidth = status.resolution.width || streamWidth;
-                streamHeight = status.resolution.height || streamHeight;
-                updateResolutionInfo();
+                const serverWidth = status.resolution.width;
+                const serverHeight = status.resolution.height;
+                
+                // Anzeige aktualisieren (tatsächliche Stream-Auflösung)
+                document.getElementById('currentResolution').textContent = 
+                    `${serverWidth} × ${serverHeight}`;
             }
         })
         .catch(error => {
@@ -680,27 +925,21 @@ function loadPreviewImage() {
         <p class="text-secondary">Lade Vorschau...</p>
     `;
     
-    // Snapshot vom Stream laden
     img.src = '/api/stream/snapshot?' + Date.now();
 }
 
 function updateCanvasSize() {
     const canvas = document.getElementById('selectionCanvas');
-    const img = document.getElementById('previewImage');
     const container = document.getElementById('previewContainer');
     
-    // Container-Größe
     const containerRect = container.getBoundingClientRect();
     
-    // Canvas auf Container-Größe setzen
     canvas.style.width = '100%';
     canvas.style.height = '100%';
     
-    // Interne Canvas-Auflösung = Stream-Auflösung für präzise Koordinaten
     canvas.width = streamWidth;
     canvas.height = streamHeight;
     
-    // Display-Größe speichern
     displayWidth = containerRect.width;
     displayHeight = containerRect.height;
     
@@ -711,7 +950,6 @@ function updateResolutionInfo() {
     document.getElementById('streamResolutionInfo').textContent = `Stream: ${streamWidth} × ${streamHeight}`;
     document.getElementById('displayResolutionInfo').textContent = `Anzeige: ${Math.round(displayWidth)} × ${Math.round(displayHeight)}`;
     
-    // Max-Werte für Inputs aktualisieren
     document.getElementById('areaX').max = streamWidth;
     document.getElementById('areaY').max = streamHeight;
     document.getElementById('areaWidth').max = streamWidth;
@@ -726,7 +964,6 @@ function getCanvasCoordinates(e) {
     const canvas = document.getElementById('selectionCanvas');
     const rect = canvas.getBoundingClientRect();
     
-    // Skalierung von Display zu Stream-Koordinaten
     const scaleX = streamWidth / rect.width;
     const scaleY = streamHeight / rect.height;
     
@@ -781,17 +1018,14 @@ function handleTouchMove(e) {
 }
 
 function updateSelectionFromDrag(currentX, currentY) {
-    // Berechne Rechteck
     let x = Math.min(startX, currentX);
     let y = Math.min(startY, currentY);
     let width = Math.abs(currentX - startX);
     let height = Math.abs(currentY - startY);
     
-    // Minimum-Größe
     width = Math.max(width, 50);
     height = Math.max(height, 50);
     
-    // Grenzen einhalten
     x = Math.max(0, Math.min(x, streamWidth - width));
     y = Math.max(0, Math.min(y, streamHeight - height));
     width = Math.min(width, streamWidth - x);
@@ -807,8 +1041,6 @@ function updateSelectionFromDrag(currentX, currentY) {
 function endDrawing() {
     if (isDrawing) {
         isDrawing = false;
-        // Auto-Save optional
-        // saveAreaSettings();
     }
 }
 
@@ -816,26 +1048,20 @@ function drawSelection() {
     const canvas = document.getElementById('selectionCanvas');
     const ctx = canvas.getContext('2d');
     
-    // Canvas löschen
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
     if (!isAreaEnabled) return;
     
     const { x, y, width, height } = currentArea;
     
-    // Semi-transparentes Overlay außerhalb des Bereichs
+    // Overlay außerhalb
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    
-    // Oben
     ctx.fillRect(0, 0, canvas.width, y);
-    // Unten
     ctx.fillRect(0, y + height, canvas.width, canvas.height - y - height);
-    // Links
     ctx.fillRect(0, y, x, height);
-    // Rechts
     ctx.fillRect(x + width, y, canvas.width - x - width, height);
     
-    // Rahmen um ausgewählten Bereich
+    // Rahmen
     ctx.strokeStyle = '#00ff00';
     ctx.lineWidth = 3;
     ctx.strokeRect(x, y, width, height);
@@ -844,29 +1070,20 @@ function drawSelection() {
     const cornerSize = 15;
     ctx.fillStyle = '#00ff00';
     
-    // Oben-Links
     ctx.fillRect(x - 2, y - 2, cornerSize, 4);
     ctx.fillRect(x - 2, y - 2, 4, cornerSize);
-    
-    // Oben-Rechts
     ctx.fillRect(x + width - cornerSize + 2, y - 2, cornerSize, 4);
     ctx.fillRect(x + width - 2, y - 2, 4, cornerSize);
-    
-    // Unten-Links
     ctx.fillRect(x - 2, y + height - 2, cornerSize, 4);
     ctx.fillRect(x - 2, y + height - cornerSize + 2, 4, cornerSize);
-    
-    // Unten-Rechts
     ctx.fillRect(x + width - cornerSize + 2, y + height - 2, cornerSize, 4);
     ctx.fillRect(x + width - 2, y + height - cornerSize + 2, 4, cornerSize);
     
-    // Info-Text im Bereich
-    ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
+    // Info-Text
     ctx.font = 'bold 16px Arial';
     const text = `${width} × ${height} px`;
     const textWidth = ctx.measureText(text).width;
     
-    // Hintergrund für Text
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     ctx.fillRect(x + 5, y + 5, textWidth + 10, 24);
     
@@ -906,7 +1123,6 @@ function updateAreaFromInputs() {
     currentArea.width = parseInt(document.getElementById('areaWidth').value) || 100;
     currentArea.height = parseInt(document.getElementById('areaHeight').value) || 100;
     
-    // Grenzen einhalten
     currentArea.x = Math.max(0, Math.min(currentArea.x, streamWidth - 50));
     currentArea.y = Math.max(0, Math.min(currentArea.y, streamHeight - 50));
     currentArea.width = Math.max(50, Math.min(currentArea.width, streamWidth - currentArea.x));
@@ -969,7 +1185,16 @@ function saveRtspSettings() {
     const data = {
         url: document.getElementById('rtspUrl').value,
         reconnect_delay: parseInt(document.getElementById('reconnectDelay').value) || 5,
-        buffer_size: parseInt(document.getElementById('bufferSize').value) || 10
+        buffer_size: parseInt(document.getElementById('bufferSize').value) || 10,
+        resolution: {
+            width: parseInt(document.getElementById('streamWidth').value) || 1280,
+            height: parseInt(document.getElementById('streamHeight').value) || 720
+        },
+        // Erweiterte Optionen
+        connection_timeout: parseInt(document.getElementById('connectionTimeout').value) || 30,
+        max_reconnects: parseInt(document.getElementById('maxReconnects').value) || 0,
+        tcp_transport: document.getElementById('tcpTransport').checked,
+        hw_acceleration: document.getElementById('hwAcceleration').checked
     };
     
     fetch('/api/config/rtsp', {
@@ -981,6 +1206,13 @@ function saveRtspSettings() {
     .then(result => {
         if (result.success) {
             showToast('Erfolg', 'RTSP Einstellungen gespeichert', 'success');
+            
+            // Lokale Variablen aktualisieren
+            streamWidth = data.resolution.width;
+            streamHeight = data.resolution.height;
+            
+            updateCurrentResolutionDisplay();
+            updateResolutionInfo();
         } else {
             showToast('Fehler', result.error || 'Speichern fehlgeschlagen', 'danger');
         }
@@ -1076,7 +1308,7 @@ function testConnection() {
         </div>
     `;
     
-    // Speichern und Stream starten zum Testen
+    // Speichern und testen
     saveRtspSettings();
     
     setTimeout(() => {
@@ -1129,21 +1361,30 @@ function resetToDefaults() {
         document.getElementById('rtspUrl').value = 'rtsp://admin:password@192.168.1.100:554/stream1';
         document.getElementById('reconnectDelay').value = 5;
         document.getElementById('bufferSize').value = 10;
+        document.getElementById('streamWidth').value = 1280;
+        document.getElementById('streamHeight').value = 720;
+        document.getElementById('resolutionPreset').value = '1280x720';
+        document.getElementById('connectionTimeout').value = 30;
+        document.getElementById('maxReconnects').value = 0;
+        document.getElementById('tcpTransport').checked = false;
+        document.getElementById('hwAcceleration').checked = false;
+        
+        streamWidth = 1280;
+        streamHeight = 720;
+        
+        updateCurrentResolutionDisplay();
         showToast('Zurückgesetzt', 'Standardwerte wiederhergestellt', 'info');
     }
 }
 
 function showToast(title, message, type = 'info') {
-    // Prüfen ob showToast global verfügbar ist (aus base.html)
     if (typeof window.showToast === 'function' && window.showToast !== showToast) {
         window.showToast(title, message, type);
         return;
     }
     
-    // Fallback: Alert
     console.log(`[${type.toUpperCase()}] ${title}: ${message}`);
     
-    // Einfache Toast-Implementierung
     const toastContainer = document.getElementById('toastContainer') || createToastContainer();
     
     const toast = document.createElement('div');
@@ -1175,7 +1416,7 @@ function createToastContainer() {
     return container;
 }
 
-// Cleanup bei Seitenwechsel
+// Cleanup
 window.addEventListener('beforeunload', function() {
     if (statusInterval) {
         clearInterval(statusInterval);
