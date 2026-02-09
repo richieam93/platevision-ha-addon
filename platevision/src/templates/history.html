@@ -172,6 +172,36 @@
         margin-bottom: 1.5rem;
     }
     
+    /* Filter Tags */
+    .filter-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.35rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+    
+    .filter-tag .remove-filter {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.2);
+        color: inherit;
+        text-decoration: none;
+        font-weight: bold;
+        font-size: 0.7rem;
+        transition: background 0.2s;
+    }
+    
+    .filter-tag .remove-filter:hover {
+        background: rgba(255, 255, 255, 0.4);
+    }
+    
     /* Image Modal */
     .image-modal-content {
         max-height: 80vh;
@@ -206,6 +236,7 @@
 <div class="card mb-4">
     <div class="card-body">
         <form method="GET" action="{{ url_for('history') }}" class="row g-3 align-items-end">
+            <!-- Suche -->
             <div class="col-md-4">
                 <label class="form-label">Kennzeichen suchen</label>
                 <div class="input-group">
@@ -217,39 +248,95 @@
                            value="{{ search }}">
                 </div>
             </div>
+            
+            <!-- Quelle Filter -->
             <div class="col-md-2">
                 <label class="form-label">Quelle</label>
                 <select class="form-select" name="source" id="sourceFilter">
-                    <option value="">Alle</option>
-                    <option value="rtsp_stream">RTSP Stream</option>
-                    <option value="image_upload">Bild Upload</option>
-                    <option value="video_upload">Video Upload</option>
+                    <option value="">Alle Quellen</option>
+                    <option value="rtsp_stream" {{ 'selected' if source_filter == 'rtsp_stream' else '' }}>RTSP Stream</option>
+                    <option value="image_upload" {{ 'selected' if source_filter == 'image_upload' else '' }}>Bild Upload</option>
+                    <option value="video_upload" {{ 'selected' if source_filter == 'video_upload' else '' }}>Video Upload</option>
                 </select>
             </div>
+            
+            <!-- Fahrzeugtyp Filter -->
             <div class="col-md-2">
                 <label class="form-label">Fahrzeugtyp</label>
                 <select class="form-select" name="vehicle_type" id="vehicleFilter">
-                    <option value="">Alle</option>
-                    <option value="PKW">PKW</option>
-                    <option value="LKW">LKW</option>
-                    <option value="Bus">Bus</option>
-                    <option value="Motorrad">Motorrad</option>
+                    <option value="">Alle Typen</option>
+                    <option value="PKW" {{ 'selected' if vehicle_type_filter == 'PKW' else '' }}>PKW</option>
+                    <option value="LKW" {{ 'selected' if vehicle_type_filter == 'LKW' else '' }}>LKW</option>
+                    <option value="Bus" {{ 'selected' if vehicle_type_filter == 'Bus' else '' }}>Bus</option>
+                    <option value="Motorrad" {{ 'selected' if vehicle_type_filter == 'Motorrad' else '' }}>Motorrad</option>
                 </select>
             </div>
+            
+            <!-- Sortierung -->
             <div class="col-md-2">
                 <label class="form-label">Sortierung</label>
                 <select class="form-select" name="sort" id="sortFilter">
-                    <option value="newest">Neueste zuerst</option>
-                    <option value="oldest">Älteste zuerst</option>
-                    <option value="confidence">Höchste Konfidenz</option>
+                    <option value="newest" {{ 'selected' if sort_order == 'newest' or not sort_order else '' }}>Neueste zuerst</option>
+                    <option value="oldest" {{ 'selected' if sort_order == 'oldest' else '' }}>Älteste zuerst</option>
+                    <option value="confidence" {{ 'selected' if sort_order == 'confidence' else '' }}>Höchste Konfidenz</option>
                 </select>
             </div>
+            
+            <!-- Filter Button -->
             <div class="col-md-2">
                 <button type="submit" class="btn btn-primary w-100">
                     <i class="fas fa-filter me-1"></i>Filtern
                 </button>
             </div>
+            
+            <!-- Hidden: Unique Filter beibehalten -->
+            {% if unique_only %}
+            <input type="hidden" name="unique" value="true">
+            {% endif %}
         </form>
+        
+        <!-- Aktive Filter anzeigen -->
+        {% if source_filter or vehicle_type_filter or search %}
+        <div class="mt-3 pt-3 border-top border-secondary d-flex flex-wrap gap-2 align-items-center">
+            <span class="text-secondary me-2">
+                <i class="fas fa-filter me-1"></i>Aktive Filter:
+            </span>
+            
+            {% if search %}
+            <span class="filter-tag bg-primary">
+                <i class="fas fa-search"></i>
+                "{{ search }}"
+                <a href="{{ url_for('history', source=source_filter, vehicle_type=vehicle_type_filter, sort=sort_order, unique='true' if unique_only else '') }}" 
+                   class="remove-filter" title="Filter entfernen">×</a>
+            </span>
+            {% endif %}
+            
+            {% if source_filter %}
+            <span class="filter-tag bg-success">
+                <i class="fas fa-broadcast-tower"></i>
+                {% if source_filter == 'rtsp_stream' %}RTSP Stream
+                {% elif source_filter == 'image_upload' %}Bild Upload
+                {% elif source_filter == 'video_upload' %}Video Upload
+                {% else %}{{ source_filter }}{% endif %}
+                <a href="{{ url_for('history', search=search, vehicle_type=vehicle_type_filter, sort=sort_order, unique='true' if unique_only else '') }}" 
+                   class="remove-filter" title="Filter entfernen">×</a>
+            </span>
+            {% endif %}
+            
+            {% if vehicle_type_filter %}
+            <span class="filter-tag bg-info">
+                <i class="fas fa-car"></i>
+                {{ vehicle_type_filter }}
+                <a href="{{ url_for('history', search=search, source=source_filter, sort=sort_order, unique='true' if unique_only else '') }}" 
+                   class="remove-filter" title="Filter entfernen">×</a>
+            </span>
+            {% endif %}
+            
+            <a href="{{ url_for('history') }}" class="btn btn-sm btn-outline-secondary ms-auto">
+                <i class="fas fa-times me-1"></i>Alle zurücksetzen
+            </a>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -286,10 +373,10 @@
             <div class="card-body py-3">
                 <div class="d-flex justify-content-between align-items-center">
                     <div>
-                        <div class="h4 mb-0 text-info" id="statToday">--</div>
-                        <small class="text-secondary">Heute</small>
+                        <div class="h4 mb-0 text-info">{{ total_filtered if total_filtered is defined else entries|length }}</div>
+                        <small class="text-secondary">Gefiltert</small>
                     </div>
-                    <i class="fas fa-calendar-day fa-2x text-info opacity-50"></i>
+                    <i class="fas fa-filter fa-2x text-info opacity-50"></i>
                 </div>
             </div>
         </div>
@@ -299,10 +386,10 @@
             <div class="card-body py-3">
                 <div class="d-flex justify-content-between align-items-center">
                     <div>
-                        <div class="h4 mb-0 text-warning">{{ entries|length }}</div>
-                        <small class="text-secondary">Angezeigt</small>
+                        <div class="h4 mb-0 text-warning" id="statToday">--</div>
+                        <small class="text-secondary">Heute</small>
                     </div>
-                    <i class="fas fa-eye fa-2x text-warning opacity-50"></i>
+                    <i class="fas fa-calendar-day fa-2x text-warning opacity-50"></i>
                 </div>
             </div>
         </div>
@@ -313,9 +400,9 @@
 {% if search %}
 <div class="alert alert-info d-flex align-items-center mb-4">
     <i class="fas fa-info-circle me-2"></i>
-    <span>Suchergebnisse für "<strong>{{ search }}</strong>": {{ entries|length }} Treffer</span>
-    <a href="{{ url_for('history') }}" class="btn btn-sm btn-outline-info ms-auto">
-        <i class="fas fa-times me-1"></i>Zurücksetzen
+    <span>Suchergebnisse für "<strong>{{ search }}</strong>": {{ total_filtered if total_filtered is defined else entries|length }} Treffer</span>
+    <a href="{{ url_for('history', source=source_filter, vehicle_type=vehicle_type_filter, sort=sort_order) }}" class="btn btn-sm btn-outline-info ms-auto">
+        <i class="fas fa-times me-1"></i>Suche zurücksetzen
     </a>
 </div>
 {% endif %}
@@ -349,6 +436,11 @@
                             <li>
                                 <a class="dropdown-item" href="#" onclick="copyPlate('{{ entry.plate_text }}')">
                                     <i class="fas fa-copy me-2"></i>Kennzeichen kopieren
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item" href="#" onclick="filterByVehicleType('{{ entry.vehicle_type }}')">
+                                    <i class="fas fa-filter me-2"></i>Nach Typ filtern
                                 </a>
                             </li>
                             <li><hr class="dropdown-divider border-secondary"></li>
@@ -413,6 +505,7 @@
                                 'green' if entry.vehicle_color == 'Grün' else
                                 'yellow' if entry.vehicle_color == 'Gelb' else
                                 'orange' if entry.vehicle_color == 'Orange' else
+                                'purple' if entry.vehicle_color == 'Lila' else
                                 '#888'
                             }}; width: 10px; height: 10px; vertical-align: middle;"></span>
                             {{ entry.vehicle_color }}
@@ -461,31 +554,59 @@
 {% if total_pages > 1 %}
 <nav class="mt-4">
     <ul class="pagination justify-content-center">
+        <!-- Erste Seite -->
         <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
-            <a class="page-link" href="?page={{ current_page - 1 }}{% if search %}&search={{ search }}{% endif %}{% if unique_only %}&unique=true{% endif %}">
+            <a class="page-link" href="?page=1{% if search %}&search={{ search }}{% endif %}{% if source_filter %}&source={{ source_filter }}{% endif %}{% if vehicle_type_filter %}&vehicle_type={{ vehicle_type_filter }}{% endif %}{% if sort_order %}&sort={{ sort_order }}{% endif %}{% if unique_only %}&unique=true{% endif %}" title="Erste Seite">
+                <i class="fas fa-angle-double-left"></i>
+            </a>
+        </li>
+        
+        <!-- Vorherige Seite -->
+        <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
+            <a class="page-link" href="?page={{ current_page - 1 }}{% if search %}&search={{ search }}{% endif %}{% if source_filter %}&source={{ source_filter }}{% endif %}{% if vehicle_type_filter %}&vehicle_type={{ vehicle_type_filter }}{% endif %}{% if sort_order %}&sort={{ sort_order }}{% endif %}{% if unique_only %}&unique=true{% endif %}">
                 <i class="fas fa-chevron-left"></i>
             </a>
         </li>
         
+        <!-- Seitennummern -->
         {% for p in range(1, total_pages + 1) %}
             {% if p == current_page %}
             <li class="page-item active"><span class="page-link">{{ p }}</span></li>
             {% elif p == 1 or p == total_pages or (p >= current_page - 2 and p <= current_page + 2) %}
             <li class="page-item">
-                <a class="page-link" href="?page={{ p }}{% if search %}&search={{ search }}{% endif %}{% if unique_only %}&unique=true{% endif %}">{{ p }}</a>
+                <a class="page-link" href="?page={{ p }}{% if search %}&search={{ search }}{% endif %}{% if source_filter %}&source={{ source_filter }}{% endif %}{% if vehicle_type_filter %}&vehicle_type={{ vehicle_type_filter }}{% endif %}{% if sort_order %}&sort={{ sort_order }}{% endif %}{% if unique_only %}&unique=true{% endif %}">{{ p }}</a>
             </li>
             {% elif p == current_page - 3 or p == current_page + 3 %}
             <li class="page-item disabled"><span class="page-link">...</span></li>
             {% endif %}
         {% endfor %}
         
+        <!-- Nächste Seite -->
         <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
-            <a class="page-link" href="?page={{ current_page + 1 }}{% if search %}&search={{ search }}{% endif %}{% if unique_only %}&unique=true{% endif %}">
+            <a class="page-link" href="?page={{ current_page + 1 }}{% if search %}&search={{ search }}{% endif %}{% if source_filter %}&source={{ source_filter }}{% endif %}{% if vehicle_type_filter %}&vehicle_type={{ vehicle_type_filter }}{% endif %}{% if sort_order %}&sort={{ sort_order }}{% endif %}{% if unique_only %}&unique=true{% endif %}">
                 <i class="fas fa-chevron-right"></i>
+            </a>
+        </li>
+        
+        <!-- Letzte Seite -->
+        <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
+            <a class="page-link" href="?page={{ total_pages }}{% if search %}&search={{ search }}{% endif %}{% if source_filter %}&source={{ source_filter }}{% endif %}{% if vehicle_type_filter %}&vehicle_type={{ vehicle_type_filter }}{% endif %}{% if sort_order %}&sort={{ sort_order }}{% endif %}{% if unique_only %}&unique=true{% endif %}" title="Letzte Seite">
+                <i class="fas fa-angle-double-right"></i>
             </a>
         </li>
     </ul>
 </nav>
+
+<!-- Pagination Info -->
+<div class="text-center text-secondary mt-2 mb-4">
+    <small>
+        Seite {{ current_page }} von {{ total_pages }} &bull;
+        Zeige {{ entries|length }} von {{ total_filtered if total_filtered is defined else entries|length }} gefilterten Einträgen
+        {% if (total_filtered if total_filtered is defined else 0) != total_entries %}
+        ({{ total_entries }} gesamt)
+        {% endif %}
+    </small>
+</div>
 {% endif %}
 
 {% else %}
@@ -496,16 +617,16 @@
             <i class="fas fa-inbox"></i>
             <h4>Keine Erkennungen gefunden</h4>
             <p class="text-secondary mb-4">
-                {% if search %}
-                Keine Treffer für "{{ search }}". Versuchen Sie eine andere Suche.
+                {% if search or source_filter or vehicle_type_filter %}
+                Keine Treffer für die aktiven Filter. Versuchen Sie andere Filterkriterien.
                 {% else %}
                 Es wurden noch keine Kennzeichen erkannt. Starten Sie den Live-Stream oder laden Sie ein Bild hoch.
                 {% endif %}
             </p>
-            <div class="d-flex gap-2 justify-content-center">
-                {% if search %}
+            <div class="d-flex gap-2 justify-content-center flex-wrap">
+                {% if search or source_filter or vehicle_type_filter %}
                 <a href="{{ url_for('history') }}" class="btn btn-outline-primary">
-                    <i class="fas fa-times me-1"></i>Suche zurücksetzen
+                    <i class="fas fa-times me-1"></i>Filter zurücksetzen
                 </a>
                 {% endif %}
                 <a href="{{ url_for('live_view') }}" class="btn btn-primary">
@@ -585,19 +706,33 @@
 
 {% block extra_js %}
 <script>
-    // Entries data for details modal
+    // ============================================
+    // ENTRIES DATA
+    // ============================================
     const entriesData = {{ entries|tojson|safe }};
     let currentImageData = null;
     
-    // Load statistics
+    // ============================================
+    // INITIALIZATION
+    // ============================================
     document.addEventListener('DOMContentLoaded', function() {
+        // Load statistics
         fetch('/api/history/statistics')
             .then(response => response.json())
             .then(data => {
                 document.getElementById('statUnique').textContent = data.unique_plates || 0;
                 document.getElementById('statToday').textContent = data.today_detections || 0;
+            })
+            .catch(err => {
+                console.error('Fehler beim Laden der Statistiken:', err);
+                document.getElementById('statUnique').textContent = '-';
+                document.getElementById('statToday').textContent = '-';
             });
     });
+    
+    // ============================================
+    // FILTER FUNCTIONS
+    // ============================================
     
     // Toggle unique filter
     function toggleUniqueFilter() {
@@ -611,7 +746,30 @@
         window.location.href = url.toString();
     }
     
-    // Show image modal
+    // Filter by vehicle type (from dropdown menu)
+    function filterByVehicleType(vehicleType) {
+        if (!vehicleType || vehicleType === 'Unbekannt') {
+            showToast('Info', 'Fahrzeugtyp ist unbekannt', 'info');
+            return;
+        }
+        const url = new URL(window.location.href);
+        url.searchParams.set('vehicle_type', vehicleType);
+        url.searchParams.set('page', '1'); // Reset to first page
+        window.location.href = url.toString();
+    }
+    
+    // Filter by source
+    function filterBySource(source) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('source', source);
+        url.searchParams.set('page', '1');
+        window.location.href = url.toString();
+    }
+    
+    // ============================================
+    // IMAGE MODAL
+    // ============================================
+    
     function showImage(base64, title) {
         if (!base64) {
             showToast('Info', 'Kein Bild verfügbar', 'info');
@@ -624,7 +782,6 @@
         new bootstrap.Modal(document.getElementById('imageModal')).show();
     }
     
-    // Download current image
     function downloadCurrentImage() {
         if (!currentImageData) return;
         
@@ -635,14 +792,27 @@
         showToast('Download', 'Bild heruntergeladen', 'success');
     }
     
-    // Show details modal
+    // ============================================
+    // DETAILS MODAL
+    // ============================================
+    
     function showDetails(id) {
         const entry = entriesData.find(e => e.id === id);
-        if (!entry) return;
+        if (!entry) {
+            showToast('Fehler', 'Eintrag nicht gefunden', 'danger');
+            return;
+        }
         
         const formatDate = (ts) => {
             if (!ts) return 'Unbekannt';
             return ts.replace('T', ' ').substring(0, 19);
+        };
+        
+        const getConfidenceClass = (conf) => {
+            if (!conf) return 'confidence-low';
+            if (conf >= 0.8) return 'confidence-high';
+            if (conf >= 0.5) return 'confidence-medium';
+            return 'confidence-low';
         };
         
         const body = document.getElementById('detailsModalBody');
@@ -683,21 +853,29 @@
                     
                     <table class="table table-sm">
                         <tr>
-                            <td class="text-secondary"><i class="fas fa-fingerprint me-2"></i>ID</td>
+                            <td class="text-secondary" style="width: 40%;"><i class="fas fa-fingerprint me-2"></i>ID</td>
                             <td><code style="font-size: 0.7rem;">${entry.id}</code></td>
                         </tr>
                         <tr>
                             <td class="text-secondary"><i class="fas fa-percentage me-2"></i>OCR Konfidenz</td>
                             <td>
                                 ${entry.confidence 
-                                    ? `<span class="confidence-badge ${entry.confidence >= 0.8 ? 'confidence-high' : entry.confidence >= 0.5 ? 'confidence-medium' : 'confidence-low'}">${(entry.confidence * 100).toFixed(1)}%</span>`
+                                    ? `<span class="confidence-badge ${getConfidenceClass(entry.confidence)}">${(entry.confidence * 100).toFixed(1)}%</span>`
                                     : 'N/A'
                                 }
                             </td>
                         </tr>
                         <tr>
                             <td class="text-secondary"><i class="fas fa-car me-2"></i>Fahrzeugtyp</td>
-                            <td>${entry.vehicle_type || 'Unbekannt'}</td>
+                            <td>
+                                ${entry.vehicle_type || 'Unbekannt'}
+                                ${entry.vehicle_type && entry.vehicle_type !== 'Unbekannt' ? `
+                                    <a href="#" onclick="filterByVehicleType('${entry.vehicle_type}'); bootstrap.Modal.getInstance(document.getElementById('detailsModal')).hide();" 
+                                       class="ms-2 text-primary" title="Nach diesem Typ filtern">
+                                        <i class="fas fa-filter fa-sm"></i>
+                                    </a>
+                                ` : ''}
+                            </td>
                         </tr>
                         <tr>
                             <td class="text-secondary"><i class="fas fa-palette me-2"></i>Fahrzeugfarbe</td>
@@ -713,12 +891,16 @@
                         </tr>
                         <tr>
                             <td class="text-secondary"><i class="fas fa-broadcast-tower me-2"></i>Quelle</td>
-                            <td>${entry.source || 'Unbekannt'}</td>
+                            <td>
+                                <span class="source-badge ${entry.source === 'rtsp_stream' ? 'rtsp' : (entry.source === 'image_upload' ? 'image' : 'video')}">
+                                    ${entry.source === 'rtsp_stream' ? 'RTSP Stream' : (entry.source === 'image_upload' ? 'Bild Upload' : (entry.source === 'video_upload' ? 'Video Upload' : (entry.source || 'Unbekannt')))}
+                                </span>
+                            </td>
                         </tr>
                         ${entry.filename ? `
                         <tr>
                             <td class="text-secondary"><i class="fas fa-file me-2"></i>Datei</td>
-                            <td>${entry.filename}</td>
+                            <td class="text-truncate" style="max-width: 200px;" title="${entry.filename}">${entry.filename}</td>
                         </tr>
                         ` : ''}
                         ${entry.plate_size ? `
@@ -739,17 +921,20 @@
                             <td>${entry.frame_number}</td>
                         </tr>
                         ` : ''}
-                        ${entry.video_timestamp !== undefined ? `
+                        ${entry.timestamp_video !== undefined ? `
                         <tr>
                             <td class="text-secondary"><i class="fas fa-stopwatch me-2"></i>Video-Zeit</td>
-                            <td>${entry.video_timestamp.toFixed(2)}s</td>
+                            <td>${entry.timestamp_video.toFixed(2)}s</td>
                         </tr>
                         ` : ''}
                     </table>
                     
-                    <div class="d-flex gap-2 mt-4">
+                    <div class="d-flex gap-2 mt-4 flex-wrap">
                         <button class="btn btn-outline-primary" onclick="copyPlate('${entry.plate_text}')">
                             <i class="fas fa-copy me-1"></i>Kopieren
+                        </button>
+                        <button class="btn btn-outline-info" onclick="searchSimilar('${entry.plate_text}')">
+                            <i class="fas fa-search me-1"></i>Suchen
                         </button>
                         <button class="btn btn-outline-danger" onclick="deleteEntry('${entry.id}'); bootstrap.Modal.getInstance(document.getElementById('detailsModal')).hide();">
                             <i class="fas fa-trash me-1"></i>Löschen
@@ -762,15 +947,40 @@
         new bootstrap.Modal(document.getElementById('detailsModal')).show();
     }
     
-    // Copy plate
+    // Search for similar plates
+    function searchSimilar(plateText) {
+        if (!plateText) return;
+        // Close modal first
+        const modal = bootstrap.Modal.getInstance(document.getElementById('detailsModal'));
+        if (modal) modal.hide();
+        
+        // Redirect to search
+        const url = new URL(window.location.href);
+        url.searchParams.set('search', plateText);
+        url.searchParams.set('page', '1');
+        window.location.href = url.toString();
+    }
+    
+    // ============================================
+    // UTILITY FUNCTIONS
+    // ============================================
+    
     function copyPlate(plate) {
-        if (!plate) return;
+        if (!plate) {
+            showToast('Fehler', 'Kein Kennzeichen zum Kopieren', 'warning');
+            return;
+        }
         navigator.clipboard.writeText(plate).then(() => {
             showToast('Kopiert', `"${plate}" in Zwischenablage kopiert`, 'success');
+        }).catch(() => {
+            showToast('Fehler', 'Kopieren fehlgeschlagen', 'danger');
         });
     }
     
-    // Delete entry
+    // ============================================
+    // DELETE FUNCTIONS
+    // ============================================
+    
     function deleteEntry(id) {
         if (!confirm('Diesen Eintrag wirklich löschen?')) return;
         
@@ -783,20 +993,30 @@
                         el.style.transition = 'all 0.3s ease';
                         el.style.opacity = '0';
                         el.style.transform = 'scale(0.9)';
-                        setTimeout(() => el.remove(), 300);
+                        setTimeout(() => {
+                            el.remove();
+                            // Check if grid is empty
+                            const grid = document.getElementById('detectionsGrid');
+                            if (grid && grid.children.length === 0) {
+                                location.reload();
+                            }
+                        }, 300);
                     }
                     showToast('Erfolg', 'Eintrag gelöscht', 'success');
+                } else {
+                    showToast('Fehler', data.error || 'Löschen fehlgeschlagen', 'danger');
                 }
             })
-            .catch(() => showToast('Fehler', 'Konnte nicht löschen', 'danger'));
+            .catch((err) => {
+                console.error('Delete error:', err);
+                showToast('Fehler', 'Konnte nicht löschen', 'danger');
+            });
     }
     
-    // Confirm clear history
     function confirmClearHistory() {
         new bootstrap.Modal(document.getElementById('clearModal')).show();
     }
     
-    // Clear history
     function clearHistory() {
         fetch('/api/history/clear', { method: 'POST' })
             .then(response => response.json())
@@ -805,31 +1025,70 @@
                     bootstrap.Modal.getInstance(document.getElementById('clearModal')).hide();
                     showToast('Erfolg', 'Historie gelöscht', 'success');
                     setTimeout(() => location.reload(), 1000);
+                } else {
+                    showToast('Fehler', data.error || 'Löschen fehlgeschlagen', 'danger');
                 }
+            })
+            .catch((err) => {
+                console.error('Clear history error:', err);
+                showToast('Fehler', 'Fehler beim Löschen', 'danger');
             });
     }
     
-    // Export history
+    // ============================================
+    // EXPORT FUNCTION
+    // ============================================
+    
     function exportHistory() {
-        fetch('/api/history/export')
+        showToast('Export', 'Lade Historie...', 'info');
+        
+        fetch('/api/history?limit=10000')
             .then(response => response.json())
             .then(data => {
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                // Prepare export data (remove base64 images to reduce size)
+                const exportData = {
+                    exported_at: new Date().toISOString(),
+                    total_entries: data.entries ? data.entries.length : 0,
+                    entries: (data.entries || []).map(e => ({
+                        id: e.id,
+                        plate_text: e.plate_text,
+                        confidence: e.confidence,
+                        vehicle_type: e.vehicle_type,
+                        vehicle_color: e.vehicle_color,
+                        timestamp: e.timestamp,
+                        source: e.source,
+                        filename: e.filename
+                    }))
+                };
+                
+                const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = 'platevision_history_' + new Date().toISOString().split('T')[0] + '.json';
+                document.body.appendChild(a);
                 a.click();
+                document.body.removeChild(a);
                 URL.revokeObjectURL(url);
-                showToast('Export', 'Historie exportiert', 'success');
+                showToast('Export', `${exportData.total_entries} Einträge exportiert`, 'success');
+            })
+            .catch((err) => {
+                console.error('Export error:', err);
+                showToast('Fehler', 'Export fehlgeschlagen', 'danger');
             });
     }
     
-    // Listen for new detections
-    window.addEventListener('newDetection', function(e) {
-        // Reload page to show new detection
-        // Or dynamically add card
-        showToast('Neue Erkennung', e.detail.plate_text || 'Kennzeichen erkannt', 'success');
-    });
+    // ============================================
+    // WEBSOCKET EVENTS
+    // ============================================
+    
+    // Listen for new detections via WebSocket
+    if (typeof socket !== 'undefined') {
+        socket.on('new_detection', function(data) {
+            showToast('Neue Erkennung', data.plate_text || 'Kennzeichen erkannt', 'success');
+            // Optional: Auto-reload after a short delay
+            // setTimeout(() => location.reload(), 2000);
+        });
+    }
 </script>
 {% endblock %}
