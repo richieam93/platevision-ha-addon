@@ -888,26 +888,72 @@ def dashboard():
 
 @app.route('/history')
 def history():
+    # Parameter aus URL lesen
     page_num = request.args.get('page', 1, type=int)
     per_page = 20
     search = request.args.get('search', '')
     unique_only = request.args.get('unique', 'false').lower() == 'true'
-    
+    source_filter = request.args.get('source', '')
+    vehicle_type_filter = request.args.get('vehicle_type', '')
+    sort_order = request.args.get('sort', 'newest')
+
+    # Basis-Einträge holen
     if search:
         entries = history_manager.search(search)
     else:
-        entries = history_manager.get_all(limit=per_page, offset=(page_num-1)*per_page, unique_only=unique_only)
+        entries = history_manager.get_all(limit=10000, unique_only=unique_only)
+
+    # ============================================
+    # FILTER ANWENDEN
+    # ============================================
     
-    total = len(history_manager.history)
+    # Quelle filtern
+    if source_filter:
+        entries = [e for e in entries if e.get('source', '') == source_filter]
+
+    # Fahrzeugtyp filtern (case-insensitive)
+    if vehicle_type_filter:
+        entries = [e for e in entries 
+                   if e.get('vehicle_type', '').upper() == vehicle_type_filter.upper()]
+
+    # ============================================
+    # SORTIERUNG ANWENDEN
+    # ============================================
     
+    if sort_order == 'oldest':
+        entries = sorted(entries, key=lambda x: x.get('timestamp', ''), reverse=False)
+    elif sort_order == 'confidence':
+        entries = sorted(entries, key=lambda x: x.get('confidence', 0) or 0, reverse=True)
+    else:  # 'newest' (default)
+        entries = sorted(entries, key=lambda x: x.get('timestamp', ''), reverse=True)
+
+    # ============================================
+    # PAGINATION
+    # ============================================
+    
+    total_filtered = len(entries)
+    total_all = len(history_manager.history)
+    
+    # Pagination anwenden
+    start_idx = (page_num - 1) * per_page
+    end_idx = start_idx + per_page
+    paginated_entries = entries[start_idx:end_idx]
+
+    # Seitenzahl berechnen
+    total_pages = max(1, (total_filtered + per_page - 1) // per_page)
+
     return render_template('history.html',
                           page='history',
-                          entries=entries,
+                          entries=paginated_entries,
                           current_page=page_num,
-                          total_pages=(total // per_page) + 1,
-                          total_entries=total,
+                          total_pages=total_pages,
+                          total_entries=total_all,
+                          total_filtered=total_filtered,
                           search=search,
-                          unique_only=unique_only)
+                          unique_only=unique_only,
+                          source_filter=source_filter,
+                          vehicle_type_filter=vehicle_type_filter,
+                          sort_order=sort_order)
 
 @app.route('/rtsp-settings')
 def rtsp_settings():
@@ -1727,6 +1773,7 @@ if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, 
                  debug=config_manager.get('general', 'debug_mode') or False,
                  allow_unsafe_werkzeug=True)
+
 
 
 
