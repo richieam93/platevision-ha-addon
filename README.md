@@ -303,7 +303,7 @@ PlateVision verbindet sich mit deiner **RTSP-Kamera** und erkennt automatisch Nu
 
 This project is **100% free and open source**. Dieses Projekt ist **100% gratis und Open Source**.
 
-Over **100+ hours of development** went into PlateVision. Über **100 Stunden Entwicklung** stecken in PlateVision.
+Over ** several hours of development** went into PlateVision. Über **Mehre Stunden Entwicklung** stecken in PlateVision.
 
 If it helps you, I'd appreciate a coffee. Wenn es dir hilft, freue ich mich über einen Kaffee:
 
@@ -325,6 +325,7 @@ MIT License – see LICENSE
 ---
 
 Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 🇨🇭
+
 
 
 
