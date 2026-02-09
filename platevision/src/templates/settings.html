@@ -131,6 +131,30 @@
         max-height: 200px;
         border-radius: 4px;
     }
+    
+    .storage-stat-card {
+        background: var(--dark-bg);
+        border-radius: 10px;
+        padding: 1rem;
+        text-align: center;
+        transition: all 0.2s ease;
+    }
+    
+    .storage-stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+    }
+    
+    .storage-stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+    
+    .storage-stat-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+    }
 </style>
 {% endblock %}
 
@@ -194,6 +218,9 @@
                     </button>
                     <button class="btn btn-outline-info btn-sm" onclick="exportSettings()">
                         <i class="fas fa-download me-2"></i>Exportieren
+                    </button>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="importSettings()">
+                        <i class="fas fa-upload me-2"></i>Importieren
                     </button>
                 </div>
             </div>
@@ -395,7 +422,7 @@
                                             <input class="form-check-input" type="checkbox" id="langEn" value="en"
                                                    {{ 'checked' if 'en' in config.ocr.languages else '' }}>
                                             <label class="form-check-label" for="langEn">
-                                                <span class="fi fi-gb me-2"></span>Englisch
+                                                🇬🇧 Englisch
                                             </label>
                                         </div>
                                     </div>
@@ -404,7 +431,7 @@
                                             <input class="form-check-input" type="checkbox" id="langDe" value="de"
                                                    {{ 'checked' if 'de' in config.ocr.languages else '' }}>
                                             <label class="form-check-label" for="langDe">
-                                                <span class="fi fi-de me-2"></span>Deutsch
+                                                🇩🇪 Deutsch
                                             </label>
                                         </div>
                                     </div>
@@ -413,7 +440,7 @@
                                             <input class="form-check-input" type="checkbox" id="langFr" value="fr"
                                                    {{ 'checked' if 'fr' in config.ocr.languages else '' }}>
                                             <label class="form-check-label" for="langFr">
-                                                <span class="fi fi-fr me-2"></span>Französisch
+                                                🇫🇷 Französisch
                                             </label>
                                         </div>
                                     </div>
@@ -422,7 +449,7 @@
                                             <input class="form-check-input" type="checkbox" id="langIt" value="it"
                                                    {{ 'checked' if 'it' in config.ocr.languages else '' }}>
                                             <label class="form-check-label" for="langIt">
-                                                <span class="fi fi-it me-2"></span>Italienisch
+                                                🇮🇹 Italienisch
                                             </label>
                                         </div>
                                     </div>
@@ -431,7 +458,7 @@
                                             <input class="form-check-input" type="checkbox" id="langEs" value="es"
                                                    {{ 'checked' if 'es' in config.ocr.languages else '' }}>
                                             <label class="form-check-label" for="langEs">
-                                                <span class="fi fi-es me-2"></span>Spanisch
+                                                🇪🇸 Spanisch
                                             </label>
                                         </div>
                                     </div>
@@ -440,7 +467,7 @@
                                             <input class="form-check-input" type="checkbox" id="langPl" value="pl"
                                                    {{ 'checked' if 'pl' in config.ocr.languages else '' }}>
                                             <label class="form-check-label" for="langPl">
-                                                <span class="fi fi-pl me-2"></span>Polnisch
+                                                🇵🇱 Polnisch
                                             </label>
                                         </div>
                                     </div>
@@ -918,47 +945,93 @@
                         
                         <hr class="my-4">
                         
-                        <!-- Speicherinfo -->
-                        <h6 class="mb-3"><i class="fas fa-chart-pie me-2"></i>Speicherplatz-Übersicht</h6>
+                        <!-- Speicherinfo - Erweitert -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6 class="mb-0"><i class="fas fa-chart-pie me-2"></i>Speicherplatz-Übersicht</h6>
+                            <button class="btn btn-sm btn-outline-info" onclick="loadStorageInfo()">
+                                <i class="fas fa-sync me-1"></i>Aktualisieren
+                            </button>
+                        </div>
+                        
                         <div class="row g-3 mb-4">
-                            <div class="col-md-3">
-                                <div class="bg-dark rounded p-3 text-center">
-                                    <div class="h4 mb-0 text-primary" id="platesCount">--</div>
-                                    <small class="text-secondary">Kennzeichen-Bilder</small>
+                            <div class="col-md-3 col-6">
+                                <div class="storage-stat-card">
+                                    <div class="storage-stat-value text-primary" id="platesCount">
+                                        <span class="spinner-border spinner-border-sm"></span>
+                                    </div>
+                                    <div class="storage-stat-label">Kennzeichen-Bilder</div>
                                 </div>
                             </div>
-                            <div class="col-md-3">
-                                <div class="bg-dark rounded p-3 text-center">
-                                    <div class="h4 mb-0 text-success" id="vehiclesCount">--</div>
-                                    <small class="text-secondary">Fahrzeug-Bilder</small>
+                            <div class="col-md-3 col-6">
+                                <div class="storage-stat-card">
+                                    <div class="storage-stat-value text-success" id="vehiclesCount">
+                                        <span class="spinner-border spinner-border-sm"></span>
+                                    </div>
+                                    <div class="storage-stat-label">Fahrzeug-Bilder</div>
                                 </div>
                             </div>
-                            <div class="col-md-3">
-                                <div class="bg-dark rounded p-3 text-center">
-                                    <div class="h4 mb-0 text-info" id="historyCount">--</div>
-                                    <small class="text-secondary">Historie-Einträge</small>
+                            <div class="col-md-3 col-6">
+                                <div class="storage-stat-card">
+                                    <div class="storage-stat-value text-info" id="historyCount">
+                                        <span class="spinner-border spinner-border-sm"></span>
+                                    </div>
+                                    <div class="storage-stat-label">Historie-Einträge</div>
                                 </div>
                             </div>
-                            <div class="col-md-3">
-                                <div class="bg-dark rounded p-3 text-center">
-                                    <div class="h4 mb-0 text-warning" id="storageSize">--</div>
-                                    <small class="text-secondary">Speicherplatz</small>
+                            <div class="col-md-3 col-6">
+                                <div class="storage-stat-card">
+                                    <div class="storage-stat-value text-warning" id="storageSize">
+                                        <span class="spinner-border spinner-border-sm"></span>
+                                    </div>
+                                    <div class="storage-stat-label">Speicherplatz</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Detaillierte Speicherinfo -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <div class="d-flex justify-content-between align-items-center p-2 bg-dark rounded">
+                                    <span class="text-secondary">Kennzeichen:</span>
+                                    <strong id="platesSizeFormatted">--</strong>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="d-flex justify-content-between align-items-center p-2 bg-dark rounded">
+                                    <span class="text-secondary">Fahrzeuge:</span>
+                                    <strong id="vehiclesSizeFormatted">--</strong>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="d-flex justify-content-between align-items-center p-2 bg-dark rounded">
+                                    <span class="text-secondary">Uploads:</span>
+                                    <strong id="uploadsSizeFormatted">--</strong>
                                 </div>
                             </div>
                         </div>
                         
                         <!-- Lösch-Aktionen -->
-                        <h6 class="mb-3"><i class="fas fa-trash me-2"></i>Daten löschen</h6>
+                        <h6 class="mb-3"><i class="fas fa-trash me-2 text-danger"></i>Daten löschen</h6>
                         <div class="d-flex flex-wrap gap-2">
                             <button class="btn btn-outline-warning" onclick="clearPlateImages()">
-                                <i class="fas fa-image me-2"></i>Kennzeichen-Bilder löschen
+                                <i class="fas fa-image me-2"></i>Kennzeichen-Bilder
                             </button>
                             <button class="btn btn-outline-warning" onclick="clearVehicleImages()">
-                                <i class="fas fa-car me-2"></i>Fahrzeug-Bilder löschen
+                                <i class="fas fa-car me-2"></i>Fahrzeug-Bilder
+                            </button>
+                            <button class="btn btn-outline-warning" onclick="clearUploadFiles()">
+                                <i class="fas fa-upload me-2"></i>Upload-Dateien
                             </button>
                             <button class="btn btn-outline-danger" onclick="clearAllData()">
-                                <i class="fas fa-trash-alt me-2"></i>Alle Daten löschen
+                                <i class="fas fa-trash-alt me-2"></i>ALLE Daten
                             </button>
+                        </div>
+                        
+                        <div class="info-box mt-4">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Hinweis:</strong> Das Löschen von Bildern entfernt die Dateien aus dem Dateisystem. 
+                            Die Historie-Einträge bleiben erhalten, zeigen aber keine Bilder mehr an.
+                            "ALLE Daten" löscht auch die komplette Historie.
                         </div>
                     </div>
                 </div>
@@ -1159,6 +1232,15 @@
                                 <span class="badge bg-danger"><i class="fas fa-bell me-1"></i>Live-Updates</span>
                             </div>
                         </div>
+                        
+                        <div class="mt-5">
+                            <a href="https://github.com" target="_blank" class="btn btn-outline-primary me-2">
+                                <i class="fab fa-github me-2"></i>GitHub
+                            </a>
+                            <a href="/api/system/info" target="_blank" class="btn btn-outline-secondary">
+                                <i class="fas fa-info me-2"></i>System Info
+                            </a>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1181,6 +1263,34 @@
             <div class="modal-footer border-secondary">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
                 <button type="button" class="btn btn-danger" id="confirmModalBtn">Bestätigen</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Import Modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background: var(--card-bg);">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">
+                    <i class="fas fa-upload me-2"></i>Einstellungen importieren
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-secondary">Wählen Sie eine zuvor exportierte JSON-Datei aus:</p>
+                <input type="file" class="form-control" id="importFile" accept=".json">
+                <div class="warning-box mt-3">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <strong>Achtung:</strong> Dies überschreibt alle aktuellen Einstellungen!
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+                <button type="button" class="btn btn-primary" onclick="doImportSettings()">
+                    <i class="fas fa-upload me-2"></i>Importieren
+                </button>
             </div>
         </div>
     </div>
@@ -1413,10 +1523,22 @@
     
     function resetAllSettings() {
         showConfirm('Alle Einstellungen zurücksetzen?', 
-            'Dies setzt alle Einstellungen auf die Standardwerte zurück.', 
+            'Dies setzt alle Einstellungen auf die Standardwerte zurück. Die Seite wird neu geladen.', 
             function() {
-                // Reset would require backend endpoint
-                showToast('Info', 'Bitte Seite neu laden für Standardwerte', 'info');
+                fetch('/api/config/reset', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('Erfolg', 'Einstellungen zurückgesetzt', 'success');
+                            setTimeout(() => location.reload(), 1500);
+                        } else {
+                            showToast('Fehler', data.error || 'Zurücksetzen fehlgeschlagen', 'danger');
+                        }
+                    })
+                    .catch(() => {
+                        showToast('Info', 'Bitte Seite manuell neu laden', 'info');
+                        setTimeout(() => location.reload(), 1500);
+                    });
             });
     }
     
@@ -1424,15 +1546,65 @@
         fetch('/api/config')
             .then(response => response.json())
             .then(config => {
-                const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+                const exportData = {
+                    exported_at: new Date().toISOString(),
+                    version: '0.4.2',
+                    config: config
+                };
+                
+                const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = 'platevision_config_' + new Date().toISOString().split('T')[0] + '.json';
+                document.body.appendChild(a);
                 a.click();
+                document.body.removeChild(a);
                 URL.revokeObjectURL(url);
                 showToast('Erfolg', 'Einstellungen exportiert', 'success');
             });
+    }
+    
+    function importSettings() {
+        new bootstrap.Modal(document.getElementById('importModal')).show();
+    }
+    
+    function doImportSettings() {
+        const fileInput = document.getElementById('importFile');
+        if (!fileInput.files || fileInput.files.length === 0) {
+            showToast('Fehler', 'Bitte eine Datei auswählen', 'warning');
+            return;
+        }
+        
+        const file = fileInput.files[0];
+        const reader = new FileReader();
+        
+        reader.onload = function(e) {
+            try {
+                const data = JSON.parse(e.target.result);
+                const config = data.config || data;
+                
+                fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                })
+                .then(response => response.json())
+                .then(result => {
+                    bootstrap.Modal.getInstance(document.getElementById('importModal')).hide();
+                    if (result.success) {
+                        showToast('Erfolg', 'Einstellungen importiert - Seite wird neu geladen', 'success');
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        showToast('Fehler', result.error || 'Import fehlgeschlagen', 'danger');
+                    }
+                });
+            } catch (err) {
+                showToast('Fehler', 'Ungültiges Dateiformat', 'danger');
+            }
+        };
+        
+        reader.readAsText(file);
     }
     
     // ============================================
@@ -1446,32 +1618,52 @@
                 const statusHtml = `
                     <div class="model-status">
                         <span class="model-status-dot ${data.coco_model ? 'loaded' : 'not-loaded'}"></span>
-                        <span>Fahrzeug-Modell (YOLOv8): ${data.coco_model ? 'Geladen' : 'Nicht geladen'}</span>
+                        <span>Fahrzeug-Modell (YOLOv8): <strong class="${data.coco_model ? 'text-success' : 'text-danger'}">${data.coco_model ? 'Geladen' : 'Nicht geladen'}</strong></span>
                     </div>
                     <div class="model-status">
                         <span class="model-status-dot ${data.license_model ? 'loaded' : 'not-loaded'}"></span>
-                        <span>Kennzeichen-Modell: ${data.license_model ? 'Geladen' : 'Nicht geladen'}</span>
+                        <span>Kennzeichen-Modell: <strong class="${data.license_model ? 'text-success' : 'text-danger'}">${data.license_model ? 'Geladen' : 'Nicht geladen'}</strong></span>
                     </div>
                     <div class="model-status">
                         <span class="model-status-dot ${data.ocr_reader ? 'loaded' : 'not-loaded'}"></span>
-                        <span>OCR Engine (EasyOCR): ${data.ocr_reader ? 'Geladen' : 'Nicht geladen'}</span>
+                        <span>OCR Engine (EasyOCR): <strong class="${data.ocr_reader ? 'text-success' : 'text-danger'}">${data.ocr_reader ? 'Geladen' : 'Nicht geladen'}</strong></span>
+                    </div>
+                    <div class="model-status mt-2">
+                        <span class="text-secondary">Gesamtstatus:</span>
+                        <strong class="${data.loaded ? 'text-success' : 'text-warning'}">
+                            ${data.loaded ? 'Alle Modelle bereit' : 'Modelle werden geladen...'}
+                        </strong>
                     </div>
                 `;
                 document.getElementById('modelStatus').innerHTML = statusHtml;
             })
             .catch(() => {
-                document.getElementById('modelStatus').innerHTML = '<span class="text-danger">Status konnte nicht geladen werden</span>';
+                document.getElementById('modelStatus').innerHTML = '<span class="text-danger"><i class="fas fa-exclamation-circle me-2"></i>Status konnte nicht geladen werden</span>';
             });
     }
     
     function reloadModels() {
-        showToast('Info', 'Modelle werden neu geladen...', 'info');
+        const btn = event.target.closest('button');
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Laden...';
+        btn.disabled = true;
         
         fetch('/api/models/reload', { method: 'POST' })
             .then(response => response.json())
             .then(data => {
-                setTimeout(loadModelStatus, 3000);
-                showToast('Erfolg', 'Modelle werden neu geladen', 'success');
+                showToast('Info', 'Modelle werden neu geladen...', 'info');
+                
+                // Status nach 3 Sekunden aktualisieren
+                setTimeout(() => {
+                    loadModelStatus();
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }, 3000);
+            })
+            .catch(() => {
+                showToast('Fehler', 'Neuladen fehlgeschlagen', 'danger');
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
             });
     }
     
@@ -1480,16 +1672,43 @@
     // ============================================
     
     function loadStorageInfo() {
-        fetch('/api/history/statistics')
+        // Spinner anzeigen
+        ['platesCount', 'vehiclesCount', 'historyCount', 'storageSize'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        });
+        
+        fetch('/api/storage/info')
             .then(response => response.json())
             .then(data => {
-                document.getElementById('historyCount').textContent = data.total_detections || 0;
+                document.getElementById('platesCount').textContent = data.plates_count || 0;
+                document.getElementById('vehiclesCount').textContent = data.vehicles_count || 0;
+                document.getElementById('historyCount').textContent = data.history_count || 0;
+                document.getElementById('storageSize').textContent = data.total_size_formatted || '0 B';
+                
+                // Detaillierte Größen
+                const platesSizeEl = document.getElementById('platesSizeFormatted');
+                const vehiclesSizeEl = document.getElementById('vehiclesSizeFormatted');
+                const uploadsSizeEl = document.getElementById('uploadsSizeFormatted');
+                
+                if (platesSizeEl) platesSizeEl.textContent = data.plates_size_formatted || '--';
+                if (vehiclesSizeEl) vehiclesSizeEl.textContent = data.vehicles_size_formatted || '--';
+                if (uploadsSizeEl) uploadsSizeEl.textContent = data.uploads_size_formatted || '--';
+            })
+            .catch(error => {
+                console.error('Fehler beim Laden der Speicher-Info:', error);
+                
+                // Fallback: Zumindest Historie laden
+                fetch('/api/history/statistics')
+                    .then(response => response.json())
+                    .then(data => {
+                        document.getElementById('historyCount').textContent = data.total_detections || 0;
+                    });
+                
+                document.getElementById('platesCount').textContent = '?';
+                document.getElementById('vehiclesCount').textContent = '?';
+                document.getElementById('storageSize').textContent = '?';
             });
-        
-        // Placeholder for file counts (would need backend endpoint)
-        document.getElementById('platesCount').textContent = '--';
-        document.getElementById('vehiclesCount').textContent = '--';
-        document.getElementById('storageSize').textContent = '--';
     }
     
     // ============================================
@@ -1498,10 +1717,14 @@
     
     function showConfirm(title, message, onConfirm) {
         document.getElementById('confirmModalTitle').textContent = title;
-        document.getElementById('confirmModalBody').textContent = message;
+        document.getElementById('confirmModalBody').innerHTML = message;
         
         const btn = document.getElementById('confirmModalBtn');
-        btn.onclick = function() {
+        // Entferne alte Event Listener
+        const newBtn = btn.cloneNode(true);
+        btn.parentNode.replaceChild(newBtn, btn);
+        
+        newBtn.onclick = function() {
             onConfirm();
             bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
         };
@@ -1511,28 +1734,90 @@
     
     function clearPlateImages() {
         showConfirm('Kennzeichen-Bilder löschen?', 
-            'Alle gespeicherten Kennzeichen-Bilder werden unwiderruflich gelöscht.', 
+            'Alle gespeicherten Kennzeichen-Bilder werden <strong class="text-danger">unwiderruflich gelöscht</strong>.', 
             function() {
-                showToast('Info', 'Funktion in Entwicklung', 'info');
+                fetch('/api/storage/clear/plates', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('Erfolg', data.message || 'Kennzeichen-Bilder gelöscht', 'success');
+                            loadStorageInfo();
+                        } else {
+                            showToast('Fehler', data.error || 'Löschen fehlgeschlagen', 'danger');
+                        }
+                    })
+                    .catch(error => {
+                        showToast('Fehler', 'Verbindungsfehler', 'danger');
+                    });
             });
     }
     
     function clearVehicleImages() {
         showConfirm('Fahrzeug-Bilder löschen?', 
-            'Alle gespeicherten Fahrzeug-Bilder werden unwiderruflich gelöscht.', 
+            'Alle gespeicherten Fahrzeug-Bilder werden <strong class="text-danger">unwiderruflich gelöscht</strong>.', 
             function() {
-                showToast('Info', 'Funktion in Entwicklung', 'info');
+                fetch('/api/storage/clear/vehicles', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('Erfolg', data.message || 'Fahrzeug-Bilder gelöscht', 'success');
+                            loadStorageInfo();
+                        } else {
+                            showToast('Fehler', data.error || 'Löschen fehlgeschlagen', 'danger');
+                        }
+                    })
+                    .catch(error => {
+                        showToast('Fehler', 'Verbindungsfehler', 'danger');
+                    });
+            });
+    }
+    
+    function clearUploadFiles() {
+        showConfirm('Upload-Dateien löschen?', 
+            'Alle hochgeladenen und verarbeiteten Dateien werden <strong class="text-danger">unwiderruflich gelöscht</strong>.<br><small class="text-secondary">Dies betrifft auch laufende Video-Jobs.</small>', 
+            function() {
+                fetch('/api/storage/clear/uploads', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('Erfolg', data.message || 'Upload-Dateien gelöscht', 'success');
+                            loadStorageInfo();
+                        } else {
+                            showToast('Fehler', data.error || 'Löschen fehlgeschlagen', 'danger');
+                        }
+                    })
+                    .catch(error => {
+                        showToast('Fehler', 'Verbindungsfehler', 'danger');
+                    });
             });
     }
     
     function clearAllData() {
-        showConfirm('ALLE Daten löschen?', 
-            'Die gesamte Historie und alle Bilder werden unwiderruflich gelöscht!', 
+        showConfirm('⚠️ ALLE Daten löschen?', 
+            `<div class="alert alert-danger mb-3">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <strong>WARNUNG: Diese Aktion kann nicht rückgängig gemacht werden!</strong>
+            </div>
+            <p>Folgendes wird gelöscht:</p>
+            <ul>
+                <li>Alle Kennzeichen-Bilder</li>
+                <li>Alle Fahrzeug-Bilder</li>
+                <li>Alle Upload-Dateien</li>
+                <li><strong>Die gesamte Erkennungs-Historie</strong></li>
+            </ul>`, 
             function() {
-                fetch('/api/history/clear', { method: 'POST' })
-                    .then(() => {
-                        showToast('Erfolg', 'Alle Daten gelöscht', 'success');
-                        loadStorageInfo();
+                fetch('/api/storage/clear/all', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('Erfolg', data.message || 'Alle Daten gelöscht', 'success');
+                            loadStorageInfo();
+                        } else {
+                            showToast('Fehler', data.error || 'Löschen fehlgeschlagen', 'danger');
+                        }
+                    })
+                    .catch(error => {
+                        showToast('Fehler', 'Verbindungsfehler', 'danger');
                     });
             });
     }
@@ -1560,12 +1845,17 @@
     function resetOcrSettings() {
         document.getElementById('langEn').checked = true;
         document.getElementById('langDe').checked = true;
+        document.getElementById('langFr').checked = false;
+        document.getElementById('langIt').checked = false;
+        document.getElementById('langEs').checked = false;
+        document.getElementById('langPl').checked = false;
         document.getElementById('ocrMinConfidence').value = 25;
         document.getElementById('ocrConfDisplay').textContent = '25%';
         document.getElementById('ocrMode').value = 'enhanced';
         document.getElementById('retryOnFail').checked = true;
         document.getElementById('maxRetries').value = 3;
         document.getElementById('gpuEnabled').checked = false;
+        document.getElementById('allowedChars').value = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- ÄÖÜ';
         showToast('Info', 'Standardwerte geladen - Speichern nicht vergessen', 'info');
     }
     
@@ -1593,7 +1883,23 @@
     document.addEventListener('DOMContentLoaded', function() {
         loadModelStatus();
         loadStorageInfo();
+        
+        // Hash-Navigation unterstützen
+        const hash = window.location.hash;
+        if (hash) {
+            const tabLink = document.querySelector(`.settings-nav a[href="${hash}"]`);
+            if (tabLink) {
+                const tab = new bootstrap.Tab(tabLink);
+                tab.show();
+            }
+        }
+    });
+    
+    // Tab-Wechsel in URL speichern
+    document.querySelectorAll('.settings-nav a').forEach(link => {
+        link.addEventListener('shown.bs.tab', function(e) {
+            history.replaceState(null, null, e.target.getAttribute('href'));
+        });
     });
 </script>
-
 {% endblock %}
