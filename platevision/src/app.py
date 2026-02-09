@@ -1175,6 +1175,211 @@ def api_history_statistics():
     return jsonify(history_manager.get_statistics())
 
 
+
+# ============================================================
+# API ROUTEN - SPEICHER INFO
+# ============================================================
+
+@app.route('/api/storage/info')
+def api_storage_info():
+    """Gibt Speicherplatz-Informationen zurück"""
+    import os
+    from pathlib import Path
+    
+    def count_files(directory):
+        """Zählt Dateien in einem Verzeichnis"""
+        path = Path(directory)
+        if not path.exists():
+            return 0
+        return len([f for f in path.iterdir() if f.is_file()])
+    
+    def get_dir_size(directory):
+        """Berechnet Größe eines Verzeichnisses in Bytes"""
+        total_size = 0
+        path = Path(directory)
+        if not path.exists():
+            return 0
+        
+        for file in path.rglob('*'):
+            if file.is_file():
+                try:
+                    total_size += file.stat().st_size
+                except (OSError, IOError):
+                    pass
+        return total_size
+    
+    def format_size(bytes_size):
+        """Formatiert Bytes in lesbare Größe"""
+        if bytes_size < 1024:
+            return f"{bytes_size} B"
+        elif bytes_size < 1024 * 1024:
+            return f"{bytes_size / 1024:.1f} KB"
+        elif bytes_size < 1024 * 1024 * 1024:
+            return f"{bytes_size / (1024 * 1024):.1f} MB"
+        else:
+            return f"{bytes_size / (1024 * 1024 * 1024):.2f} GB"
+    
+    # Verzeichnisse
+    plates_dir = 'data/plates_detected'
+    vehicles_dir = 'data/vehicles_detected'
+    uploads_dir = 'uploads'
+    data_dir = 'data'
+    
+    # Dateien zählen
+    plates_count = count_files(plates_dir)
+    vehicles_count = count_files(vehicles_dir)
+    
+    # Historie-Einträge
+    history_count = len(history_manager.history)
+    
+    # Speicherplatz berechnen
+    plates_size = get_dir_size(plates_dir)
+    vehicles_size = get_dir_size(vehicles_dir)
+    uploads_size = get_dir_size(uploads_dir)
+    data_size = get_dir_size(data_dir)
+    total_size = plates_size + vehicles_size + uploads_size
+    
+    return jsonify({
+        'plates_count': plates_count,
+        'vehicles_count': vehicles_count,
+        'history_count': history_count,
+        'plates_size': plates_size,
+        'plates_size_formatted': format_size(plates_size),
+        'vehicles_size': vehicles_size,
+        'vehicles_size_formatted': format_size(vehicles_size),
+        'uploads_size': uploads_size,
+        'uploads_size_formatted': format_size(uploads_size),
+        'data_size': data_size,
+        'data_size_formatted': format_size(data_size),
+        'total_size': total_size,
+        'total_size_formatted': format_size(total_size)
+    })
+
+
+@app.route('/api/storage/clear/plates', methods=['POST'])
+def api_clear_plates():
+    """Löscht alle Kennzeichen-Bilder"""
+    import shutil
+    from pathlib import Path
+    
+    plates_dir = Path('data/plates_detected')
+    deleted_count = 0
+    
+    if plates_dir.exists():
+        for file in plates_dir.iterdir():
+            if file.is_file():
+                try:
+                    file.unlink()
+                    deleted_count += 1
+                except Exception as e:
+                    logger.warning(f"Konnte Datei nicht löschen: {file} - {e}")
+    
+    return jsonify({
+        'success': True,
+        'deleted_count': deleted_count,
+        'message': f'{deleted_count} Kennzeichen-Bilder gelöscht'
+    })
+
+
+@app.route('/api/storage/clear/vehicles', methods=['POST'])
+def api_clear_vehicles():
+    """Löscht alle Fahrzeug-Bilder"""
+    from pathlib import Path
+    
+    vehicles_dir = Path('data/vehicles_detected')
+    deleted_count = 0
+    
+    if vehicles_dir.exists():
+        for file in vehicles_dir.iterdir():
+            if file.is_file():
+                try:
+                    file.unlink()
+                    deleted_count += 1
+                except Exception as e:
+                    logger.warning(f"Konnte Datei nicht löschen: {file} - {e}")
+    
+    return jsonify({
+        'success': True,
+        'deleted_count': deleted_count,
+        'message': f'{deleted_count} Fahrzeug-Bilder gelöscht'
+    })
+
+
+@app.route('/api/storage/clear/uploads', methods=['POST'])
+def api_clear_uploads():
+    """Löscht alle hochgeladenen und verarbeiteten Dateien"""
+    from pathlib import Path
+    
+    dirs_to_clear = [
+        'uploads/images',
+        'uploads/videos',
+        'uploads/processed'
+    ]
+    
+    deleted_count = 0
+    
+    for dir_path in dirs_to_clear:
+        path = Path(dir_path)
+        if path.exists():
+            for file in path.iterdir():
+                if file.is_file():
+                    try:
+                        file.unlink()
+                        deleted_count += 1
+                    except Exception as e:
+                        logger.warning(f"Konnte Datei nicht löschen: {file} - {e}")
+    
+    # Video-Jobs auch leeren
+    global video_processing_jobs
+    video_processing_jobs = {}
+    
+    return jsonify({
+        'success': True,
+        'deleted_count': deleted_count,
+        'message': f'{deleted_count} Upload-Dateien gelöscht'
+    })
+
+
+@app.route('/api/storage/clear/all', methods=['POST'])
+def api_clear_all_storage():
+    """Löscht alle gespeicherten Daten"""
+    from pathlib import Path
+    
+    dirs_to_clear = [
+        'data/plates_detected',
+        'data/vehicles_detected',
+        'uploads/images',
+        'uploads/videos',
+        'uploads/processed'
+    ]
+    
+    deleted_count = 0
+    
+    for dir_path in dirs_to_clear:
+        path = Path(dir_path)
+        if path.exists():
+            for file in path.iterdir():
+                if file.is_file():
+                    try:
+                        file.unlink()
+                        deleted_count += 1
+                    except Exception as e:
+                        logger.warning(f"Konnte Datei nicht löschen: {file} - {e}")
+    
+    # Historie löschen
+    history_manager.clear_history()
+    
+    # Video-Jobs leeren
+    global video_processing_jobs
+    video_processing_jobs = {}
+    
+    return jsonify({
+        'success': True,
+        'deleted_count': deleted_count,
+        'message': f'Alle Daten gelöscht ({deleted_count} Dateien + Historie)'
+    })
+
+
 # ============================================================
 # API ROUTEN - BILD VERARBEITUNG
 # ============================================================
@@ -1773,6 +1978,7 @@ if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, 
                  debug=config_manager.get('general', 'debug_mode') or False,
                  allow_unsafe_werkzeug=True)
+
 
 
 
