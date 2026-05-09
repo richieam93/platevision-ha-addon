@@ -1,7 +1,7 @@
-name: "PlateVision ProTraffic People Pro"
+name: "PlateVision ProTraffic People Model Fix"
 slug: platevision
-description: PlateVision ProTraffic People Kennzeichen-Erkennung, Personenanalyse, Statistik, Suche, Dashboard, RTSP und erweiterte Original-Einstellungen
-version: "0.8.1"
+description: PlateVision ProTraffic People Model-Fix Kennzeichen-Erkennung, Personenanalyse, Statistik, Suche, Dashboard, RTSP und erweiterte Original-Einstellungen
+version: "0.8.2"
 arch:
   - amd64
 startup: services

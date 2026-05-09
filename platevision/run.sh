@@ -4,9 +4,11 @@ set -e
 # Persistente Verzeichnisse (bleiben über Updates/Neustarts erhalten)
 mkdir -p /data/uploads /data/models /data/data
 
-# Initiale Daten einmalig rüberkopieren, falls /data leer ist
-if [ -d /app/models ] && [ -z "$(ls -A /data/models 2>/dev/null)" ]; then
-  cp -a /app/models/. /data/models/ || true
+# Modelle synchronisieren: neue Modelle aus dem Add-on-Image nach /data/models übernehmen,
+# ohne bestehende oder vom Benutzer angepasste Modelle zu überschreiben.
+# Wichtig für Updates: best.pt/last.pt erscheinen auch dann, wenn /data/models schon alte Modelle enthält.
+if [ -d /app/models ]; then
+  cp -an /app/models/. /data/models/ || true
 fi
 
 if [ -d /app/data ] && [ ! -f /data/data/.initialized ]; then

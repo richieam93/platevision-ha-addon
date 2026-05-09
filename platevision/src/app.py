@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.1 ProTraffic People Pro - audited settings, model selection and extended people analytics
+Version 0.8.2 ProTraffic People Model Fix - robust model discovery and sync
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -498,8 +498,9 @@ class ConfigManager:
             'draw_boxes': True,
             'confidence_threshold': 0.45,
             'model_mode': 'coco_person',
-            'model_path': 'models/human_best.pt',
-            'selected_model_file': 'models/human_best.pt',
+            'model_path': 'models/best.pt',
+            'selected_model_file': 'models/best.pt',
+            'fallback_model_files': ['models/best.pt', 'models/last.pt', 'models/human_best.pt'],
             'model_auto_scan': True,
             'model_choices': {
                 'coco_person': 'Standard YOLOv8 COCO Person-Klasse',
@@ -507,7 +508,7 @@ class ConfigManager:
                 'model_file': 'Modell aus Liste auswählen',
                 'custom_path': 'Benutzerdefinierter Modellpfad'
             },
-            'custom_model_path': 'models/human_best.pt',
+            'custom_model_path': 'models/best.pt',
             'class_ids': [0],
             'class_names': ['person', 'human'],
             'min_person_width': 20,
@@ -591,9 +592,10 @@ class ConfigManager:
             'download_missing_models': False,
             'fallback_to_cpu': True,
             'custom_model_directory': 'models',
+            'additional_model_directories': ['/data/models', '/app/models', 'platevision/src/models'],
             'vehicle_model_labels': 'COCO',
             'plate_model_labels': 'license_plate',
-            'person_detector': 'models/human_best.pt',
+            'person_detector': 'models/best.pt',
             'person_model_labels': 'person,human',
             'person_model_source': 'COCO class 0 or custom YOLOv8 human model',
             'person_model_scan_enabled': True,
@@ -1672,8 +1674,8 @@ class LicensePlateDetector:
             try:
                 logger.info("Lade ML-Modelle...")
                 
-                vehicle_model_path = self.config_manager.get('models', 'vehicle_detector')
-                license_model_path = self.config_manager.get('models', 'license_plate_detector')
+                vehicle_model_path = _resolve_model_path(self.config_manager.get('models', 'vehicle_detector'))
+                license_model_path = _resolve_model_path(self.config_manager.get('models', 'license_plate_detector'))
                 
                 if vehicle_model_path and os.path.exists(vehicle_model_path):
                     self.coco_model = YOLO(vehicle_model_path)
@@ -1697,6 +1699,7 @@ class LicensePlateDetector:
                 )
                 people_mode = people_cfg.get('model_mode') or 'coco_person'
                 if people_cfg.get('enabled') and people_mode in ('custom_human', 'custom_path', 'model_file'):
+                    human_path = _resolve_model_path(human_path)
                     if human_path and os.path.exists(human_path):
                         self.human_model = YOLO(human_path)
                         logger.info(f"Personen-Modell geladen: {human_path}")
@@ -2481,6 +2484,40 @@ class LicensePlateDetector:
         
         return self.process_frame(frame)
 
+
+
+# ============================================================
+# MODELL-PFAD-HILFEN (müssen vor dem initialen Modell-Load existieren)
+# ============================================================
+
+def _resolve_model_path(path_value):
+    """Resolve model paths stored as models/best.pt, /data/models/best.pt or repo-relative paths."""
+    if not path_value:
+        return None
+    raw = str(path_value).strip().replace('\\', '/')
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    app_dir = Path(__file__).resolve().parent
+    candidates = []
+    if p.is_absolute():
+        candidates.append(p)
+    else:
+        candidates.extend([Path.cwd() / p, app_dir / p, Path('/app') / p, Path('/data') / p])
+        if p.name:
+            candidates.extend([Path('/data/models') / p.name, Path('/app/models') / p.name, app_dir / 'models' / p.name, Path.cwd() / 'models' / p.name])
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return str(candidate)
+        except Exception:
+            continue
+    return raw
+
+
+def _model_path_exists(path_value):
+    resolved = _resolve_model_path(path_value)
+    return bool(resolved and Path(resolved).exists())
 
 # ============================================================
 # GLOBALE INSTANZEN
@@ -3438,23 +3475,102 @@ def _guess_model_kind(path_value):
         return 'vehicle/general'
     return 'custom'
 
+def _candidate_model_directories(*extra_values):
+    """Return model directories that can exist in dev, Docker and HA runtime."""
+    cfg_models = config_manager.get('models') or {}
+    cfg_people = config_manager.get('people') or {}
+    app_dir = Path(__file__).resolve().parent
+    raw_candidates = [
+        'models',
+        '/data/models',
+        '/app/models',
+        str(app_dir / 'models'),
+        str(app_dir.parent / 'src' / 'models'),
+        'platevision/src/models',
+        cfg_models.get('custom_model_directory'),
+        *(cfg_models.get('additional_model_directories') or []),
+        os.path.dirname(cfg_models.get('person_detector') or ''),
+        os.path.dirname(cfg_people.get('selected_model_file') or ''),
+        os.path.dirname(cfg_people.get('custom_model_path') or ''),
+        os.path.dirname(cfg_people.get('model_path') or ''),
+        *[os.path.dirname(str(v)) for v in extra_values if v],
+    ]
+    dirs, seen = [], set()
+    for raw in raw_candidates:
+        if not raw:
+            continue
+        p = Path(str(raw)).expanduser()
+        candidates = [p] if p.is_absolute() else [Path.cwd() / p, app_dir / p, Path('/app') / p]
+        # If a repo-relative path is configured, also try the runtime /app/models and /data/models by basename.
+        if 'models' in p.parts:
+            candidates.extend([Path('/data/models'), Path('/app/models'), app_dir / 'models'])
+        for c in candidates:
+            try:
+                key = str(c.resolve()) if c.exists() else str(c)
+            except Exception:
+                key = str(c)
+            if key not in seen:
+                seen.add(key)
+                dirs.append(c)
+    return dirs
+
+
+def _resolve_model_path(path_value):
+    """Resolve model paths stored as models/best.pt, /data/models/best.pt or repo-relative paths."""
+    if not path_value:
+        return None
+    raw = str(path_value).strip().replace('\\', '/')
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    app_dir = Path(__file__).resolve().parent
+    candidates = []
+    if p.is_absolute():
+        candidates.append(p)
+    else:
+        candidates.extend([
+            Path.cwd() / p,
+            app_dir / p,
+            Path('/app') / p,
+            Path('/data') / p,
+        ])
+        # Common user/GitHub layout: platevision/src/models/best.pt. At runtime this becomes /app/models/best.pt or /data/models/best.pt.
+        if p.name:
+            candidates.extend([Path('/data/models') / p.name, Path('/app/models') / p.name, app_dir / 'models' / p.name, Path.cwd() / 'models' / p.name])
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return str(candidate)
+        except Exception:
+            continue
+    return raw
+
+
+def _model_path_exists(path_value):
+    resolved = _resolve_model_path(path_value)
+    return bool(resolved and Path(resolved).exists())
+
 def _scan_model_files():
     cfg_models = config_manager.get('models') or {}
     cfg_people = config_manager.get('people') or {}
     extensions = cfg_models.get('person_model_extensions') or ['.pt', '.onnx', '.engine']
     extensions = {str(ext).lower() if str(ext).startswith('.') else f'.{str(ext).lower()}' for ext in extensions}
-    directories = []
-    for candidate in [
-        'models',
-        cfg_models.get('custom_model_directory'),
-        os.path.dirname(cfg_models.get('person_detector') or ''),
-        os.path.dirname(cfg_people.get('selected_model_file') or ''),
-        os.path.dirname(cfg_people.get('custom_model_path') or ''),
-    ]:
-        if candidate and candidate not in directories:
-            directories.append(candidate)
+    directories = _candidate_model_directories(
+        cfg_models.get('person_detector'),
+        cfg_people.get('selected_model_file'),
+        cfg_people.get('custom_model_path'),
+        cfg_people.get('model_path')
+    )
     found = []
     seen = set()
+    selected_values = {
+        cfg_people.get('selected_model_file'),
+        cfg_people.get('custom_model_path'),
+        cfg_people.get('model_path'),
+        cfg_models.get('person_detector')
+    }
+    selected_resolved = {_resolve_model_path(v) for v in selected_values if v}
+
     for directory in directories:
         try:
             d = Path(directory)
@@ -3463,25 +3579,62 @@ def _scan_model_files():
             for p in sorted(d.rglob('*')):
                 if not p.is_file() or p.suffix.lower() not in extensions:
                     continue
-                rel = _safe_relpath(p)
-                if rel in seen:
+                resolved = str(p.resolve())
+                if resolved in seen:
                     continue
-                seen.add(rel)
+                seen.add(resolved)
                 stat = p.stat()
+                # Prefer a runtime-safe relative path when the model is under the active working directory.
+                try:
+                    rel = str(p.resolve().relative_to(Path.cwd().resolve())).replace('\\', '/')
+                except Exception:
+                    try:
+                        rel = str(p.resolve().relative_to(Path(__file__).resolve().parent)).replace('\\', '/')
+                    except Exception:
+                        rel = str(p).replace('\\', '/')
+                kind = _guess_model_kind(p)
+                # best.pt and last.pt from a HumanDetection repo are intentionally usable as people models.
+                if p.name.lower() in ('best.pt', 'last.pt') and 'models' in [part.lower() for part in p.parts]:
+                    kind = 'people'
                 found.append({
                     'path': rel,
+                    'resolved_path': resolved,
                     'name': p.name,
                     'directory': _safe_relpath(p.parent),
                     'extension': p.suffix.lower(),
                     'size_mb': round(stat.st_size / 1024 / 1024, 2),
                     'modified_at': datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                    'kind_guess': _guess_model_kind(p),
+                    'kind_guess': kind,
                     'exists': True,
-                    'selected_for_people': rel in {cfg_people.get('selected_model_file'), cfg_people.get('custom_model_path'), cfg_models.get('person_detector')}
+                    'selected_for_people': rel in selected_values or resolved in selected_resolved or str(p) in selected_values
                 })
         except Exception as e:
             logger.warning(f'Modellscan fehlgeschlagen für {directory}: {e}')
+
+    # Add expected standard HumanDetection names as clear missing hints instead of silently hiding them.
+    for expected in (cfg_people.get('fallback_model_files') or ['models/best.pt', 'models/last.pt', 'models/human_best.pt']):
+        resolved = _resolve_model_path(expected)
+        if resolved and Path(resolved).exists():
+            continue
+        name = Path(str(expected)).name
+        if name and name.lower() in ('best.pt', 'last.pt', 'human_best.pt') and not any(m['name'] == name for m in found):
+            found.append({
+                'path': str(expected).replace('\\', '/'),
+                'resolved_path': resolved or str(expected),
+                'name': name,
+                'directory': str(Path(str(expected)).parent).replace('\\', '/'),
+                'extension': Path(str(expected)).suffix.lower(),
+                'size_mb': 0,
+                'modified_at': None,
+                'kind_guess': 'people',
+                'exists': False,
+                'missing_hint': 'Datei nicht gefunden. Beim Add-on-Start werden neue Modelle aus /app/models nach /data/models synchronisiert.',
+                'selected_for_people': expected in selected_values
+            })
+
+    found.sort(key=lambda m: (not m.get('exists'), 0 if m.get('kind_guess') == 'people' else 1, m.get('name','').lower()))
     config_manager.config.setdefault('models', {})['last_model_scan_at'] = datetime.now().isoformat()
+    config_manager.config.setdefault('models', {})['last_model_scan_count'] = len([m for m in found if m.get('exists')])
     return found
 
 def _validate_current_config():
@@ -3495,9 +3648,9 @@ def _validate_current_config():
     selected = people.get('selected_model_file') or people.get('custom_model_path') or models.get('person_detector')
     add('people_model_mode', mode in ('coco_person', 'custom_human', 'custom_path', 'model_file'), f'Personen-Modus: {mode}')
     if mode == 'coco_person':
-        add('people_model_path', os.path.exists(models.get('vehicle_detector') or ''), 'COCO-Personenklasse nutzt das Fahrzeug/YOLOv8-Modell.')
+        add('people_model_path', _model_path_exists(models.get('vehicle_detector') or ''), 'COCO-Personenklasse nutzt das Fahrzeug/YOLOv8-Modell.')
     else:
-        add('people_model_path', bool(selected and os.path.exists(selected)), f'Ausgewähltes Personenmodell: {selected}')
+        add('people_model_path', bool(selected and _model_path_exists(selected)), f'Ausgewähltes Personenmodell: {selected}')
     add('line_position', 1 <= float(people.get('virtual_line_position_percent') or 50) <= 99, 'Virtuelle Zähllinie liegt zwischen 1% und 99%.')
     add('confidence', 0.01 <= float(people.get('confidence_threshold') or 0.45) <= 0.99, 'Personen-Konfidenz liegt im gültigen Bereich.')
     add('history_enabled', people.get('history_enabled') is not False, 'Personen-Historie ist gespeichert, wenn aktiviert.')
@@ -3529,8 +3682,9 @@ def api_people_model_select():
         data = request.get_json(silent=True) or {}
         path = data.get('path') or data.get('selected_model_file')
         mode = data.get('model_mode') or ('model_file' if path else 'coco_person')
-        if path and not os.path.exists(path):
-            return jsonify({'success': False, 'error': f'Modell nicht gefunden: {path}'}), 400
+        resolved_path = _resolve_model_path(path) if path else None
+        if path and not _model_path_exists(path):
+            return jsonify({'success': False, 'error': f'Modell nicht gefunden: {path}. Gefundene Ordner: models/, /data/models, /app/models'}), 400
         config_manager.config.setdefault('people', {})['model_mode'] = mode
         if path:
             config_manager.config['people']['selected_model_file'] = path
@@ -3542,7 +3696,7 @@ def api_people_model_select():
             detector.models_loaded = False
             detector.human_model = None
             threading.Thread(target=detector.load_models, daemon=True).start()
-        return jsonify({'success': True, 'config': _public_config()})
+        return jsonify({'success': True, 'config': _public_config(), 'resolved_path': resolved_path})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
@@ -4535,7 +4689,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.1 ProTraffic People Pro                                    ║
+    ║     Version 0.8.2 ProTraffic People Pro                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

@@ -1446,7 +1446,7 @@
                             <div class="mb-3">
                                 <label class="form-label">Personen-Detektor / Human Model</label>
                                 <input type="text" class="form-control" id="personModel"
-                                       value="{{ config.models.person_detector if config.models.person_detector is defined else 'models/human_best.pt' }}">
+                                       value="{{ config.models.person_detector if config.models.person_detector is defined else 'models/best.pt' }}">
                                 <small class="text-secondary">Optionales separates HumanDetection-Modell. Die Personenanalyse kann auch das Standard-COCO-Modell verwenden.</small>
                             </div>
                         </div>
@@ -1839,15 +1839,15 @@
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">Gefundene Modelldateien</label>
-                                        <select class="form-select" id="peopleSelectedModelFile" data-current="{{ config.people.selected_model_file if config.people is defined and config.people.selected_model_file is defined else (config.people.custom_model_path if config.people is defined and config.people.custom_model_path is defined else 'models/human_best.pt') }}">
+                                        <select class="form-select" id="peopleSelectedModelFile" data-current="{{ config.people.selected_model_file if config.people is defined and config.people.selected_model_file is defined else (config.people.custom_model_path if config.people is defined and config.people.custom_model_path is defined else 'models/best.pt') }}">
                                             <option value="">Modelle werden beim Öffnen gescannt...</option>
                                         </select>
                                         <small class="text-secondary">Scannt <code>models/</code> und den Custom-Modellordner nach .pt/.onnx/.engine.</small>
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">Pfad zum Human-Modell</label>
-                                        <input type="text" class="form-control" id="peopleCustomModelPath" value="{{ config.people.custom_model_path if config.people is defined and config.people.custom_model_path is defined else 'models/human_best.pt' }}" placeholder="models/human_best.pt">
-                                        <small class="text-secondary">Lege z.B. <code>best.pt</code> als <code>models/human_best.pt</code> ab oder wähle es links aus.</small>
+                                        <input type="text" class="form-control" id="peopleCustomModelPath" value="{{ config.people.custom_model_path if config.people is defined and config.people.custom_model_path is defined else 'models/best.pt' }}" placeholder="models/best.pt">
+                                        <small class="text-secondary">Lege <code>best.pt</code> oder <code>last.pt</code> in <code>platevision/src/models/</code>. Beim Start werden fehlende Dateien automatisch nach <code>/data/models</code> übernommen.</small>
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">Modell-Aktionen</label>
@@ -2885,7 +2885,7 @@
         const payload = {
             vehicle_detector: pvStr('vehicleModel', 'models/yolov8n.pt'),
             license_plate_detector: pvStr('licenseModel', 'models/license_plate_detector.pt'),
-            person_detector: pvStr('personModel', 'models/human_best.pt'),
+            person_detector: pvStr('personModel', 'models/best.pt'),
             person_model_labels: pvStr('peopleClassNames', 'person,human'),
             device: pvStr('modelDevice', 'auto'),
             model_size_hint: pvStr('modelSizeHint', 'nano'),
@@ -2934,17 +2934,20 @@
             const response = await fetch('/api/models/people/options');
             const data = await response.json();
             const models = data.models || [];
-            if (!models.length) {
-                select.innerHTML = '<option value="">Keine Modelldateien gefunden</option>';
-                if (panel) panel.innerHTML = '<span class="text-warning">Keine .pt/.onnx/.engine Dateien im Modellordner gefunden. Lege z.B. human_best.pt in models/ ab.</span>';
+            const existingModels = models.filter(m => m.exists !== false);
+            const missingModels = models.filter(m => m.exists === false);
+            if (!existingModels.length) {
+                select.innerHTML = '<option value="">Keine vorhandenen Modelldateien gefunden</option>';
+                if (panel) panel.innerHTML = '<span class="text-warning">Keine vorhandenen .pt/.onnx/.engine Dateien gefunden. Erwartet werden z.B. <code>best.pt</code> und <code>last.pt</code> in <code>platevision/src/models/</code>, <code>/app/models</code> oder <code>/data/models</code>.</span>';
                 return;
             }
-            select.innerHTML = models.map(m => `<option value="${m.path}" ${m.path === current ? 'selected' : ''}>${m.name} · ${m.kind_guess} · ${m.size_mb} MB</option>`).join('');
+            select.innerHTML = existingModels.map(m => `<option value="${m.path}" ${m.path === current || m.resolved_path === current ? 'selected' : ''}>${m.name} · ${m.kind_guess} · ${m.size_mb} MB</option>`).join('');
             const chosen = select.value || current;
             if (chosen) document.getElementById('peopleCustomModelPath').value = chosen;
             if (panel) {
-                const rec = (data.recommended || []).length;
-                panel.innerHTML = `<strong>${models.length}</strong> Modelle gefunden, davon <strong>${rec}</strong> als Personenmodell empfohlen. Status: COCO ${data.status?.coco_model_loaded ? 'geladen' : 'nicht geladen'}, Human ${data.status?.human_model_loaded ? 'geladen' : 'nicht geladen'}.`;
+                const rec = existingModels.filter(m => m.kind_guess === 'people').length;
+                const missing = missingModels.length ? `<br><span class="text-warning">Nicht gefunden: ${missingModels.map(m => m.name).join(', ')}</span>` : '';
+                panel.innerHTML = `<strong>${existingModels.length}</strong> Modelle gefunden, davon <strong>${rec}</strong> als Personenmodell empfohlen. Status: COCO ${data.status?.coco_model_loaded ? 'geladen' : 'nicht geladen'}, Human ${data.status?.human_model_loaded ? 'geladen' : 'nicht geladen'}.${missing}`;
             }
         } catch (e) {
             select.innerHTML = '<option value="">Scan fehlgeschlagen</option>';
@@ -2989,9 +2992,9 @@
             draw_boxes: pvBool('peopleDrawBoxes'),
             confidence_threshold: pvNum('peopleConfidence', 0.45),
             model_mode: pvStr('peopleModelMode', 'coco_person'),
-            selected_model_file: (pvStr('peopleSelectedModelFile') || pvStr('peopleCustomModelPath', 'models/human_best.pt')),
-            custom_model_path: pvStr('peopleCustomModelPath', 'models/human_best.pt'),
-            model_path: (pvStr('peopleSelectedModelFile') || pvStr('peopleCustomModelPath', 'models/human_best.pt')),
+            selected_model_file: (pvStr('peopleSelectedModelFile') || pvStr('peopleCustomModelPath', 'models/best.pt')),
+            custom_model_path: pvStr('peopleCustomModelPath', 'models/best.pt'),
+            model_path: (pvStr('peopleSelectedModelFile') || pvStr('peopleCustomModelPath', 'models/best.pt')),
             model_auto_scan: pvBool('peopleModelAutoScan'),
             class_ids: peopleClassIdList(),
             class_names: peopleClassNameList(),
