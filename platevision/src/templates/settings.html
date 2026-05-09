@@ -155,6 +155,41 @@
         font-size: 0.75rem;
         color: var(--text-secondary);
     }
+
+
+    .settings-pro-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1rem;
+    }
+
+    .settings-help-card {
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 14px;
+        padding: 1rem;
+        background: linear-gradient(135deg, rgba(99,102,241,.10), rgba(15,23,42,.55));
+    }
+
+    .settings-pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .5rem;
+    }
+
+    .settings-chip {
+        border: 1px solid rgba(148, 163, 184, .25);
+        border-radius: 999px;
+        padding: .4rem .75rem;
+        background: rgba(15,23,42,.55);
+        color: var(--text-secondary);
+        font-size: .85rem;
+    }
+
+    .settings-pro-section {
+        border: 1px solid rgba(99,102,241,.25);
+        background: radial-gradient(circle at top right, rgba(99,102,241,.14), rgba(15,23,42,.72));
+    }
+
 </style>
 {% endblock %}
 
@@ -192,6 +227,26 @@
                     <a class="nav-link" data-bs-toggle="pill" href="#models" role="tab">
                         <i class="fas fa-brain"></i>
                         Modelle
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#plateRecognition" role="tab">
+                        <i class="fas fa-id-card"></i>
+                        Kennzeichen Pro
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#searchSettings" role="tab">
+                        <i class="fas fa-search-plus"></i>
+                        Suche
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#trafficSettings" role="tab">
+                        <i class="fas fa-road"></i>
+                        Statistik / Verkehr
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#dashboardUiSettings" role="tab">
+                        <i class="fas fa-chart-line"></i>
+                        Dashboard & Layout
+                    </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#privacyAlerts" role="tab">
+                        <i class="fas fa-shield-alt"></i>
+                        Datenschutz & Alerts
                     </a>
                     <a class="nav-link" data-bs-toggle="pill" href="#about" role="tab">
                         <i class="fas fa-info-circle"></i>
@@ -381,6 +436,73 @@
                                 </small>
                             </div>
                             
+                            <div class="setting-group settings-pro-section">
+                                <div class="setting-group-title">
+                                    <i class="fas fa-sliders"></i>
+                                    Erweiterte Erkennung & Filter
+                                </div>
+                                <div class="settings-pro-grid">
+                                    <div>
+                                        <label class="form-label">Max. Erkennungen pro Frame</label>
+                                        <input type="number" class="form-control" id="maxDetectionsPerFrame" min="0" max="50" value="{{ config.detection.max_detections_per_frame if config.detection.max_detections_per_frame is defined else 8 }}">
+                                        <small class="text-secondary">0 = unbegrenzt. Schützt schwache Systeme vor Überlast.</small>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Kennzeichen-Seitenverhältnis min.</label>
+                                        <input type="number" class="form-control" id="plateAspectMin" min="0.5" max="10" step="0.1" value="{{ config.detection.plate_aspect_ratio_min if config.detection.plate_aspect_ratio_min is defined else 2.0 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Kennzeichen-Seitenverhältnis max.</label>
+                                        <input type="number" class="form-control" id="plateAspectMax" min="1" max="12" step="0.1" value="{{ config.detection.plate_aspect_ratio_max if config.detection.plate_aspect_ratio_max is defined else 6.5 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Kennzeichenmodell Faktor</label>
+                                        <input type="number" class="form-control" id="plateDetectorConfidenceFactor" min="0.1" max="1.5" step="0.05" value="{{ config.detection.plate_detector_confidence_factor if config.detection.plate_detector_confidence_factor is defined else 0.6 }}">
+                                        <small class="text-secondary">Relativ zur Haupt-Confidence.</small>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Mindest-Fahrzeugbreite (px)</label>
+                                        <input type="number" class="form-control" id="minVehicleWidth" min="0" max="1000" value="{{ config.detection.min_vehicle_width if config.detection.min_vehicle_width is defined else 80 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Mindest-Fahrzeughöhe (px)</label>
+                                        <input type="number" class="form-control" id="minVehicleHeight" min="0" max="1000" value="{{ config.detection.min_vehicle_height if config.detection.min_vehicle_height is defined else 60 }}">
+                                    </div>
+                                </div>
+                                <div class="mt-3">
+                                    <label class="form-label">Fahrzeugklassen</label>
+                                    {% set class_filter = config.detection.vehicle_class_filter if config.detection.vehicle_class_filter is defined else ['car','truck','bus','motorcycle'] %}
+                                    <div class="settings-pill-row">
+                                        {% for value, label in [('car','PKW'), ('truck','LKW'), ('bus','Bus'), ('motorcycle','Motorrad')] %}
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input vehicle-class-filter" type="checkbox" id="vehicleClass{{ value|capitalize }}" value="{{ value }}" {% if value in class_filter %}checked{% endif %}>
+                                            <label class="form-check-label" for="vehicleClass{{ value|capitalize }}">{{ label }}</label>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                <div class="row g-3 mt-2">
+                                    <div class="col-md-4">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="annotateFrames" {% if config.detection.annotate_frames is not defined or config.detection.annotate_frames %}checked{% endif %}>
+                                            <label class="form-check-label" for="annotateFrames">Frames markieren</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="drawConfidence" {% if config.detection.draw_confidence is not defined or config.detection.draw_confidence %}checked{% endif %}>
+                                            <label class="form-check-label" for="drawConfidence">Konfidenz einblenden</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="scanFullFrameWhenVehicleFound" {% if config.detection.scan_full_frame_when_vehicle_found is defined and config.detection.scan_full_frame_when_vehicle_found %}checked{% endif %}>
+                                            <label class="form-check-label" for="scanFullFrameWhenVehicleFound">Zusätzlich Vollbild scannen</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div class="d-flex gap-2 mt-4">
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save me-2"></i>Einstellungen speichern
@@ -576,6 +698,57 @@
                                 </div>
                             </div>
                             
+                            <div class="setting-group settings-pro-section">
+                                <div class="setting-group-title"><i class="fas fa-wand-magic-sparkles"></i>Erweiterte OCR-Strategie</div>
+                                <div class="settings-pro-grid">
+                                    <div>
+                                        <label class="form-label">OCR Engine</label>
+                                        <select class="form-select" id="ocrEngine">
+                                            {% set ocr_engine = config.ocr.engine if config.ocr.engine is defined else 'easyocr' %}
+                                            <option value="easyocr" {% if ocr_engine == 'easyocr' %}selected{% endif %}>EasyOCR</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Decoder</label>
+                                        {% set decoder = config.ocr.decoder if config.ocr.decoder is defined else 'greedy' %}
+                                        <select class="form-select" id="ocrDecoder">
+                                            {% for d in ['greedy', 'beamsearch', 'wordbeamsearch'] %}
+                                            <option value="{{ d }}" {% if decoder == d %}selected{% endif %}>{{ d }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Früh stoppen ab Confidence</label>
+                                        <input type="number" class="form-control" id="earlyStopConfidence" min="0.1" max="1" step="0.01" value="{{ config.ocr.early_stop_confidence if config.ocr.early_stop_confidence is defined else 0.85 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Max. OCR-Varianten lesen</label>
+                                        <input type="number" class="form-control" id="maxVariantsToRead" min="1" max="20" value="{{ config.ocr.max_variants_to_read if config.ocr.max_variants_to_read is defined else 8 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Min. Textlänge</label>
+                                        <input type="number" class="form-control" id="ocrMinTextLength" min="1" max="10" value="{{ config.ocr.min_text_length if config.ocr.min_text_length is defined else 2 }}">
+                                    </div>
+                                </div>
+                                <div class="row g-3 mt-2">
+                                    {% set bools = [
+                                        ('paragraphMode', 'paragraph_mode', 'Paragraph-Modus'),
+                                        ('rotationVariants', 'rotation_variants', '180°-Varianten prüfen'),
+                                        ('mergeFragments', 'merge_fragments', 'OCR-Fragmente zusammenführen'),
+                                        ('uppercaseOutput', 'uppercase_output', 'Großschreibung erzwingen'),
+                                        ('useAllowlist', 'use_allowlist', 'Zeichenfilter als EasyOCR-Allowlist nutzen')
+                                    ] %}
+                                    {% for el_id, key, label in bools %}
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="{{ el_id }}" {% if config.ocr[key] is not defined or config.ocr[key] %}checked{% endif %}>
+                                            <label class="form-check-label" for="{{ el_id }}">{{ label }}</label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+
                             <div class="d-flex gap-2 mt-4">
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save me-2"></i>Speichern
@@ -747,6 +920,46 @@
                                 </div>
                             </div>
                             
+                            <div class="setting-group settings-pro-section">
+                                <div class="setting-group-title"><i class="fas fa-camera-retro"></i>Feinabstimmung Bildpipeline</div>
+                                <div class="settings-pro-grid">
+                                    <div>
+                                        <label class="form-label">CLAHE Clip Limit</label>
+                                        <input type="number" class="form-control" id="claheClipLimit" min="0.5" max="10" step="0.1" value="{{ config.ocr.preprocessing.clahe_clip_limit if config.ocr.preprocessing.clahe_clip_limit is defined else 3.0 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">CLAHE Raster</label>
+                                        <input type="number" class="form-control" id="claheTileGrid" min="2" max="16" value="{{ config.ocr.preprocessing.clahe_tile_grid if config.ocr.preprocessing.clahe_tile_grid is defined else 8 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Rauschfilter-Stärke</label>
+                                        <input type="number" class="form-control" id="denoiseStrength" min="0" max="30" value="{{ config.ocr.preprocessing.denoise_strength if config.ocr.preprocessing.denoise_strength is defined else 10 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Threshold Block Size</label>
+                                        <input type="number" class="form-control" id="thresholdBlockSize" min="3" max="51" step="2" value="{{ config.ocr.preprocessing.threshold_block_size if config.ocr.preprocessing.threshold_block_size is defined else 11 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Threshold C</label>
+                                        <input type="number" class="form-control" id="thresholdC" min="-20" max="20" value="{{ config.ocr.preprocessing.threshold_c if config.ocr.preprocessing.threshold_c is defined else 2 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Gamma</label>
+                                        <input type="number" class="form-control" id="gammaValue" min="0.2" max="5" step="0.1" value="{{ config.ocr.preprocessing.gamma if config.ocr.preprocessing.gamma is defined else 1.2 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Rand um Kennzeichen (px)</label>
+                                        <input type="number" class="form-control" id="borderPadding" min="0" max="60" value="{{ config.ocr.preprocessing.border_padding if config.ocr.preprocessing.border_padding is defined else 6 }}">
+                                    </div>
+                                </div>
+                                <div class="row g-3 mt-2">
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="gammaCorrection" {% if config.ocr.preprocessing.gamma_correction is defined and config.ocr.preprocessing.gamma_correction %}checked{% endif %}><label class="form-check-label" for="gammaCorrection">Gamma-Korrektur</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="invertVariant" {% if config.ocr.preprocessing.invert_variant is not defined or config.ocr.preprocessing.invert_variant %}checked{% endif %}><label class="form-check-label" for="invertVariant">Invertierte Variante</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="bilateralFilter" {% if config.ocr.preprocessing.bilateral_filter is defined and config.ocr.preprocessing.bilateral_filter %}checked{% endif %}><label class="form-check-label" for="bilateralFilter">Bilateralfilter</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="perspectiveCorrection" {% if config.ocr.preprocessing.perspective_correction is defined and config.ocr.preprocessing.perspective_correction %}checked{% endif %}><label class="form-check-label" for="perspectiveCorrection">Perspektive vorbereiten</label></div></div>
+                                </div>
+                            </div>
+
                             <div class="d-flex gap-2 mt-4">
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save me-2"></i>Speichern
@@ -854,6 +1067,44 @@
                                 </div>
                             </div>
                             
+                            <div class="setting-group settings-pro-section">
+                                <div class="setting-group-title"><i class="fas fa-layer-group"></i>Erweiterte Historie & Qualität</div>
+                                <div class="settings-pro-grid">
+                                    <div>
+                                        <label class="form-label">Fuzzy-Duplikat Ähnlichkeit</label>
+                                        <input type="number" class="form-control" id="fuzzyDuplicateSimilarity" min="0.5" max="1" step="0.01" value="{{ config.history.fuzzy_duplicate_similarity if config.history.fuzzy_duplicate_similarity is defined else 0.88 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Besuchslücke (Minuten)</label>
+                                        <input type="number" class="form-control" id="historyVisitGapMinutes" min="1" max="240" value="{{ config.history.visit_gap_minutes if config.history.visit_gap_minutes is defined else 15 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Cleanup nach Tagen</label>
+                                        <input type="number" class="form-control" id="historyCleanupDays" min="1" max="3650" value="{{ config.history.cleanup_days if config.history.cleanup_days is defined else 365 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Niedrige Confidence markieren ab</label>
+                                        <input type="number" class="form-control" id="lowConfidenceThreshold" min="0" max="1" step="0.01" value="{{ config.history.low_confidence_threshold if config.history.low_confidence_threshold is defined else 0.45 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Export Standardformat</label>
+                                        {% set hist_fmt = config.history.export_default_format if config.history.export_default_format is defined else 'csv' %}
+                                        <select class="form-select" id="historyExportDefaultFormat">
+                                            <option value="csv" {% if hist_fmt == 'csv' %}selected{% endif %}>CSV</option>
+                                            <option value="json" {% if hist_fmt == 'json' %}selected{% endif %}>JSON</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="row g-3 mt-2">
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="fuzzyDuplicateDetection" {% if config.history.fuzzy_duplicate_detection is not defined or config.history.fuzzy_duplicate_detection %}checked{% endif %}><label class="form-check-label" for="fuzzyDuplicateDetection">Fuzzy-Duplikate</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="storeRawOcr" {% if config.history.store_raw_ocr is not defined or config.history.store_raw_ocr %}checked{% endif %}><label class="form-check-label" for="storeRawOcr">OCR-Rohtext speichern</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="storeCandidates" {% if config.history.store_candidates is not defined or config.history.store_candidates %}checked{% endif %}><label class="form-check-label" for="storeCandidates">Kandidaten speichern</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="storeLocationData" {% if config.history.store_location_data is not defined or config.history.store_location_data %}checked{% endif %}><label class="form-check-label" for="storeLocationData">Positionsdaten speichern</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="groupByVisit" {% if config.history.group_by_visit is not defined or config.history.group_by_visit %}checked{% endif %}><label class="form-check-label" for="groupByVisit">Nach Besuch gruppieren</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="autoCleanupHistory" {% if config.history.auto_cleanup_enabled is defined and config.history.auto_cleanup_enabled %}checked{% endif %}><label class="form-check-label" for="autoCleanupHistory">Auto-Cleanup</label></div></div>
+                                </div>
+                            </div>
+
                             <div class="d-flex gap-2 mt-4">
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save me-2"></i>Speichern
@@ -936,6 +1187,27 @@
                                 </div>
                             </div>
                             
+                            <div class="setting-group settings-pro-section">
+                                <div class="setting-group-title"><i class="fas fa-box-archive"></i>Erweiterte Speicherverwaltung</div>
+                                <div class="settings-pro-grid">
+                                    <div><label class="form-label">JPEG Qualität Kennzeichen</label><input type="number" class="form-control" id="jpegQualityPlate" min="40" max="100" value="{{ config.storage.jpeg_quality_plate if config.storage is defined and config.storage.jpeg_quality_plate is defined else 95 }}"></div>
+                                    <div><label class="form-label">JPEG Qualität Fahrzeuge</label><input type="number" class="form-control" id="jpegQualityVehicle" min="40" max="100" value="{{ config.storage.jpeg_quality_vehicle if config.storage is defined and config.storage.jpeg_quality_vehicle is defined else 90 }}"></div>
+                                    <div><label class="form-label">JPEG Qualität Frames</label><input type="number" class="form-control" id="jpegQualityFrame" min="40" max="100" value="{{ config.storage.jpeg_quality_frame if config.storage is defined and config.storage.jpeg_quality_frame is defined else 88 }}"></div>
+                                    <div><label class="form-label">Bild-Cleanup nach Tagen</label><input type="number" class="form-control" id="cleanupImagesDays" min="1" max="3650" value="{{ config.storage.cleanup_images_days if config.storage is defined and config.storage.cleanup_images_days is defined else 90 }}"></div>
+                                    <div><label class="form-label">Max. Speicher MB</label><input type="number" class="form-control" id="maxStorageMb" min="0" max="100000" value="{{ config.storage.max_storage_mb if config.storage is defined and config.storage.max_storage_mb is defined else 0 }}"><small class="text-secondary">0 = kein Limit</small></div>
+                                    <div><label class="form-label">Thumbnail Breite</label><input type="number" class="form-control" id="thumbnailWidth" min="80" max="1280" value="{{ config.storage.thumbnail_width if config.storage is defined and config.storage.thumbnail_width is defined else 320 }}"></div>
+                                </div>
+                                <div class="mt-3"><label class="form-label">Dateiname-Muster</label><input type="text" class="form-control" id="filenamePattern" value="{{ config.storage.filename_pattern if config.storage is defined and config.storage.filename_pattern is defined else '{date}_{time}_{plate}_{confidence}' }}"></div>
+                                <div class="row g-3 mt-2">
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="createDailyFolders" {% if config.storage is not defined or config.storage.create_daily_folders is not defined or config.storage.create_daily_folders %}checked{% endif %}><label class="form-check-label" for="createDailyFolders">Tagesordner</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="saveMetadataJson" {% if config.storage is not defined or config.storage.save_metadata_json is not defined or config.storage.save_metadata_json %}checked{% endif %}><label class="form-check-label" for="saveMetadataJson">Metadata JSON</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="autoCleanupImages" {% if config.storage is defined and config.storage.auto_cleanup_images %}checked{% endif %}><label class="form-check-label" for="autoCleanupImages">Bilder automatisch bereinigen</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="compressExports" {% if config.storage is defined and config.storage.compress_exports %}checked{% endif %}><label class="form-check-label" for="compressExports">Exporte komprimieren</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="includeThumbnails" {% if config.storage is not defined or config.storage.include_thumbnails is not defined or config.storage.include_thumbnails %}checked{% endif %}><label class="form-check-label" for="includeThumbnails">Thumbnails erstellen</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="separateUnknownFolder" {% if config.storage is not defined or config.storage.separate_unknown_folder is not defined or config.storage.separate_unknown_folder %}checked{% endif %}><label class="form-check-label" for="separateUnknownFolder">Unbekannte separat</label></div></div>
+                                </div>
+                            </div>
+
                             <div class="d-flex gap-2 mt-4">
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save me-2"></i>Speichern
@@ -1062,13 +1334,16 @@
                                         <select class="form-select" id="language">
                                             <option value="de" {{ 'selected' if config.general.language == 'de' else '' }}>Deutsch</option>
                                             <option value="en" {{ 'selected' if config.general.language == 'en' else '' }}>English</option>
+                                            <option value="fr" {{ 'selected' if config.general.language == 'fr' else '' }}>Français</option>
+                                            <option value="it" {{ 'selected' if config.general.language == 'it' else '' }}>Italiano</option>
                                         </select>
                                     </div>
                                     <div class="col-md-6">
                                         <label class="form-label">Theme</label>
                                         <select class="form-select" id="theme">
                                             <option value="dark" {{ 'selected' if config.general.theme == 'dark' else '' }}>Dunkel</option>
-                                            <option value="light" {{ 'selected' if config.general.theme == 'light' else '' }}>Hell (kommt bald)</option>
+                                            <option value="light" {{ 'selected' if config.general.theme == 'light' else '' }}>Hell</option>
+                                            <option value="auto" {{ 'selected' if config.general.theme == 'auto' else '' }}>Automatisch</option>
                                         </select>
                                     </div>
                                 </div>
@@ -1106,6 +1381,24 @@
                                 </div>
                             </div>
                             
+                            <div class="setting-group settings-pro-section">
+                                <div class="setting-group-title"><i class="fas fa-gears"></i>Erweiterte Allgemein-Einstellungen</div>
+                                <div class="settings-pro-grid">
+                                    <div><label class="form-label">Zeitzone</label><input type="text" class="form-control" id="timezone" value="{{ config.general.timezone if config.general.timezone is defined else 'Europe/Zurich' }}"></div>
+                                    <div><label class="form-label">Datumsformat</label><input type="text" class="form-control" id="dateFormat" value="{{ config.general.date_format if config.general.date_format is defined else 'dd.mm.yyyy HH:MM' }}"></div>
+                                    <div><label class="form-label">Startseite</label>{% set start_page = config.general.startup_page if config.general.startup_page is defined else 'dashboard' %}<select class="form-select" id="startupPage">{% for page_value, page_label in [('dashboard','Dashboard'),('live','Live'),('history','Historie'),('statistics','Statistik'),('search','Suche')] %}<option value="{{ page_value }}" {% if start_page == page_value %}selected{% endif %}>{{ page_label }}</option>{% endfor %}</select></div>
+                                    <div><label class="form-label">Log-Level</label>{% set log_level = config.general.log_level if config.general.log_level is defined else 'INFO' %}<select class="form-select" id="logLevel">{% for l in ['DEBUG','INFO','WARNING','ERROR'] %}<option value="{{ l }}" {% if log_level == l %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+                                    <div><label class="form-label">Standortname</label><input type="text" class="form-control" id="siteName" value="{{ config.general.site_name if config.general.site_name is defined else 'PlateVision Standort' }}"></div>
+                                    <div><label class="form-label">Bediener/Owner</label><input type="text" class="form-control" id="operatorName" value="{{ config.general.operator_name if config.general.operator_name is defined else '' }}"></div>
+                                </div>
+                                <div class="row g-3 mt-2">
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="time24h" {% if config.general.time_24h is not defined or config.general.time_24h %}checked{% endif %}><label class="form-check-label" for="time24h">24h Zeit</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="autoRefreshEnabled" {% if config.general.auto_refresh_enabled is not defined or config.general.auto_refresh_enabled %}checked{% endif %}><label class="form-check-label" for="autoRefreshEnabled">Auto-Refresh</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="accessibilityMode" {% if config.general.accessibility_mode is defined and config.general.accessibility_mode %}checked{% endif %}><label class="form-check-label" for="accessibilityMode">Barrierearm</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="compactNumbers" {% if config.general.compact_numbers is defined and config.general.compact_numbers %}checked{% endif %}><label class="form-check-label" for="compactNumbers">Kompakte Zahlen</label></div></div>
+                                </div>
+                            </div>
+
                             <div class="d-flex gap-2 mt-4">
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save me-2"></i>Speichern
@@ -1137,17 +1430,40 @@
                             
                             <div class="mb-3">
                                 <label class="form-label">Fahrzeug-Detektor (YOLOv8)</label>
-                                <input type="text" class="form-control" id="vehicleModel" readonly
+                                <input type="text" class="form-control" id="vehicleModel"
                                        value="{{ config.models.vehicle_detector }}">
                             </div>
                             
                             <div class="mb-3">
                                 <label class="form-label">Kennzeichen-Detektor</label>
-                                <input type="text" class="form-control" id="licenseModel" readonly
+                                <input type="text" class="form-control" id="licenseModel"
                                        value="{{ config.models.license_plate_detector }}">
                             </div>
                         </div>
                         
+                        <form id="modelsForm">
+                        <div class="setting-group settings-pro-section">
+                            <div class="setting-group-title"><i class="fas fa-microchip"></i>Modell-Laufzeit</div>
+                            <div class="settings-pro-grid">
+                                <div><label class="form-label">Gerät</label>{% set model_device = config.models.device if config.models.device is defined else 'auto' %}<select class="form-select" id="modelDevice">{% for d in ['auto','cpu','cuda','mps'] %}<option value="{{ d }}" {% if model_device == d %}selected{% endif %}>{{ d }}</option>{% endfor %}</select></div>
+                                <div><label class="form-label">Modellgröße Hinweis</label>{% set size_hint = config.models.model_size_hint if config.models.model_size_hint is defined else 'nano' %}<select class="form-select" id="modelSizeHint">{% for d in ['nano','small','medium','large','custom'] %}<option value="{{ d }}" {% if size_hint == d %}selected{% endif %}>{{ d }}</option>{% endfor %}</select></div>
+                                <div><label class="form-label">Custom Modellordner</label><input type="text" class="form-control" id="customModelDirectory" value="{{ config.models.custom_model_directory if config.models.custom_model_directory is defined else 'models' }}"></div>
+                                <div><label class="form-label">Fahrzeug Labels</label><input type="text" class="form-control" id="vehicleModelLabels" value="{{ config.models.vehicle_model_labels if config.models.vehicle_model_labels is defined else 'COCO' }}"></div>
+                                <div><label class="form-label">Kennzeichen Labels</label><input type="text" class="form-control" id="plateModelLabels" value="{{ config.models.plate_model_labels if config.models.plate_model_labels is defined else 'license_plate' }}"></div>
+                            </div>
+                            <div class="row g-3 mt-2">
+                                <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="autoReloadOnChange" {% if config.models.auto_reload_on_change is defined and config.models.auto_reload_on_change %}checked{% endif %}><label class="form-check-label" for="autoReloadOnChange">Auto Reload</label></div></div>
+                                <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="warmupOnStart" {% if config.models.warmup_on_start is not defined or config.models.warmup_on_start %}checked{% endif %}><label class="form-check-label" for="warmupOnStart">Warmup beim Start</label></div></div>
+                                <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="halfPrecision" {% if config.models.half_precision is defined and config.models.half_precision %}checked{% endif %}><label class="form-check-label" for="halfPrecision">FP16</label></div></div>
+                                <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="fallbackToCpu" {% if config.models.fallback_to_cpu is not defined or config.models.fallback_to_cpu %}checked{% endif %}><label class="form-check-label" for="fallbackToCpu">CPU Fallback</label></div></div>
+                            </div>
+                            <div class="d-flex gap-2 mt-3">
+                                <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Modelle speichern</button>
+                                <button type="button" class="btn btn-outline-warning" onclick="saveModelSettings(true)"><i class="fas fa-sync me-2"></i>Speichern & neu laden</button>
+                            </div>
+                        </div>
+                        </form>
+
                         <!-- Modell-Status -->
                         <div class="setting-group">
                             <div class="setting-group-title">
@@ -1181,6 +1497,305 @@
             <!-- ============================================ -->
             <!-- ÜBER -->
             <!-- ============================================ -->
+            <!-- Kennzeichen Pro Settings -->
+            <div class="tab-pane fade" id="plateRecognition" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0"><i class="fas fa-id-card text-primary me-2"></i>Kennzeichen-Erkennung Pro</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="plateRecognitionForm">
+                            <div class="setting-group">
+                                <div class="setting-group-title"><i class="fas fa-globe-europe"></i>Länder- und Formatlogik</div>
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Länder-Hinweis</label>
+                                        <select class="form-select" id="countryHint">
+                                            {% set country_hint = config.plate_recognition.country_hint if config.plate_recognition is defined and config.plate_recognition.country_hint is defined else 'auto' %}
+                                            {% for c in ['auto', 'CH', 'FL', 'DE', 'AT', 'FR', 'IT'] %}
+                                            <option value="{{ c }}" {% if country_hint == c %}selected{% endif %}>{{ c }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Min. Zeichen</label>
+                                        <input type="number" class="form-control" id="plateMinLength" min="1" max="20" value="{{ config.plate_recognition.min_length if config.plate_recognition is defined and config.plate_recognition.min_length is defined else 3 }}">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Max. Zeichen</label>
+                                        <input type="number" class="form-control" id="plateMaxLength" min="1" max="30" value="{{ config.plate_recognition.max_length if config.plate_recognition is defined and config.plate_recognition.max_length is defined else 12 }}">
+                                    </div>
+                                </div>
+                                <div class="mt-3">
+                                    <label class="form-label">Validierungs-RegEx optional</label>
+                                    <input type="text" class="form-control" id="validationRegex" placeholder="z.B. ^[A-Z]{2}[0-9]{3,6}$" value="{{ config.plate_recognition.validation_regex if config.plate_recognition is defined and config.plate_recognition.validation_regex is defined else '' }}">
+                                </div>
+                            </div>
+
+                            <div class="setting-group">
+                                <div class="setting-group-title"><i class="fas fa-wand-magic-sparkles"></i>OCR-Korrektur und Watchlist</div>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="smartOcrCorrection" {% if config.plate_recognition is defined and config.plate_recognition.smart_ocr_correction %}checked{% endif %}>
+                                            <label class="form-check-label" for="smartOcrCorrection">Smarte OCR-Korrektur aktivieren</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="formatPrettyOutput" {% if config.plate_recognition is defined and config.plate_recognition.format_pretty_output %}checked{% endif %}>
+                                            <label class="form-check-label" for="formatPrettyOutput">Kennzeichen formatiert anzeigen</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="saveLowConfidenceCandidates" {% if config.plate_recognition is defined and config.plate_recognition.save_low_confidence_candidates %}checked{% endif %}>
+                                            <label class="form-check-label" for="saveLowConfidenceCandidates">Niedrige Kandidaten speichern</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="watchlistEnabled" {% if config.plate_recognition is defined and config.plate_recognition.watchlist_enabled %}checked{% endif %}>
+                                            <label class="form-check-label" for="watchlistEnabled">Watchlist aktivieren</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="info-box"><i class="fas fa-info-circle me-2"></i>Alle ursprünglichen OCR- und Erkennungs-Einstellungen bleiben links in den Original-Tabs erhalten. Diese Optionen erweitern nur die neue Kennzeichenlogik.</div>
+                            </div>
+                            <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Kennzeichen-Pro speichern</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search Settings -->
+            <div class="tab-pane fade" id="searchSettings" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0"><i class="fas fa-search-plus text-info me-2"></i>Suchfunktionen</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="searchForm">
+                            <div class="setting-group">
+                                <div class="setting-group-title"><i class="fas fa-filter"></i>Filter & Suche</div>
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Standard-Limit</label>
+                                        <input type="number" class="form-control" id="searchDefaultLimit" min="1" max="10000" value="{{ config.search.default_limit if config.search is defined and config.search.default_limit is defined else 50 }}">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Fuzzy-Ähnlichkeit</label>
+                                        <input type="number" class="form-control" id="searchFuzzySimilarity" min="0" max="1" step="0.01" value="{{ config.search.fuzzy_similarity if config.search is defined and config.search.fuzzy_similarity is defined else 0.72 }}">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Schnellzugriff</label><br>
+                                        <a href="/search" class="btn btn-outline-info"><i class="fas fa-search me-2"></i>Suche öffnen</a>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="enableFuzzySearch" {% if config.search is defined and config.search.enable_fuzzy_search %}checked{% endif %}>
+                                            <label class="form-check-label" for="enableFuzzySearch">Fuzzy-Suche aktivieren</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="allowRegexSearch" {% if config.search is defined and config.search.allow_regex_search %}checked{% endif %}>
+                                            <label class="form-check-label" for="allowRegexSearch">RegEx-Suche erlauben</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="rememberLastFilters" {% if config.search is defined and config.search.remember_last_filters %}checked{% endif %}>
+                                            <label class="form-check-label" for="rememberLastFilters">Letzte Filter merken</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Suche speichern</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Traffic Settings -->
+            <div class="tab-pane fade" id="trafficSettings" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0"><i class="fas fa-road text-success me-2"></i>Statistik / Verkehr</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="trafficForm">
+                            <div class="setting-group">
+                                <div class="setting-group-title"><i class="fas fa-car-side"></i>Besuche und Tageszählung</div>
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Besuchslücke Minuten</label>
+                                        <input type="number" class="form-control" id="visitGapMinutes" min="1" max="1440" value="{{ config.traffic.visit_gap_minutes if config.traffic is defined and config.traffic.visit_gap_minutes is defined else 15 }}">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Geparkt/aktiv Timeout Minuten</label>
+                                        <input type="number" class="form-control" id="activeTimeoutMinutes" min="1" max="1440" value="{{ config.traffic.active_timeout_minutes if config.traffic is defined and config.traffic.active_timeout_minutes is defined else 30 }}">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Min. Statistik-Konfidenz</label>
+                                        <input type="number" class="form-control" id="trafficMinConfidence" min="0" max="1" step="0.01" value="{{ config.traffic.min_confidence if config.traffic is defined and config.traffic.min_confidence is defined else 0 }}">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Tageszählung</label>
+                                        {% set daily_count_mode = config.traffic.daily_count_mode if config.traffic is defined and config.traffic.daily_count_mode is defined else 'visits' %}
+                                        <select class="form-select" id="dailyCountMode">
+                                            <option value="visits" {% if daily_count_mode == 'visits' %}selected{% endif %}>Besuche</option>
+                                            <option value="detections" {% if daily_count_mode == 'detections' %}selected{% endif %}>Erkennungen</option>
+                                            <option value="unique_vehicles" {% if daily_count_mode == 'unique_vehicles' %}selected{% endif %}>Eindeutige Fahrzeuge</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Kommen/Gehen-Modus</label>
+                                        {% set direction_mode = config.traffic.direction_mode if config.traffic is defined and config.traffic.direction_mode is defined else 'auto' %}
+                                        <select class="form-select" id="directionMode">
+                                            {% for mode in ['auto', 'explicit', 'spatial', 'timeout'] %}
+                                            <option value="{{ mode }}" {% if direction_mode == mode %}selected{% endif %}>{{ mode }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Bewegungsachse</label>
+                                        {% set movement_axis = config.traffic.movement_axis if config.traffic is defined and config.traffic.movement_axis is defined else 'x' %}
+                                        <select class="form-select" id="movementAxis">
+                                            <option value="x" {% if movement_axis == 'x' %}selected{% endif %}>X / horizontal</option>
+                                            <option value="y" {% if movement_axis == 'y' %}selected{% endif %}>Y / vertikal</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Bewegungs-Schwelle %</label>
+                                        <input type="number" class="form-control" id="movementThresholdPercent" min="0" max="100" value="{{ config.traffic.movement_threshold_percent if config.traffic is defined and config.traffic.movement_threshold_percent is defined else 8 }}">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Ankunftslabel</label>
+                                        <input type="text" class="form-control" id="arrivalLabel" value="{{ config.traffic.arrival_label if config.traffic is defined and config.traffic.arrival_label is defined else 'gekommen' }}">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Abfahrtslabel</label>
+                                        <input type="text" class="form-control" id="departureLabel" value="{{ config.traffic.departure_label if config.traffic is defined and config.traffic.departure_label is defined else 'gegangen' }}">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="ignoreUnknownPlates" {% if config.traffic is defined and config.traffic.ignore_unknown_plates %}checked{% endif %}>
+                                            <label class="form-check-label" for="ignoreUnknownPlates">Unbekannte/zu kurze Kennzeichen ignorieren</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="includeDuplicateEvents" {% if config.traffic is defined and config.traffic.include_duplicate_events %}checked{% endif %}>
+                                            <label class="form-check-label" for="includeDuplicateEvents">Duplikat-Erkennungen mitzählen</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="warning-box"><i class="fas fa-exclamation-triangle me-2"></i>Eine sichere Kommen/Gehen-Erkennung benötigt Richtungssignal, klare Bewegung im Bild oder zwei Kameras. Ohne das wird der Abgang über Timeout nur geschätzt.</div>
+                            </div>
+                            <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Verkehrsstatistik speichern</button>
+                            <a href="/statistics" class="btn btn-outline-success ms-2"><i class="fas fa-chart-bar me-2"></i>Statistik öffnen</a>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard / UI Settings -->
+            <div class="tab-pane fade" id="dashboardUiSettings" role="tabpanel">
+                <div class="row">
+                    <div class="col-lg-6">
+                        <div class="card">
+                            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-chart-line text-primary me-2"></i>Dashboard</h5></div>
+                            <div class="card-body">
+                                <form id="dashboardForm">
+                                    <div class="setting-group">
+                                        <label class="form-label">Auto-Refresh Sekunden</label>
+                                        <input type="number" class="form-control" id="autoRefreshSeconds" min="0" max="3600" value="{{ config.dashboard.auto_refresh_seconds if config.dashboard is defined and config.dashboard.auto_refresh_seconds is defined else 10 }}">
+                                        <label class="form-label mt-3">Standard-Zeitraum Tage</label>
+                                        <input type="number" class="form-control" id="defaultRangeDays" min="1" max="365" value="{{ config.dashboard.default_range_days if config.dashboard is defined and config.dashboard.default_range_days is defined else 7 }}">
+                                        <hr>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="showConfidenceChart" {% if config.dashboard is defined and config.dashboard.show_confidence_chart %}checked{% endif %}><label class="form-check-label" for="showConfidenceChart">Konfidenz-Chart anzeigen</label></div>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="showHourlyChart" {% if config.dashboard is defined and config.dashboard.show_hourly_chart %}checked{% endif %}><label class="form-check-label" for="showHourlyChart">Stunden-Chart anzeigen</label></div>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="showWatchlist" {% if config.dashboard is defined and config.dashboard.show_watchlist %}checked{% endif %}><label class="form-check-label" for="showWatchlist">Watchlist anzeigen</label></div>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="showStorage" {% if config.dashboard is defined and config.dashboard.show_storage %}checked{% endif %}><label class="form-check-label" for="showStorage">Speicher anzeigen</label></div>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="compactMode" {% if config.dashboard is defined and config.dashboard.compact_mode %}checked{% endif %}><label class="form-check-label" for="compactMode">Kompakter Modus</label></div>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Dashboard speichern</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="card">
+                            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-palette text-info me-2"></i>Layout</h5></div>
+                            <div class="card-body">
+                                <form id="uiForm">
+                                    <div class="setting-group">
+                                        <label class="form-label">Akzentfarbe</label>
+                                        <input type="color" class="form-control form-control-color" id="accentColor" value="{{ config.ui.accent_color if config.ui is defined and config.ui.accent_color is defined else '#6366f1' }}">
+                                        <label class="form-label mt-3">Dichte</label>
+                                        {% set density = config.ui.density if config.ui is defined and config.ui.density is defined else 'comfortable' %}
+                                        <select class="form-select" id="density"><option value="compact" {% if density == 'compact' %}selected{% endif %}>Kompakt</option><option value="comfortable" {% if density == 'comfortable' %}selected{% endif %}>Normal</option><option value="spacious" {% if density == 'spacious' %}selected{% endif %}>Grosszügig</option></select>
+                                        <label class="form-label mt-3">Kartenstil</label>
+                                        {% set card_style = config.ui.card_style if config.ui is defined and config.ui.card_style is defined else 'glass' %}
+                                        <select class="form-select" id="cardStyle"><option value="flat" {% if card_style == 'flat' %}selected{% endif %}>Flach</option><option value="glass" {% if card_style == 'glass' %}selected{% endif %}>Glass</option><option value="bordered" {% if card_style == 'bordered' %}selected{% endif %}>Rahmen</option></select>
+                                        <hr>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="animations" {% if config.ui is defined and config.ui.animations %}checked{% endif %}><label class="form-check-label" for="animations">Animationen</label></div>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="sidebarLabels" {% if config.ui is defined and config.ui.sidebar_labels %}checked{% endif %}><label class="form-check-label" for="sidebarLabels">Sidebar-Beschriftungen</label></div>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="showHelpText" {% if config.ui is defined and config.ui.show_help_text %}checked{% endif %}><label class="form-check-label" for="showHelpText">Hilfetexte anzeigen</label></div>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Layout speichern</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Privacy / Alerts Settings -->
+            <div class="tab-pane fade" id="privacyAlerts" role="tabpanel">
+                <div class="row">
+                    <div class="col-lg-6">
+                        <div class="card">
+                            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-shield-alt text-warning me-2"></i>Datenschutz</h5></div>
+                            <div class="card-body">
+                                <form id="privacyForm">
+                                    <div class="setting-group">
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="maskPlateNumbers" {% if config.privacy is defined and config.privacy.mask_plate_numbers %}checked{% endif %}><label class="form-check-label" for="maskPlateNumbers">Kennzeichen maskieren</label></div>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="blurPlateImages" {% if config.privacy is defined and config.privacy.blur_plate_images %}checked{% endif %}><label class="form-check-label" for="blurPlateImages">Kennzeichenbilder weichzeichnen</label></div>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="exportIncludeImages" {% if config.privacy is defined and config.privacy.export_include_images %}checked{% endif %}><label class="form-check-label" for="exportIncludeImages">Bilder in Exporten erlauben</label></div>
+                                        <label class="form-label mt-3">Aufbewahrung Tage (0 = unbegrenzt)</label>
+                                        <input type="number" class="form-control" id="retentionDays" min="0" max="3650" value="{{ config.privacy.retention_days if config.privacy is defined and config.privacy.retention_days is defined else 0 }}">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Datenschutz speichern</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="card">
+                            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-bell text-danger me-2"></i>Alerts & Integration</h5></div>
+                            <div class="card-body">
+                                <form id="alertsForm">
+                                    <div class="setting-group">
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="watchlistNotifications" {% if config.alerts is defined and config.alerts.watchlist_notifications %}checked{% endif %}><label class="form-check-label" for="watchlistNotifications">Watchlist-Benachrichtigungen</label></div>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="unknownPlateNotifications" {% if config.alerts is defined and config.alerts.unknown_plate_notifications %}checked{% endif %}><label class="form-check-label" for="unknownPlateNotifications">Unbekannte Kennzeichen melden</label></div>
+                                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="lowConfidenceNotifications" {% if config.alerts is defined and config.alerts.low_confidence_notifications %}checked{% endif %}><label class="form-check-label" for="lowConfidenceNotifications">Niedrige Konfidenz melden</label></div>
+                                        <label class="form-label mt-3">Min. Alert-Konfidenz</label>
+                                        <input type="number" class="form-control" id="minAlertConfidence" min="0" max="1" step="0.01" value="{{ config.alerts.min_alert_confidence if config.alerts is defined and config.alerts.min_alert_confidence is defined else 0.65 }}">
+                                        <label class="form-label mt-3">Webhook URL</label>
+                                        <input type="url" class="form-control" id="webhookUrl" value="{{ config.alerts.webhook_url if config.alerts is defined and config.alerts.webhook_url is defined else '' }}">
+                                        <label class="form-label mt-3">MQTT Topic Prefix</label>
+                                        <input type="text" class="form-control" id="mqttTopicPrefix" value="{{ config.alerts.mqtt_topic_prefix if config.alerts is defined and config.alerts.mqtt_topic_prefix is defined else 'platevision' }}">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Alerts speichern</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="tab-pane fade" id="about" role="tabpanel">
                 <div class="card">
                     <div class="card-body text-center py-5">
@@ -1195,7 +1810,7 @@
                                 <table class="table table-sm text-start">
                                     <tr>
                                         <td class="text-secondary">Version</td>
-                                        <td class="fw-bold">0.4.2</td>
+                                        <td class="fw-bold">0.7.2 ProTraffic Plus</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">YOLO Version</td>
@@ -1233,6 +1848,25 @@
                             </div>
                         </div>
                         
+                        <div class="mt-4 text-start mx-auto" style="max-width: 760px;">
+                            <form id="aboutForm">
+                                <div class="setting-group settings-pro-section">
+                                    <div class="setting-group-title"><i class="fas fa-circle-info"></i>Über-Seite & Support</div>
+                                    <div class="settings-pro-grid">
+                                        <div><label class="form-label">Release-Kanal</label>{% set release_channel = config.about.release_channel if config.about is defined and config.about.release_channel is defined else 'stable' %}<select class="form-select" id="releaseChannel">{% for c in ['stable','beta','dev'] %}<option value="{{ c }}" {% if release_channel == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></div>
+                                        <div><label class="form-label">Lizenzhinweis</label><input type="text" class="form-control" id="licenseNotice" value="{{ config.about.license_notice if config.about is defined and config.about.license_notice is defined else 'MIT' }}"></div>
+                                        <div><label class="form-label">Support URL</label><input type="url" class="form-control" id="supportUrl" value="{{ config.about.support_url if config.about is defined and config.about.support_url is defined else '' }}"></div>
+                                        <div><label class="form-label">Dokumentation URL</label><input type="url" class="form-control" id="documentationUrl" value="{{ config.about.documentation_url if config.about is defined and config.about.documentation_url is defined else '' }}"></div>
+                                    </div>
+                                    <div class="row g-3 mt-2">
+                                        <div class="col-md-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="showVersionBanner" {% if config.about is not defined or config.about.show_version_banner is not defined or config.about.show_version_banner %}checked{% endif %}><label class="form-check-label" for="showVersionBanner">Versionsbanner anzeigen</label></div></div>
+                                        <div class="col-md-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="showSystemLinks" {% if config.about is not defined or config.about.show_system_links is not defined or config.about.show_system_links %}checked{% endif %}><label class="form-check-label" for="showSystemLinks">Systemlinks anzeigen</label></div></div>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary mt-3"><i class="fas fa-save me-2"></i>Über-Einstellungen speichern</button>
+                                </div>
+                            </form>
+                        </div>
+
                         <div class="mt-5">
                             <a href="https://github.com" target="_blank" class="btn btn-outline-primary me-2">
                                 <i class="fab fa-github me-2"></i>GitHub
@@ -1363,7 +1997,17 @@
             zoom_factor: document.getElementById('zoomFactor').value / 10,
             zoom_padding: parseInt(document.getElementById('zoomPadding').value),
             min_plate_width: parseInt(document.getElementById('minPlateWidth').value),
-            min_plate_height: parseInt(document.getElementById('minPlateHeight').value)
+            min_plate_height: parseInt(document.getElementById('minPlateHeight').value),
+            plate_aspect_ratio_min: pvNum('plateAspectMin', 2.0),
+            plate_aspect_ratio_max: pvNum('plateAspectMax', 6.5),
+            vehicle_class_filter: Array.from(document.querySelectorAll('.vehicle-class-filter:checked')).map(el => el.value),
+            max_detections_per_frame: pvNum('maxDetectionsPerFrame', 8),
+            plate_detector_confidence_factor: pvNum('plateDetectorConfidenceFactor', 0.6),
+            annotate_frames: pvBool('annotateFrames'),
+            draw_confidence: pvBool('drawConfidence'),
+            scan_full_frame_when_vehicle_found: pvBool('scanFullFrameWhenVehicleFound'),
+            min_vehicle_width: pvNum('minVehicleWidth', 80),
+            min_vehicle_height: pvNum('minVehicleHeight', 60)
         };
         
         saveConfig('/api/config/detection', data, 'Erkennungs-Einstellungen');
@@ -1391,7 +2035,17 @@
             allowed_characters: document.getElementById('allowedChars').value,
             active_mode: document.getElementById('ocrMode').value,
             retry_on_fail: document.getElementById('retryOnFail').checked,
-            max_retries: parseInt(document.getElementById('maxRetries').value)
+            max_retries: parseInt(document.getElementById('maxRetries').value),
+            engine: pvStr('ocrEngine', 'easyocr'),
+            decoder: pvStr('ocrDecoder', 'greedy'),
+            paragraph_mode: pvBool('paragraphMode'),
+            rotation_variants: pvBool('rotationVariants'),
+            early_stop_confidence: pvNum('earlyStopConfidence', 0.85),
+            max_variants_to_read: pvNum('maxVariantsToRead', 8),
+            min_text_length: pvNum('ocrMinTextLength', 2),
+            merge_fragments: pvBool('mergeFragments'),
+            uppercase_output: pvBool('uppercaseOutput'),
+            use_allowlist: pvBool('useAllowlist')
         };
         
         saveConfig('/api/config/ocr', data, 'OCR-Einstellungen');
@@ -1412,7 +2066,18 @@
                 contrast_enhance: document.getElementById('contrastEnhance').checked,
                 adaptive_threshold: document.getElementById('adaptiveThreshold').checked,
                 deskew: document.getElementById('deskew').checked,
-                morphology: document.getElementById('morphology').checked
+                morphology: document.getElementById('morphology').checked,
+                gamma_correction: pvBool('gammaCorrection'),
+                gamma: pvNum('gammaValue', 1.2),
+                clahe_clip_limit: pvNum('claheClipLimit', 3.0),
+                clahe_tile_grid: pvNum('claheTileGrid', 8),
+                denoise_strength: pvNum('denoiseStrength', 10),
+                threshold_block_size: pvNum('thresholdBlockSize', 11),
+                threshold_c: pvNum('thresholdC', 2),
+                invert_variant: pvBool('invertVariant'),
+                bilateral_filter: pvBool('bilateralFilter'),
+                perspective_correction: pvBool('perspectiveCorrection'),
+                border_padding: pvNum('borderPadding', 6)
             }
         };
         
@@ -1428,7 +2093,19 @@
             duplicate_timeout: parseInt(document.getElementById('duplicateTimeout').value),
             min_confidence_to_save: document.getElementById('minConfidenceToSave').value / 100,
             save_vehicle_image: document.getElementById('saveVehicleImage').checked,
-            save_plate_image: document.getElementById('savePlateImage').checked
+            save_plate_image: document.getElementById('savePlateImage').checked,
+            fuzzy_duplicate_detection: pvBool('fuzzyDuplicateDetection'),
+            fuzzy_duplicate_similarity: pvNum('fuzzyDuplicateSimilarity', 0.88),
+            store_raw_ocr: pvBool('storeRawOcr'),
+            store_candidates: pvBool('storeCandidates'),
+            store_location_data: pvBool('storeLocationData'),
+            group_by_visit: pvBool('groupByVisit'),
+            visit_gap_minutes: pvNum('historyVisitGapMinutes', 15),
+            export_default_format: pvStr('historyExportDefaultFormat', 'csv'),
+            auto_cleanup_enabled: pvBool('autoCleanupHistory'),
+            cleanup_days: pvNum('historyCleanupDays', 365),
+            mark_low_confidence: true,
+            low_confidence_threshold: pvNum('lowConfidenceThreshold', 0.45)
         };
         
         saveConfig('/api/config/history', data, 'Historie-Einstellungen');
@@ -1449,6 +2126,27 @@
             })
         });
         
+        // Extended storage settings
+        fetch('/api/config/storage', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jpeg_quality_plate: pvNum('jpegQualityPlate', 95),
+                jpeg_quality_vehicle: pvNum('jpegQualityVehicle', 90),
+                jpeg_quality_frame: pvNum('jpegQualityFrame', 88),
+                create_daily_folders: pvBool('createDailyFolders'),
+                save_metadata_json: pvBool('saveMetadataJson'),
+                auto_cleanup_images: pvBool('autoCleanupImages'),
+                cleanup_images_days: pvNum('cleanupImagesDays', 90),
+                max_storage_mb: pvNum('maxStorageMb', 0),
+                compress_exports: pvBool('compressExports'),
+                include_thumbnails: pvBool('includeThumbnails'),
+                thumbnail_width: pvNum('thumbnailWidth', 320),
+                filename_pattern: pvStr('filenamePattern', '{date}_{time}_{plate}_{confidence}'),
+                separate_unknown_folder: pvBool('separateUnknownFolder')
+            })
+        });
+
         // General settings
         fetch('/api/config', {
             method: 'POST',
@@ -1472,7 +2170,17 @@
                 language: document.getElementById('language').value,
                 theme: document.getElementById('theme').value,
                 notification_enabled: document.getElementById('notifications').checked,
-                debug_mode: document.getElementById('debugMode').checked
+                debug_mode: document.getElementById('debugMode').checked,
+                timezone: pvStr('timezone', 'Europe/Zurich'),
+                date_format: pvStr('dateFormat', 'dd.mm.yyyy HH:MM'),
+                startup_page: pvStr('startupPage', 'dashboard'),
+                time_24h: pvBool('time24h'),
+                auto_refresh_enabled: pvBool('autoRefreshEnabled'),
+                log_level: pvStr('logLevel', 'INFO'),
+                accessibility_mode: pvBool('accessibilityMode'),
+                compact_numbers: pvBool('compactNumbers'),
+                site_name: pvStr('siteName', 'PlateVision Standort'),
+                operator_name: pvStr('operatorName', '')
             }
         };
         
@@ -1519,6 +2227,10 @@
         document.getElementById('historyForm').dispatchEvent(new Event('submit'));
         document.getElementById('storageForm').dispatchEvent(new Event('submit'));
         document.getElementById('generalForm').dispatchEvent(new Event('submit'));
+        ['plateRecognitionForm', 'searchForm', 'trafficForm', 'dashboardForm', 'uiForm', 'privacyForm', 'alertsForm', 'modelsForm', 'aboutForm'].forEach(function(formId) {
+            const form = document.getElementById(formId);
+            if (form) form.dispatchEvent(new Event('submit'));
+        });
     }
     
     function resetAllSettings() {
@@ -1548,7 +2260,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.4.2',
+                    version: '0.7.2-protraffic-plus-expanded-settings',
                     config: config
                 };
                 
@@ -1901,5 +2613,199 @@
             history.replaceState(null, null, e.target.getAttribute('href'));
         });
     });
+
+    // ============================================
+    // PROTRAFFIC / EXTENDED SETTINGS - additive only
+    // ============================================
+    function pvNum(id, fallback = 0) {
+        const el = document.getElementById(id);
+        if (!el) return fallback;
+        const value = Number(el.value);
+        return Number.isFinite(value) ? value : fallback;
+    }
+
+    function pvStr(id, fallback = '') {
+        const el = document.getElementById(id);
+        return el ? el.value : fallback;
+    }
+
+    function pvBool(id) {
+        const el = document.getElementById(id);
+        return !!(el && el.checked);
+    }
+
+    function saveAdvancedPayload(section, payload, endpoint) {
+        const body = endpoint === '/api/config/traffic' ? payload : { [section]: payload };
+        fetch(endpoint || '/api/config/advanced', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Erfolg', section + ' gespeichert', 'success');
+            } else {
+                showToast('Fehler', result.error || 'Speichern fehlgeschlagen', 'danger');
+            }
+        })
+        .catch(() => showToast('Fehler', 'Verbindungsfehler', 'danger'));
+    }
+
+    const plateRecognitionForm = document.getElementById('plateRecognitionForm');
+    if (plateRecognitionForm) plateRecognitionForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        saveAdvancedPayload('plate_recognition', {
+            country_hint: pvStr('countryHint', 'auto'),
+            min_length: pvNum('plateMinLength', 3),
+            max_length: pvNum('plateMaxLength', 12),
+            validation_regex: pvStr('validationRegex', ''),
+            smart_ocr_correction: pvBool('smartOcrCorrection'),
+            format_pretty_output: pvBool('formatPrettyOutput'),
+            save_low_confidence_candidates: pvBool('saveLowConfidenceCandidates'),
+            watchlist_enabled: pvBool('watchlistEnabled')
+        });
+    });
+
+    const searchForm = document.getElementById('searchForm');
+    if (searchForm) searchForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        saveAdvancedPayload('search', {
+            default_limit: pvNum('searchDefaultLimit', 50),
+            enable_fuzzy_search: pvBool('enableFuzzySearch'),
+            fuzzy_similarity: pvNum('searchFuzzySimilarity', 0.72),
+            allow_regex_search: pvBool('allowRegexSearch'),
+            remember_last_filters: pvBool('rememberLastFilters')
+        });
+    });
+
+    const trafficForm = document.getElementById('trafficForm');
+    if (trafficForm) trafficForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        saveAdvancedPayload('traffic', {
+            visit_gap_minutes: pvNum('visitGapMinutes', 15),
+            active_timeout_minutes: pvNum('activeTimeoutMinutes', 30),
+            daily_count_mode: pvStr('dailyCountMode', 'visits'),
+            direction_mode: pvStr('directionMode', 'auto'),
+            min_confidence: pvNum('trafficMinConfidence', 0),
+            ignore_unknown_plates: pvBool('ignoreUnknownPlates'),
+            include_duplicate_events: pvBool('includeDuplicateEvents'),
+            movement_axis: pvStr('movementAxis', 'x'),
+            movement_threshold_percent: pvNum('movementThresholdPercent', 8),
+            arrival_label: pvStr('arrivalLabel', 'gekommen'),
+            departure_label: pvStr('departureLabel', 'gegangen')
+        }, '/api/config/traffic');
+    });
+
+    const dashboardForm = document.getElementById('dashboardForm');
+    if (dashboardForm) dashboardForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        saveAdvancedPayload('dashboard', {
+            auto_refresh_seconds: pvNum('autoRefreshSeconds', 10),
+            show_confidence_chart: pvBool('showConfidenceChart'),
+            show_hourly_chart: pvBool('showHourlyChart'),
+            show_watchlist: pvBool('showWatchlist'),
+            show_storage: pvBool('showStorage'),
+            compact_mode: pvBool('compactMode'),
+            default_range_days: pvNum('defaultRangeDays', 7)
+        });
+    });
+
+    const uiForm = document.getElementById('uiForm');
+    if (uiForm) uiForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        saveAdvancedPayload('ui', {
+            accent_color: pvStr('accentColor', '#6366f1'),
+            density: pvStr('density', 'comfortable'),
+            animations: pvBool('animations'),
+            sidebar_labels: pvBool('sidebarLabels'),
+            card_style: pvStr('cardStyle', 'glass'),
+            show_help_text: pvBool('showHelpText')
+        });
+    });
+
+    const privacyForm = document.getElementById('privacyForm');
+    if (privacyForm) privacyForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        saveAdvancedPayload('privacy', {
+            mask_plate_numbers: pvBool('maskPlateNumbers'),
+            blur_plate_images: pvBool('blurPlateImages'),
+            retention_days: pvNum('retentionDays', 0),
+            export_include_images: pvBool('exportIncludeImages')
+        });
+    });
+
+    const alertsForm = document.getElementById('alertsForm');
+    if (alertsForm) alertsForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        saveAdvancedPayload('alerts', {
+            watchlist_notifications: pvBool('watchlistNotifications'),
+            unknown_plate_notifications: pvBool('unknownPlateNotifications'),
+            low_confidence_notifications: pvBool('lowConfidenceNotifications'),
+            min_alert_confidence: pvNum('minAlertConfidence', 0.65),
+            webhook_url: pvStr('webhookUrl', ''),
+            mqtt_topic_prefix: pvStr('mqttTopicPrefix', 'platevision')
+        });
+    });
+
+
+    function saveModelSettings(reloadModelsAfterSave = false) {
+        const payload = {
+            vehicle_detector: pvStr('vehicleModel', 'models/yolov8n.pt'),
+            license_plate_detector: pvStr('licenseModel', 'models/license_plate_detector.pt'),
+            device: pvStr('modelDevice', 'auto'),
+            model_size_hint: pvStr('modelSizeHint', 'nano'),
+            custom_model_directory: pvStr('customModelDirectory', 'models'),
+            vehicle_model_labels: pvStr('vehicleModelLabels', 'COCO'),
+            plate_model_labels: pvStr('plateModelLabels', 'license_plate'),
+            auto_reload_on_change: pvBool('autoReloadOnChange'),
+            warmup_on_start: pvBool('warmupOnStart'),
+            half_precision: pvBool('halfPrecision'),
+            fallback_to_cpu: pvBool('fallbackToCpu'),
+            reload: reloadModelsAfterSave
+        };
+        fetch('/api/config/models', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Erfolg', reloadModelsAfterSave ? 'Modelle gespeichert und werden neu geladen' : 'Modelleinstellungen gespeichert', 'success');
+                loadModelStatus();
+            } else {
+                showToast('Fehler', result.error || 'Modelleinstellungen konnten nicht gespeichert werden', 'danger');
+            }
+        })
+        .catch(() => showToast('Fehler', 'Verbindungsfehler', 'danger'));
+    }
+
+    const modelsForm = document.getElementById('modelsForm');
+    if (modelsForm) modelsForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        saveModelSettings(false);
+    });
+
+    const aboutForm = document.getElementById('aboutForm');
+    if (aboutForm) aboutForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        fetch('/api/config/about', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                show_version_banner: pvBool('showVersionBanner'),
+                show_system_links: pvBool('showSystemLinks'),
+                support_url: pvStr('supportUrl', ''),
+                documentation_url: pvStr('documentationUrl', ''),
+                release_channel: pvStr('releaseChannel', 'stable'),
+                license_notice: pvStr('licenseNotice', 'MIT')
+            })
+        })
+        .then(response => response.json())
+        .then(result => showToast(result.success ? 'Erfolg' : 'Fehler', result.success ? 'Über-Einstellungen gespeichert' : (result.error || 'Speichern fehlgeschlagen'), result.success ? 'success' : 'danger'))
+        .catch(() => showToast('Fehler', 'Verbindungsfehler', 'danger'));
+    });
+
 </script>
 {% endblock %}

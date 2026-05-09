@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="de" data-bs-theme="dark">
+<html lang="{{ lang|default('de') }}" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}License Plate Detection{% endblock %}</title>
+    <title>{% block title %}PlateVision ProTraffic{% endblock %}</title>
     
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -14,6 +14,9 @@
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
+    <!-- PlateVision Extended CSS -->
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+
     <!-- Socket.IO -->
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
     
@@ -562,6 +565,12 @@
         ::-webkit-scrollbar-thumb:hover {
             background: var(--text-secondary);
         }
+        .density-compact .content-area { padding: 1rem; }
+        .density-compact .card, .density-compact .stat-card { border-radius: 8px; }
+        .density-spacious .content-area { padding: 2.75rem; }
+        .pro-hero { background: radial-gradient(circle at top left, rgba(99,102,241,.28), transparent 35%), linear-gradient(135deg, rgba(30,41,59,.95), rgba(15,23,42,.98)); border: 1px solid var(--card-border); border-radius: 20px; padding: 1.5rem; }
+        .soft-card { background: rgba(30,41,59,.72); border: 1px solid rgba(148,163,184,.18); border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.20); }
+        .mini-label { color: var(--text-secondary); font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; }
     </style>
     
     {% block extra_css %}{% endblock %}
@@ -575,8 +584,9 @@
         <div class="sidebar-header">
             <a href="{{ url_for('dashboard') }}" class="sidebar-logo">
                 <i class="fas fa-car-side"></i>
-                <div class="sidebar-logo-text">
-                    Plate<span>Vision</span>
+                <div>
+                    <div class="sidebar-logo-text">Plate<span>Vision</span></div>
+                    <div class="mini-label">ProTraffic v0.7</div>
                 </div>
             </a>
         </div>
@@ -588,12 +598,12 @@
             
             <a href="{{ url_for('dashboard') }}" class="nav-link {% if page == 'dashboard' %}active{% endif %}">
                 <i class="fas fa-chart-pie"></i>
-                <span>Dashboard</span>
+                <span>{{ t('dashboard') }}</span>
             </a>
             
             <a href="{{ url_for('live_view') }}" class="nav-link {% if page == 'live' %}active{% endif %}">
                 <i class="fas fa-video"></i>
-                <span>Live Stream</span>
+                <span>{{ t('live') }}</span>
                 <span class="stream-status-badge {{ stream_status.status if stream_status else 'stopped' }}" id="sidebarStreamStatus">
                     {{ stream_status.status if stream_status else 'Stopped' }}
                 </span>
@@ -601,17 +611,31 @@
             
             <a href="{{ url_for('history') }}" class="nav-link {% if page == 'history' %}active{% endif %}">
                 <i class="fas fa-history"></i>
-                <span>Historie</span>
+                <span>{{ t('history') }}</span>
             </a>
-			<!-- In der sidebar-nav Section nach "Historie" hinzufügen -->
+            <a href="{{ url_for('search_page') }}" class="nav-link {% if page == 'search' %}active{% endif %}">
+                <i class="fas fa-search-plus"></i>
+                <span>{{ t('search') }}</span>
+            </a>
+
+            <a href="{{ url_for('statistics_page') }}" class="nav-link {% if page == 'statistics' %}active{% endif %}">
+                <i class="fas fa-road"></i>
+                <span>{{ t('statistics') }}</span>
+            </a>
+
+            <a href="{{ url_for('diagnostics_page') }}" class="nav-link {% if page == 'diagnostics' %}active{% endif %}">
+                <i class="fas fa-stethoscope"></i>
+                <span>{{ t('diagnostics') }}</span>
+            </a>
+			
 			<a href="{{ url_for('latest_detection_page') }}" class="nav-link {% if page == 'latest' %}active{% endif %}">
 				<i class="fas fa-car-side"></i>
-				<span>Letzte Erkennung</span>
+				<span>{{ t('latest') }}</span>
 				<span class="badge bg-success ms-auto" id="sidebarLatestBadge" style="display: none;">NEU</span>
 			</a>            
             <a href="{{ url_for('test_page') }}" class="nav-link {% if page == 'test' %}active{% endif %}">
                 <i class="fas fa-flask"></i>
-                <span>Test & Upload</span>
+                <span>{{ t('test') }}</span>
             </a>
             
             <div class="nav-section">
@@ -625,7 +649,7 @@
             
             <a href="{{ url_for('settings') }}" class="nav-link {% if page == 'settings' %}active{% endif %}">
                 <i class="fas fa-cog"></i>
-                <span>Einstellungen</span>
+                <span>{{ t('settings') }}</span>
             </a>
         </div>
         
@@ -661,6 +685,13 @@
                     </button>
                 </div>
                 {% endblock %}
+
+                <select class="form-select form-select-sm" id="languageSelector" style="width:auto; min-width: 86px;" onchange="changeLanguage(this.value)">
+                    <option value="de">DE</option>
+                    <option value="en">EN</option>
+                    <option value="fr">FR</option>
+                    <option value="it">IT</option>
+                </select>
                 
                 <!-- Notifications -->
                 <div class="dropdown">
@@ -864,10 +895,33 @@
             return `<span class="confidence-badge ${className}">${percent}%</span>`;
         }
         
+        function changeLanguage(lang) {
+            fetch('/api/config/general', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({language: lang})
+            }).then(r => r.json()).then(data => {
+                if (data.success) showToast('Sprache', 'Sprache gespeichert: ' + lang.toUpperCase(), 'success');
+            });
+        }
+
+        function applyUiConfig(config) {
+            const ui = (config && config.ui) || {};
+            if (ui.accent_color) document.documentElement.style.setProperty('--primary-color', ui.accent_color);
+            if (ui.density === 'compact') document.body.classList.add('density-compact');
+            if (ui.density === 'spacious') document.body.classList.add('density-spacious');
+        }
+
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             checkStreamStatus();
             setInterval(checkStreamStatus, 5000);
+            fetch('/api/settings/schema').then(r=>r.json()).then(data=>{
+                const lang = data.config?.general?.language || 'de';
+                const selector = document.getElementById('languageSelector');
+                if (selector) selector.value = lang;
+                applyUiConfig(data.config);
+            }).catch(()=>{});
         });
     </script>
     

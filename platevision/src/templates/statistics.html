@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Statistik - PlateVision ProTraffic{% endblock %}
+{% block page_title %}<i class="fas fa-road me-2"></i>Verkehrsstatistik{% endblock %}
+
+{% block header_actions %}
+<div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-sm btn-outline-success" id="exportCsv" href="/api/statistics/export?format=csv"><i class="fas fa-file-csv me-1"></i>CSV</a>
+    <a class="btn btn-sm btn-outline-info" id="exportJson" href="/api/statistics/export?format=json"><i class="fas fa-file-code me-1"></i>JSON</a>
+    <button class="btn btn-sm btn-primary" onclick="loadTrafficStats()"><i class="fas fa-sync-alt me-1"></i>Aktualisieren</button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="pro-hero mb-4">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+        <div>
+            <div class="mini-label mb-2">ProTraffic Analyse</div>
+            <h2 class="mb-2">Durchfahrten, Wiederkehrer, Kommen & Gehen</h2>
+            <p class="text-secondary mb-0">Zählt Tagesverkehr, gruppiert Mehrfach-Erkennungen zu Besuchen und zeigt, wie oft dasselbe Fahrzeug erkannt wurde.</p>
+        </div>
+        <div class="traffic-note">
+            <i class="fas fa-info-circle me-2"></i>
+            Ohne explizite Richtungsdaten wird „gegangen“ nach Timeout angenommen.
+        </div>
+    </div>
+</div>
+
+<div class="soft-card p-3 mb-4">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-2"><label class="form-label">Von</label><input type="date" id="dateFrom" class="form-control"></div>
+        <div class="col-md-2"><label class="form-label">Bis</label><input type="date" id="dateTo" class="form-control"></div>
+        <div class="col-md-2"><label class="form-label">Besuchslücke</label><div class="input-group"><input type="number" id="visitGap" class="form-control" min="1" value="{{ config.traffic.visit_gap_minutes|default(15) }}"><span class="input-group-text">min</span></div></div>
+        <div class="col-md-2"><label class="form-label">Gehen nach</label><div class="input-group"><input type="number" id="activeTimeout" class="form-control" min="1" value="{{ config.traffic.active_timeout_minutes|default(30) }}"><span class="input-group-text">min</span></div></div>
+        <div class="col-md-2"><label class="form-label">Min. Konfidenz</label><div class="input-group"><input type="number" id="minConf" class="form-control" step="0.01" min="0" max="1" value="{{ config.traffic.min_confidence|default(0) }}"><span class="input-group-text">0-1</span></div></div>
+        <div class="col-md-2 d-grid"><button class="btn btn-primary" onclick="loadTrafficStats()"><i class="fas fa-filter me-2"></i>Anwenden</button></div>
+        <div class="col-12 d-flex flex-wrap gap-3 mt-2">
+            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="ignoreUnknown" checked><label class="form-check-label" for="ignoreUnknown">Unbekannte ignorieren</label></div>
+            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="includeDupes"><label class="form-check-label" for="includeDupes">Duplikat-Events mitzählen</label></div>
+            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="autoRefreshStats" checked><label class="form-check-label" for="autoRefreshStats">Auto-Refresh</label></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-6 col-xl-3"><div class="stat-card traffic-kpi"><div class="stat-card-icon primary"><i class="fas fa-route"></i></div><div class="stat-card-value" id="kpiVisits">0</div><div class="stat-card-label">Durchfahrten / Besuche</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card traffic-kpi"><div class="stat-card-icon success"><i class="fas fa-car"></i></div><div class="stat-card-value" id="kpiUnique">0</div><div class="stat-card-label">Einzigartige Fahrzeuge</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card traffic-kpi"><div class="stat-card-icon warning"><i class="fas fa-redo-alt"></i></div><div class="stat-card-value" id="kpiRepeats">0</div><div class="stat-card-label">Wiederkehrende Fahrzeuge</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card traffic-kpi"><div class="stat-card-icon info"><i class="fas fa-parking"></i></div><div class="stat-card-value" id="kpiPresent">0</div><div class="stat-card-label">Vermutlich noch da</div></div></div>
+</div>
+
+<div class="row g-4">
+    <div class="col-xl-8">
+        <div class="soft-card p-3 mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                <h5 class="mb-0"><i class="fas fa-chart-column text-primary me-2"></i>Autos pro Tag</h5>
+                <select id="dailyMetric" class="form-select form-select-sm" style="width:auto" onchange="renderDailyChart()">
+                    <option value="visits">Durchfahrten/Besuche</option>
+                    <option value="unique_vehicles">Einzigartige Fahrzeuge</option>
+                    <option value="detections">Roh-Erkennungen</option>
+                    <option value="repeat_vehicles">Wiederkehrer</option>
+                </select>
+            </div>
+            <canvas id="dailyChart" height="120"></canvas>
+        </div>
+        <div class="soft-card p-3 mb-4">
+            <h5 class="mb-3"><i class="fas fa-table text-primary me-2"></i>Tagesübersicht</h5>
+            <div class="table-responsive"><table class="table align-middle traffic-table"><thead><tr><th>Tag</th><th>Durchfahrten</th><th>Einzigartig</th><th>Roh</th><th>Wiederkehrer</th><th>Gegangen</th><th>Noch da</th></tr></thead><tbody id="dailyRows"></tbody></table></div>
+        </div>
+        <div class="soft-card p-3">
+            <h5 class="mb-3"><i class="fas fa-clock-rotate-left text-primary me-2"></i>Letzte Besuche / Sessions</h5>
+            <div class="table-responsive"><table class="table align-middle traffic-table"><thead><tr><th>Kennzeichen</th><th>Start</th><th>Ende</th><th>Dauer</th><th>Status</th><th>Erkennungen</th></tr></thead><tbody id="sessionRows"></tbody></table></div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="soft-card p-3 mb-4">
+            <h5 class="mb-3"><i class="fas fa-ranking-star text-warning me-2"></i>Gleiche Autos am häufigsten</h5>
+            <div id="topPlates" class="d-grid gap-2"></div>
+        </div>
+        <div class="soft-card p-3 mb-4">
+            <h5 class="mb-3"><i class="fas fa-magnifying-glass-chart text-info me-2"></i>Kennzeichen-Profil</h5>
+            <div class="input-group mb-3"><input class="form-control" id="plateProfileInput" placeholder="z.B. OW 12345"><button class="btn btn-primary" onclick="loadPlateProfile()">Prüfen</button></div>
+            <div id="plateProfileResult" class="text-secondary small">Zeigt, wie oft ein einzelnes Auto gekommen ist und wann es zuletzt gesehen wurde.</div>
+        </div>
+        <div class="soft-card p-3">
+            <h5 class="mb-3"><i class="fas fa-location-dot text-success me-2"></i>Aktuell / zuletzt anwesend</h5>
+            <div id="presentRows" class="d-grid gap-2"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let trafficData = null;
+let dailyChart = null;
+const pct = v => Math.round(Number(v || 0) * 100) + '%';
+const fmtDate = s => s ? new Date(s).toLocaleString('de-DE') : '—';
+function trafficParams(){
+    const params = new URLSearchParams();
+    if(dateFrom.value) params.set('date_from', dateFrom.value);
+    if(dateTo.value) params.set('date_to', dateTo.value);
+    params.set('visit_gap_minutes', visitGap.value || '15');
+    params.set('active_timeout_minutes', activeTimeout.value || '30');
+    params.set('min_confidence', minConf.value || '0');
+    params.set('ignore_unknown_plates', ignoreUnknown.checked ? 'true' : 'false');
+    params.set('include_duplicate_events', includeDupes.checked ? 'true' : 'false');
+    return params;
+}
+function statusBadge(status){
+    const labels = {present_recently:'noch da', arrived_detected:'gekommen', departed_detected:'gegangen', departed_assumed:'gegangen*'};
+    const cls = status === 'present_recently' || status === 'arrived_detected' ? 'bg-success' : (status === 'departed_detected' ? 'bg-info' : 'bg-secondary');
+    return `<span class="badge ${cls}">${labels[status] || status || 'unbekannt'}</span>`;
+}
+function loadTrafficStats(){
+    const params = trafficParams();
+    exportCsv.href = '/api/statistics/export?format=csv&' + params.toString();
+    exportJson.href = '/api/statistics/export?format=json&' + params.toString();
+    fetch('/api/statistics/traffic?' + params.toString()).then(r=>r.json()).then(d=>{trafficData=d; renderTraffic();});
+}
+function renderTraffic(){
+    const s = trafficData.summary || {};
+    kpiVisits.textContent = s.total_visits || 0;
+    kpiUnique.textContent = s.unique_vehicles || 0;
+    kpiRepeats.textContent = s.repeat_vehicles || 0;
+    kpiPresent.textContent = s.currently_present || 0;
+    renderDailyChart();
+    dailyRows.innerHTML = (trafficData.daily||[]).length ? (trafficData.daily||[]).slice().reverse().map(r=>`<tr><td>${new Date(r.date).toLocaleDateString('de-DE')}</td><td><b>${r.visits}</b></td><td>${r.unique_vehicles}</td><td>${r.detections}</td><td>${r.repeat_vehicles}</td><td>${r.departures_detected + r.departures_assumed}</td><td>${r.present_recently}</td></tr>`).join('') : '<tr><td colspan="7" class="text-center text-secondary py-4">Keine Daten im Zeitraum</td></tr>';
+    sessionRows.innerHTML = (trafficData.sessions||[]).slice(0,80).map(s=>`<tr><td><button class="btn btn-link p-0" onclick="profile('${s.plate_text_normalized}')"><span class="plate-badge">${s.plate_text}</span></button></td><td>${fmtDate(s.start_time)}</td><td>${fmtDate(s.end_time)}</td><td>${s.duration_label}</td><td>${statusBadge(s.status)} ${s.departure_assumed?'<span class="text-secondary small">Timeout</span>':''}</td><td>${s.detections}</td></tr>`).join('') || '<tr><td colspan="6" class="text-center text-secondary py-4">Keine Sessions</td></tr>';
+    topPlates.innerHTML = (trafficData.top_plates||[]).slice(0,12).map(p=>`<button class="traffic-plate-card" onclick="profile('${p.normalized}')"><span class="plate-badge">${p.plate_text}</span><span class="text-secondary small">${p.visits} Besuche · ${p.detections} Erkennungen · ${p.days_seen} Tage</span><span>${statusBadge(p.last_status)}</span></button>`).join('') || '<div class="text-secondary">Keine Kennzeichen</div>';
+    presentRows.innerHTML = (trafficData.currently_present||[]).map(p=>`<div class="border rounded p-2" style="border-color:var(--card-border)!important"><span class="plate-badge">${p.plate_text}</span><div class="text-secondary small mt-1">Seit ${fmtDate(p.start_time)} · ${p.detections} Erkennungen</div></div>`).join('') || '<div class="text-secondary">Aktuell nichts als anwesend markiert.</div>';
+}
+function renderDailyChart(){
+    if(!trafficData) return;
+    const metric = dailyMetric.value;
+    const labels = (trafficData.daily||[]).map(r=>new Date(r.date).toLocaleDateString('de-DE'));
+    const values = (trafficData.daily||[]).map(r=>r[metric] || 0);
+    if(dailyChart) dailyChart.destroy();
+    dailyChart = new Chart(document.getElementById('dailyChart'), {type:'bar', data:{labels, datasets:[{label:dailyMetric.options[dailyMetric.selectedIndex].text, data:values}]}, options:{plugins:{legend:{display:false}}, scales:{x:{ticks:{color:'#94a3b8'}}, y:{ticks:{color:'#94a3b8'}, beginAtZero:true, precision:0}}}});
+}
+function profile(plate){ plateProfileInput.value = plate; loadPlateProfile(); }
+function loadPlateProfile(){
+    const plate = plateProfileInput.value.trim(); if(!plate){showToast('Statistik','Bitte Kennzeichen eingeben','warning'); return;}
+    fetch('/api/statistics/plate/' + encodeURIComponent(plate) + '?' + trafficParams().toString()).then(r=>r.json()).then(d=>{
+        plateProfileResult.innerHTML = `<div class="mb-2"><span class="plate-badge">${d.plate_text||plate}</span></div><div><b>${d.visits||0}</b> Besuche, <b>${d.detections||0}</b> Erkennungen, <b>${d.days_seen||0}</b> Tage</div><div>Erstes Mal: ${fmtDate(d.first_seen)}</div><div>Letztes Mal: ${fmtDate(d.last_seen)}</div><hr>${(d.sessions||[]).slice(0,6).map(s=>`<div class="d-flex justify-content-between border-bottom py-1" style="border-color:var(--card-border)!important"><span>${fmtDate(s.start_time)}</span><span>${statusBadge(s.status)}</span></div>`).join('')}`;
+    });
+}
+function initDefaultDates(){ const end=new Date(); const start=new Date(); start.setDate(end.getDate()-6); dateTo.value=end.toISOString().slice(0,10); dateFrom.value=start.toISOString().slice(0,10); }
+document.addEventListener('DOMContentLoaded',()=>{initDefaultDates(); loadTrafficStats(); setInterval(()=>{if(autoRefreshStats.checked) loadTrafficStats();}, 15000);});
+</script>
+{% endblock %}

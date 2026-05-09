@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Suche & Analyse - PlateVision{% endblock %}
+{% block page_title %}Suche & Analyse{% endblock %}
+
+{% block content %}
+<div class="layout-upgrade-banner mb-3"><i class="fas fa-wand-magic-sparkles me-2"></i>Suchergebnisse können direkt in der Statistik weiter analysiert werden.</div>
+<div class="row g-4">
+  <div class="col-xl-3">
+    <div class="soft-card p-3 sticky-top" style="top:90px;z-index:1">
+      <h5><i class="fas fa-filter text-primary me-2"></i>Filter</h5>
+      <label class="form-label mt-3">Kennzeichen / Text</label><input class="form-control" id="q" list="suggestions" placeholder="OW 12345, Regex, Teiltext"><datalist id="suggestions"></datalist>
+      <div class="row g-2 mt-2"><div class="col"><label class="form-label">Von</label><input type="date" class="form-control" id="dateFrom"></div><div class="col"><label class="form-label">Bis</label><input type="date" class="form-control" id="dateTo"></div></div>
+      <label class="form-label mt-3">Min. Konfidenz <span id="minConfidenceLabel">0%</span></label><input type="range" class="form-range" min="0" max="100" value="0" id="minConfidence" oninput="minConfidenceLabel.textContent=this.value+'%'">
+      <select class="form-select mt-2" id="source"><option value="">Alle Quellen</option></select>
+      <select class="form-select mt-2" id="vehicleType"><option value="">Alle Fahrzeugtypen</option></select>
+      <select class="form-select mt-2" id="vehicleColor"><option value="">Alle Farben</option></select>
+      <div class="form-check form-switch mt-3"><input class="form-check-input" type="checkbox" id="fuzzy" checked><label class="form-check-label" for="fuzzy">Fuzzy-Suche</label></div>
+      <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="regex"><label class="form-check-label" for="regex">Regex</label></div>
+      <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="unique"><label class="form-check-label" for="unique">Nur eindeutige</label></div>
+      <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="validOnly"><label class="form-check-label" for="validOnly">Nur gültige Formate</label></div>
+      <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="watchOnly"><label class="form-check-label" for="watchOnly">Nur Watchlist</label></div>
+      <div class="d-grid gap-2 mt-3"><button class="btn btn-primary" onclick="currentOffset=0;runSearch()"><i class="fas fa-search me-2"></i>Suchen</button><button class="btn btn-outline-secondary" onclick="resetFilters()">Zurücksetzen</button></div>
+      <hr><div class="d-grid gap-2"><button class="btn btn-outline-success" onclick="exportResults('csv')">CSV exportieren</button><button class="btn btn-outline-info" onclick="exportResults('json')">JSON exportieren</button></div>
+    </div>
+  </div>
+  <div class="col-xl-9">
+    <div class="row g-3 mb-4"><div class="col-md-4"><div class="stat-card"><div class="stat-card-label">Treffer</div><div class="stat-card-value" id="resultTotal">0</div></div></div><div class="col-md-4"><div class="stat-card"><div class="stat-card-label">Ø Konfidenz</div><div class="stat-card-value" id="avgResultConfidence">0%</div></div></div><div class="col-md-4"><div class="stat-card"><div class="stat-card-label">Gültig</div><div class="stat-card-value" id="validResultCount">0</div></div></div></div>
+    <div class="soft-card p-3 mb-4">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3"><h5 class="mb-0"><i class="fas fa-table text-primary me-2"></i>Ergebnisse</h5><div class="d-flex gap-2"><select class="form-select form-select-sm" id="sort" onchange="runSearch()"><option value="timestamp">Zeit</option><option value="confidence">Konfidenz</option><option value="plate">Kennzeichen</option></select><select class="form-select form-select-sm" id="limit" onchange="runSearch()"><option>25</option><option selected>50</option><option>100</option><option>250</option></select></div></div>
+      <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Bild</th><th>Kennzeichen</th><th>Details</th><th>Konf.</th><th></th></tr></thead><tbody id="resultsBody"><tr><td colspan="5" class="text-center text-secondary py-4">Keine Daten</td></tr></tbody></table></div>
+      <div class="d-flex justify-content-between"><button class="btn btn-outline-secondary btn-sm" onclick="previousPage()"><i class="fas fa-chevron-left"></i></button><span id="pageInfo" class="text-secondary small">Seite 1</span><button class="btn btn-outline-secondary btn-sm" onclick="nextPage()"><i class="fas fa-chevron-right"></i></button></div>
+    </div>
+    <div class="row g-4">
+      <div class="col-lg-6"><div class="soft-card p-3 h-100"><h5><i class="fas fa-wand-magic-sparkles text-primary me-2"></i>Batch-Nummern-Test</h5><textarea class="form-control mt-3" id="batchInput" rows="5" placeholder="Mehrere OCR-Zeilen oder Kennzeichen einfügen"></textarea><button class="btn btn-primary mt-2" onclick="batchAnalyze()">Analysieren</button><div id="batchResult" class="mt-3 small text-secondary"></div></div></div>
+      <div class="col-lg-6"><div class="soft-card p-3 h-100"><div class="d-flex justify-content-between"><h5><i class="fas fa-star text-warning me-2"></i>Watchlist</h5><button class="btn btn-sm btn-outline-primary" onclick="addWatchlistFromInput()">Hinzufügen</button></div><div class="input-group my-3"><input class="form-control" id="watchPlate" placeholder="Kennzeichen"><input class="form-control" id="watchLabel" placeholder="Label"></div><div id="watchlist" class="d-grid gap-2"></div></div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentOffset=0,currentTotal=0,currentLimit=50,currentEntries=[]; const pct=v=>Math.round(Number(v||0)*100)+'%';
+function getFilters(){ currentLimit=Number(limit.value||50); return {q:q.value,date_from:dateFrom.value,date_to:dateTo.value,min_confidence:Number(minConfidence.value||0)/100,source:source.value,vehicle_type:vehicleType.value,vehicle_color:vehicleColor.value,fuzzy:fuzzy.checked,regex:regex.checked,unique:unique.checked,valid_only:validOnly.checked,watchlist_only:watchOnly.checked,sort:sort.value,order:'desc',limit:currentLimit,offset:currentOffset}; }
+function qs(format){const f=getFilters(); if(format) f.format=format; return new URLSearchParams(Object.entries(f).filter(([k,v])=>v!==''&&v!==false)).toString();}
+function runSearch(){fetch('/api/history/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(getFilters())}).then(r=>r.json()).then(d=>{currentTotal=d.total||0;currentEntries=d.entries||[];renderResults();});}
+function renderResults(){resultTotal.textContent=currentTotal; const avg=currentEntries.length?currentEntries.reduce((a,e)=>a+Number(e.confidence||0),0)/currentEntries.length:0; avgResultConfidence.textContent=pct(avg); validResultCount.textContent=currentEntries.filter(e=>e.is_valid_plate!==false).length; pageInfo.textContent=`${currentOffset+1}-${Math.min(currentOffset+currentLimit,currentTotal)} von ${currentTotal}`; resultsBody.innerHTML=currentEntries.length?currentEntries.map(e=>`<tr><td>${e.plate_image?`<img src="data:image/jpeg;base64,${e.plate_image}" style="width:110px;height:54px;object-fit:cover;border-radius:8px">`:'<span class="text-secondary">—</span>'}</td><td><span class="plate-badge">${e.plate_text||'Unbekannt'}</span><div class="text-secondary small mt-1">${e.plate_format||''}</div>${e.watchlist_match?'<span class="badge bg-warning text-dark">Watchlist</span>':''}</td><td>${e.vehicle_type||'Unbekannt'} · ${e.vehicle_color||'Unbekannt'}<div class="text-secondary small">${e.source||''} · ${e.timestamp?new Date(e.timestamp).toLocaleString('de-DE'):''}</div></td><td>${pct(e.confidence)}</td><td><button class="btn btn-sm btn-outline-warning" onclick="quickWatch('${(e.plate_text||'').replace(/'/g,'')}')"><i class="fas fa-star"></i></button></td></tr>`).join(''):'<tr><td colspan="5" class="text-center text-secondary py-4">Keine Treffer</td></tr>';}
+function previousPage(){currentOffset=Math.max(0,currentOffset-currentLimit);runSearch();} function nextPage(){if(currentOffset+currentLimit<currentTotal){currentOffset+=currentLimit;runSearch();}}
+function resetFilters(){document.querySelectorAll('input').forEach(i=>{if(i.type==='checkbox')i.checked=false;else i.value='';}); fuzzy.checked=true; minConfidence.value=0; minConfidenceLabel.textContent='0%'; currentOffset=0; runSearch();}
+function exportResults(format){window.location.href='/api/history/export?'+qs(format);} function fillSelect(el,vals){(vals||[]).forEach(x=>{let o=document.createElement('option');o.value=x.value;o.textContent=`${x.value} (${x.count})`;el.appendChild(o);});}
+function loadFacets(){fetch('/api/history/facets').then(r=>r.json()).then(f=>{fillSelect(source,f.sources);fillSelect(vehicleType,f.vehicle_types);fillSelect(vehicleColor,f.vehicle_colors);});}
+function loadSuggestions(){fetch('/api/history/autocomplete?q='+encodeURIComponent(q.value||'')).then(r=>r.json()).then(d=>{suggestions.innerHTML=(d.items||[]).map(i=>`<option value="${i.plate_text}">${i.count} Treffer</option>`).join('');});}
+function batchAnalyze(){fetch('/api/plate/batch-analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plates:batchInput.value})}).then(r=>r.json()).then(d=>{batchResult.innerHTML=(d.rows||[]).map(r=>`<div class="border rounded p-2 mb-2" style="border-color:var(--card-border)!important"><b>${r.input}</b> → <span class="plate-badge">${r.best.pretty||r.best.corrected}</span><div>Format: ${r.best.format} · Score: ${Math.round((r.best.score||0)*100)}%</div></div>`).join('')||'Keine Eingaben';});}
+function loadWatchlist(){fetch('/api/watchlist').then(r=>r.json()).then(d=>{watchlist.innerHTML=(d.items||[]).length?(d.items||[]).map(i=>`<div class="border rounded p-2 d-flex justify-content-between" style="border-color:var(--card-border)!important"><div><span class="plate-badge">${i.plate_text}</span><div class="text-secondary small">${i.label||i.category||''}</div></div><button class="btn btn-sm btn-outline-danger" onclick="deleteWatch('${i.id}')"><i class="fas fa-trash"></i></button></div>`).join(''):'<div class="text-secondary">Keine Einträge</div>';});}
+function addWatchlistFromInput(){addWatch(watchPlate.value,watchLabel.value);} function quickWatch(plate){watchPlate.value=plate;addWatch(plate,'Schnell hinzugefügt');}
+function addWatch(plate,label){fetch('/api/watchlist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plate_text:plate,label:label,category:'known'})}).then(r=>r.json()).then(d=>{if(d.success){showToast('Watchlist','Gespeichert','success');loadWatchlist();}else showToast('Fehler',d.error||'Nicht gespeichert','danger');});}
+function deleteWatch(id){fetch('/api/watchlist/'+encodeURIComponent(id),{method:'DELETE'}).then(()=>loadWatchlist());}
+document.addEventListener('DOMContentLoaded',()=>{loadFacets();loadWatchlist();runSearch();q.addEventListener('input',()=>{clearTimeout(window.suggestTimer);window.suggestTimer=setTimeout(loadSuggestions,250);});q.addEventListener('keydown',e=>{if(e.key==='Enter'){currentOffset=0;runSearch();}});});
+</script>
+{% endblock %}

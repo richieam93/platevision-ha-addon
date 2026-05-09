@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 2.1 - Fixed RTSP & Analysis Area Support
+Version 0.7.2 ProTraffic Plus - Expanded Original Settings
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -15,12 +15,16 @@ import time
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import base64
 from PIL import Image
 import io
 import queue
 import logging
+import re
+import csv
+from difflib import SequenceMatcher
+from collections import Counter, defaultdict
 from pathlib import Path
 
 # ============================================================
@@ -74,6 +78,231 @@ video_processing_jobs = {}
 
 
 # ============================================================
+# KENNZEICHEN-HILFSFUNKTIONEN
+# ============================================================
+
+class PlateUtils:
+    """Normalisierung, Validierung, Kandidatenbildung und Ähnlichkeit von Kennzeichen."""
+
+    OCR_CONFUSIONS = str.maketrans({
+        'Ä': 'A', 'Ö': 'O', 'Ü': 'U', 'À': 'A', 'Á': 'A', 'Â': 'A',
+        'È': 'E', 'É': 'E', 'Ê': 'E', 'Ì': 'I', 'Í': 'I', 'Î': 'I',
+        'Ò': 'O', 'Ó': 'O', 'Ô': 'O', 'Ù': 'U', 'Ú': 'U', 'Û': 'U',
+        ' ': '', '-': '', '_': '', '.': '', ':': '', '/': '', '\\': '',
+        '|': '1', '·': '', '•': '', '*': '', ',': '', ';': ''
+    })
+    LETTER_TO_DIGIT = {
+        'O': '0', 'Q': '0', 'D': '0', 'I': '1', 'L': '1', 'T': '1',
+        'Z': '2', 'S': '5', 'B': '8', 'G': '6', 'A': '4'
+    }
+    DIGIT_TO_LETTER = {
+        '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '8': 'B', '6': 'G', '4': 'A'
+    }
+    VALID_RE = re.compile(r'^[A-Z0-9ÄÖÜ\- ]{2,14}$')
+
+    # Keep detect_format() returning a string for existing code.
+    COUNTRY_PATTERNS = [
+        ('FL', re.compile(r'^FL\s?\d{1,5}$')),                         # FL 12345
+        ('CH', re.compile(r'^[A-Z]{2}\s?\d{1,6}$')),                    # OW 12345
+        ('DE', re.compile(r'^[A-ZÄÖÜ]{1,3}\s?[A-Z]{1,2}\s?\d{1,4}[EH]?$')),
+        ('AT', re.compile(r'^[A-Z]{1,2}\s?\d{1,5}\s?[A-Z]{1,2}$')),
+        ('FR/IT/Generic-EU', re.compile(r'^[A-Z]{2}\s?\d{3}\s?[A-Z]{2}$')),
+        ('NL', re.compile(r'^[A-Z0-9]{2}\s?[A-Z0-9]{2}\s?[A-Z0-9]{2}$')),
+        ('Generic', re.compile(r'^[A-Z0-9]{3,12}$')),
+    ]
+
+    @classmethod
+    def normalize(cls, text, compact=True):
+        if text is None:
+            return ''
+        value = str(text).upper().strip()
+        value = value.replace('\n', ' ').replace('\r', ' ')
+        value = re.sub(r'[^A-Z0-9ÄÖÜÀÁÂÈÉÊÌÍÎÒÓÔÙÚÛ\- _./:|·•*,;]', '', value)
+        value = re.sub(r'\s+', ' ', value)
+        if compact:
+            value = value.translate(cls.OCR_CONFUSIONS)
+            value = re.sub(r'[^A-Z0-9]', '', value)
+        return value
+
+    @classmethod
+    def pretty(cls, text):
+        value = cls.normalize(text, compact=True)
+        if not value:
+            return ''
+        ch = re.match(r'^([A-Z]{2})(\d{1,6})$', value)
+        if ch:
+            return f"{ch.group(1)} {ch.group(2)}"
+        fl = re.match(r'^(FL)(\d{1,5})$', value)
+        if fl:
+            return f"{fl.group(1)} {fl.group(2)}"
+        eu = re.match(r'^([A-Z]{2})(\d{3})([A-Z]{2})$', value)
+        if eu:
+            return f"{eu.group(1)}-{eu.group(2)}-{eu.group(3)}"
+        de = re.match(r'^([A-ZÄÖÜ]{1,3})([A-Z]{1,2})(\d{1,4}[EH]?)$', value)
+        if de:
+            return f"{de.group(1)} {de.group(2)} {de.group(3)}"
+        return value
+
+    @classmethod
+    def detect_format(cls, text):
+        raw = str(text or '').upper().strip()
+        compact = cls.normalize(raw, compact=True)
+        candidates = [raw, compact, cls.pretty(compact)]
+        for name, pattern in cls.COUNTRY_PATTERNS:
+            for candidate in candidates:
+                candidate = str(candidate).replace('-', ' ')
+                if pattern.match(candidate) or pattern.match(cls.normalize(candidate, compact=True)):
+                    return name
+        return 'Unbekannt'
+
+    @classmethod
+    def similarity(cls, left, right):
+        a = cls.normalize(left, compact=True)
+        b = cls.normalize(right, compact=True)
+        if not a or not b:
+            return 0.0
+        return SequenceMatcher(None, a, b).ratio()
+
+    @classmethod
+    def is_valid(cls, text, min_len=3, max_len=12, regex=None):
+        compact = cls.normalize(text, compact=True)
+        if len(compact) < int(min_len or 0) or len(compact) > int(max_len or 99):
+            return False
+        if regex:
+            try:
+                return re.match(regex, compact) is not None
+            except re.error:
+                return False
+        if not (cls.VALID_RE.match(str(text or '').upper()) or compact.isalnum()):
+            return False
+        return cls.detect_format(compact) != 'Unbekannt' or compact.isalnum()
+
+    @classmethod
+    def smart_correct(cls, text, country_hint='auto'):
+        """Korrigiert typische OCR-Verwechslungen mit Positions- und Länderlogik."""
+        compact = cls.normalize(text, compact=True)
+        if not compact:
+            return ''
+        country_hint = (country_hint or 'auto').upper()
+        chars = list(compact)
+        for i, ch in enumerate(chars):
+            prev_digit = i > 0 and chars[i - 1].isdigit()
+            next_digit = i < len(chars) - 1 and chars[i + 1].isdigit()
+            prev_alpha = i > 0 and chars[i - 1].isalpha()
+            next_alpha = i < len(chars) - 1 and chars[i + 1].isalpha()
+            if ch in cls.LETTER_TO_DIGIT and (prev_digit or next_digit):
+                chars[i] = cls.LETTER_TO_DIGIT[ch]
+            elif ch in cls.DIGIT_TO_LETTER and prev_alpha and next_alpha:
+                chars[i] = cls.DIGIT_TO_LETTER[ch]
+        corrected = ''.join(chars)
+        if country_hint in ('AUTO', 'FL'):
+            fl = re.match(r'^F[L1IT]([A-Z0-9]{1,5})$', corrected)
+            if fl:
+                number = ''.join(cls.LETTER_TO_DIGIT.get(c, c) for c in fl.group(1))
+                if number.isdigit():
+                    return 'FL' + number
+        if country_hint in ('AUTO', 'CH', 'FL'):
+            m = re.match(r'^([A-Z0-9]{2})([A-Z0-9]{1,6})$', corrected)
+            if m:
+                prefix = ''.join(cls.DIGIT_TO_LETTER.get(c, c) for c in m.group(1))
+                number = ''.join(cls.LETTER_TO_DIGIT.get(c, c) for c in m.group(2))
+                if prefix.isalpha() and number.isdigit():
+                    return prefix + number
+        if country_hint == 'DE':
+            # German plates generally start with one to three letters.
+            m = re.match(r'^([A-Z0-9]{1,3})([A-Z0-9]{1,2})([A-Z0-9]{1,4}[A-Z0-9]?)$', corrected)
+            if m:
+                region = ''.join(cls.DIGIT_TO_LETTER.get(c, c) for c in m.group(1))
+                letters = ''.join(cls.DIGIT_TO_LETTER.get(c, c) for c in m.group(2))
+                number = ''.join(cls.LETTER_TO_DIGIT.get(c, c) for c in m.group(3))
+                candidate = region + letters + number
+                if cls.detect_format(candidate) in ('DE', 'Generic'):
+                    return candidate
+        return corrected
+
+    @classmethod
+    def generate_candidates(cls, text, country_hint='auto', max_candidates=12):
+        """Erzeugt mehrere plausible Kennzeichen-Kandidaten aus OCR-Rohtext."""
+        raw = cls.normalize(text, compact=True)
+        if not raw:
+            return []
+        seeds = {raw, cls.smart_correct(raw, country_hint)}
+        # Common OCR noise at plate edges.
+        seeds.add(raw.strip('I1L|[](){}'))
+        seeds.add(raw.strip('O0QD'))
+        # Build positional variants.
+        for seed in list(seeds):
+            if not seed:
+                continue
+            chars = list(seed)
+            for i, ch in enumerate(chars):
+                if ch in cls.LETTER_TO_DIGIT:
+                    variant = chars.copy()
+                    variant[i] = cls.LETTER_TO_DIGIT[ch]
+                    seeds.add(''.join(variant))
+                if ch in cls.DIGIT_TO_LETTER:
+                    variant = chars.copy()
+                    variant[i] = cls.DIGIT_TO_LETTER[ch]
+                    seeds.add(''.join(variant))
+        scored = []
+        seen = set()
+        for candidate in seeds:
+            candidate = cls.normalize(candidate, compact=True)
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            scored.append(cls.analyze(candidate, country_hint=country_hint))
+        scored.sort(key=lambda item: (item['valid'], item['score'], item['similarity_to_input']), reverse=True)
+        return scored[:max_candidates]
+
+    @classmethod
+    def analyze(cls, text, country_hint='auto'):
+        compact = cls.normalize(text, compact=True)
+        corrected = cls.smart_correct(compact, country_hint)
+        fmt = cls.detect_format(corrected) if corrected else 'Unbekannt'
+        valid = cls.is_valid(corrected)
+        score = 0.0
+        if corrected:
+            score += min(len(corrected) / 10, 1) * 0.25
+        if fmt != 'Unbekannt':
+            score += 0.45
+        if valid:
+            score += 0.20
+        if corrected and corrected != compact:
+            score += 0.05
+        if (country_hint or '').upper() in ('CH', 'FL') and fmt in ('CH', 'FL'):
+            score += 0.10
+        if (country_hint or '').upper() == 'DE' and fmt == 'DE':
+            score += 0.10
+        return {
+            'input': text,
+            'normalized': compact,
+            'corrected': corrected,
+            'pretty': cls.pretty(corrected),
+            'format': fmt,
+            'valid': bool(valid),
+            'score': round(min(score, 1.0), 3),
+            'length': len(corrected or compact),
+            'similarity_to_input': round(cls.similarity(text, corrected), 3) if corrected else 0,
+            'masked': cls.mask(corrected),
+        }
+
+    @classmethod
+    def best_candidate(cls, text, country_hint='auto'):
+        candidates = cls.generate_candidates(text, country_hint=country_hint, max_candidates=10)
+        if candidates:
+            return candidates[0]
+        return cls.analyze(text, country_hint=country_hint)
+
+    @classmethod
+    def mask(cls, text, visible_start=2, visible_end=2):
+        compact = cls.normalize(text, compact=True)
+        if len(compact) <= visible_start + visible_end:
+            return compact
+        return compact[:visible_start] + '•' * (len(compact) - visible_start - visible_end) + compact[-visible_end:]
+
+
+# ============================================================
 # KONFIGURATIONSMANAGER
 # ============================================================
 
@@ -114,6 +343,17 @@ class ConfigManager:
             'save_full_frame': True,
             'min_plate_width': 60,
             'min_plate_height': 15,
+            'plate_aspect_ratio_min': 2.0,
+            'plate_aspect_ratio_max': 6.5,
+            'vehicle_class_filter': ['car', 'truck', 'bus', 'motorcycle'],
+            'max_detections_per_frame': 8,
+            'plate_detector_confidence_factor': 0.6,
+            'annotate_frames': True,
+            'draw_confidence': True,
+            'scan_full_frame_when_vehicle_found': False,
+            'min_vehicle_width': 80,
+            'min_vehicle_height': 60,
+            'duplicate_cooldown_per_frame': True,
         },
         'ocr': {
             'languages': ['en', 'de'],
@@ -131,18 +371,50 @@ class ConfigManager:
                 'adaptive_threshold': True,
                 'deskew': True,
                 'morphology': True,
+                'gamma_correction': False,
+                'gamma': 1.2,
+                'clahe_clip_limit': 3.0,
+                'clahe_tile_grid': 8,
+                'denoise_strength': 10,
+                'threshold_block_size': 11,
+                'threshold_c': 2,
+                'invert_variant': True,
+                'bilateral_filter': False,
+                'perspective_correction': False,
+                'border_padding': 6,
             },
             'active_mode': 'enhanced',
             'retry_on_fail': True,
             'max_retries': 3,
+            'engine': 'easyocr',
+            'decoder': 'greedy',
+            'paragraph_mode': False,
+            'rotation_variants': True,
+            'early_stop_confidence': 0.85,
+            'max_variants_to_read': 8,
+            'min_text_length': 2,
+            'merge_fragments': True,
+            'uppercase_output': True,
+            'use_allowlist': True,
         },
         'general': {
             'theme': 'dark',
             'language': 'de',
+            'available_languages': ['de', 'en', 'fr', 'it'],
+            'timezone': 'Europe/Zurich',
+            'date_format': 'dd.mm.yyyy HH:MM',
             'auto_save_history': True,
             'max_history_entries': 1000,
             'notification_enabled': True,
-            'debug_mode': False
+            'debug_mode': False,
+            'startup_page': 'dashboard',
+            'time_24h': True,
+            'auto_refresh_enabled': True,
+            'log_level': 'INFO',
+            'accessibility_mode': False,
+            'compact_numbers': False,
+            'operator_name': '',
+            'site_name': 'PlateVision Standort'
         },
         'history': {
             'filter_duplicates': True,
@@ -150,10 +422,126 @@ class ConfigManager:
             'min_confidence_to_save': 0.35,
             'save_vehicle_image': True,
             'save_plate_image': True,
+            'fuzzy_duplicate_detection': True,
+            'fuzzy_duplicate_similarity': 0.88,
+            'store_raw_ocr': True,
+            'store_candidates': True,
+            'store_location_data': True,
+            'group_by_visit': True,
+            'visit_gap_minutes': 15,
+            'export_default_format': 'csv',
+            'auto_cleanup_enabled': False,
+            'cleanup_days': 365,
+            'mark_low_confidence': True,
+            'low_confidence_threshold': 0.45,
+        },
+        'storage': {
+            'jpeg_quality_plate': 95,
+            'jpeg_quality_vehicle': 90,
+            'jpeg_quality_frame': 88,
+            'create_daily_folders': True,
+            'save_metadata_json': True,
+            'auto_cleanup_images': False,
+            'cleanup_images_days': 90,
+            'max_storage_mb': 0,
+            'compress_exports': False,
+            'include_thumbnails': True,
+            'thumbnail_width': 320,
+            'filename_pattern': '{date}_{time}_{plate}_{confidence}',
+            'separate_unknown_folder': True
+        },
+        'plate_recognition': {
+            'country_hint': 'CH',
+            'min_length': 3,
+            'max_length': 12,
+            'validation_regex': '',
+            'smart_ocr_correction': True,
+            'format_pretty_output': True,
+            'save_low_confidence_candidates': False,
+            'watchlist_enabled': True
+        },
+        'search': {
+            'default_limit': 50,
+            'enable_fuzzy_search': True,
+            'fuzzy_similarity': 0.72,
+            'allow_regex_search': True,
+            'remember_last_filters': True
+        },
+        'dashboard': {
+            'auto_refresh_seconds': 10,
+            'show_confidence_chart': True,
+            'show_hourly_chart': True,
+            'show_watchlist': True,
+            'show_storage': True,
+            'compact_mode': False,
+            'default_range_days': 7
+        },
+        'traffic': {
+            'visit_gap_minutes': 15,
+            'active_timeout_minutes': 30,
+            'daily_count_mode': 'visits',
+            'direction_mode': 'auto',
+            'min_confidence': 0.0,
+            'ignore_unknown_plates': True,
+            'include_duplicate_events': False,
+            'movement_axis': 'x',
+            'movement_threshold_percent': 8,
+            'arrival_label': 'gekommen',
+            'departure_label': 'gegangen'
+        },
+        'alerts': {
+            'watchlist_notifications': True,
+            'unknown_plate_notifications': False,
+            'low_confidence_notifications': False,
+            'min_alert_confidence': 0.65,
+            'webhook_url': '',
+            'mqtt_topic_prefix': 'platevision'
+        },
+        'ui': {
+            'accent_color': '#6366f1',
+            'density': 'comfortable',
+            'animations': True,
+            'sidebar_labels': True,
+            'card_style': 'glass',
+            'show_help_text': True
+        },
+        'privacy': {
+            'mask_plate_numbers': False,
+            'blur_plate_images': False,
+            'retention_days': 0,
+            'export_include_images': False
+        },
+        'recognition_profiles': {
+            'active': 'balanced',
+            'profiles': {
+                'fast': {'confidence_threshold': 0.6, 'ocr_min_confidence': 0.35, 'process_interval': 1.0},
+                'balanced': {'confidence_threshold': 0.5, 'ocr_min_confidence': 0.25, 'process_interval': 0.5},
+                'strict': {'confidence_threshold': 0.7, 'ocr_min_confidence': 0.55, 'process_interval': 0.75},
+                'night': {'confidence_threshold': 0.35, 'ocr_min_confidence': 0.18, 'process_interval': 0.8}
+            }
         },
         'models': {
             'license_plate_detector': 'models/license_plate_detector.pt',
-            'vehicle_detector': 'models/yolov8n.pt'
+            'vehicle_detector': 'models/yolov8n.pt',
+            'auto_reload_on_change': False,
+            'warmup_on_start': True,
+            'device': 'auto',
+            'half_precision': False,
+            'model_size_hint': 'nano',
+            'download_missing_models': False,
+            'fallback_to_cpu': True,
+            'custom_model_directory': 'models',
+            'vehicle_model_labels': 'COCO',
+            'plate_model_labels': 'license_plate',
+            'last_reload_at': None
+        },
+        'about': {
+            'show_version_banner': True,
+            'show_system_links': True,
+            'support_url': '',
+            'documentation_url': '',
+            'release_channel': 'stable',
+            'license_notice': 'MIT'
         }
     }
     
@@ -243,35 +631,38 @@ class HistoryManager:
             return False
     
     def _normalize_plate(self, plate_text):
-        if not plate_text:
-            return ""
-        return plate_text.upper().replace(' ', '').replace('-', '').strip()
+        return PlateUtils.normalize(plate_text, compact=True)
     
     def _is_duplicate_in_history(self, plate_text, timeout_seconds=60):
         if not plate_text:
             return True
-        
+
         normalized = self._normalize_plate(plate_text)
         if not normalized or len(normalized) < 3:
             return True
-            
+
         current_time = datetime.now()
-        
-        for entry in self.history[:100]:
+        fuzzy_enabled = config_manager.get('history', 'fuzzy_duplicate_detection')
+        fuzzy_similarity = config_manager.get('history', 'fuzzy_duplicate_similarity') or 0.88
+
+        for entry in self.history[:200]:
             entry_plate = self._normalize_plate(entry.get('plate_text', ''))
-            
+            if not entry_plate:
+                continue
+            try:
+                entry_time = datetime.fromisoformat(entry.get('timestamp', ''))
+                time_diff = (current_time - entry_time).total_seconds()
+            except Exception:
+                time_diff = timeout_seconds + 1
+            if time_diff >= timeout_seconds:
+                continue
             if entry_plate == normalized:
-                try:
-                    entry_time = datetime.fromisoformat(entry.get('timestamp', ''))
-                    time_diff = (current_time - entry_time).total_seconds()
-                    
-                    if time_diff < timeout_seconds:
-                        return True
-                except:
-                    pass
-        
+                return True
+            if fuzzy_enabled and PlateUtils.similarity(entry_plate, normalized) >= fuzzy_similarity:
+                return True
+
         return False
-    
+
     def add_entry(self, entry, check_duplicate=True):
         with self.lock:
             if check_duplicate:
@@ -282,6 +673,24 @@ class HistoryManager:
                     logger.debug(f"Duplikat in Historie übersprungen: {entry.get('plate_text')}")
                     return None
             
+            plate_text = entry.get('plate_text', '')
+            normalized = PlateUtils.normalize(plate_text, compact=True)
+            pretty = PlateUtils.pretty(plate_text)
+            entry['plate_text_normalized'] = normalized
+            entry['plate_format'] = PlateUtils.detect_format(plate_text)
+            entry['is_valid_plate'] = PlateUtils.is_valid(
+                plate_text,
+                config_manager.get('plate_recognition', 'min_length') or 3,
+                config_manager.get('plate_recognition', 'max_length') or 12,
+                config_manager.get('plate_recognition', 'validation_regex') or None
+            )
+            if config_manager.get('plate_recognition', 'format_pretty_output') and pretty:
+                entry['plate_text'] = pretty
+            try:
+                if config_manager.get('plate_recognition', 'watchlist_enabled'):
+                    entry['watchlist_match'] = watchlist_manager.check(entry.get('plate_text', plate_text))
+            except Exception:
+                entry['watchlist_match'] = None
             entry['id'] = str(uuid.uuid4())
             entry['timestamp'] = datetime.now().isoformat()
             self.history.insert(0, entry)
@@ -329,37 +738,613 @@ class HistoryManager:
         return [e for e in self.history 
                 if query in self._normalize_plate(e.get('plate_text', ''))]
     
+    def _parse_datetime(self, value):
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except Exception:
+            try:
+                return datetime.fromisoformat(value[:10])
+            except Exception:
+                return None
+
+    def _entry_matches(self, entry, filters):
+        query = (filters.get('q') or filters.get('search') or '').strip()
+        normalized = self._normalize_plate(entry.get('plate_text', ''))
+        raw = str(entry.get('plate_text', '')).upper()
+
+        if query:
+            q_norm = self._normalize_plate(query)
+            if filters.get('regex'):
+                if not config_manager.get('search', 'allow_regex_search'):
+                    return False
+                try:
+                    if not re.search(query, raw, flags=re.IGNORECASE):
+                        return False
+                except re.error:
+                    return False
+            elif q_norm not in normalized:
+                fuzzy_enabled = filters.get('fuzzy') or config_manager.get('search', 'enable_fuzzy_search')
+                similarity = PlateUtils.similarity(query, normalized)
+                threshold = float(filters.get('fuzzy_similarity') or config_manager.get('search', 'fuzzy_similarity') or 0.72)
+                if not fuzzy_enabled or similarity < threshold:
+                    return False
+
+        for key in ('source', 'vehicle_type', 'vehicle_color', 'plate_format'):
+            val = filters.get(key)
+            if val and val != 'all' and str(entry.get(key, '')).lower() != str(val).lower():
+                return False
+
+        if filters.get('valid_only') and not entry.get('is_valid_plate', True):
+            return False
+        if filters.get('watchlist_only') and not entry.get('watchlist_match'):
+            return False
+
+        min_conf = filters.get('min_confidence')
+        max_conf = filters.get('max_confidence')
+        confidence = float(entry.get('confidence') or 0)
+        if min_conf not in (None, '') and confidence < float(min_conf):
+            return False
+        if max_conf not in (None, '') and confidence > float(max_conf):
+            return False
+
+        ts = self._parse_datetime(entry.get('timestamp'))
+        if filters.get('date_from'):
+            start = self._parse_datetime(filters.get('date_from'))
+            if ts and start and ts < start:
+                return False
+        if filters.get('date_to'):
+            end = self._parse_datetime(filters.get('date_to'))
+            if ts and end:
+                # date-only values include the full day
+                if len(str(filters.get('date_to'))) <= 10:
+                    end = end.replace(hour=23, minute=59, second=59)
+                if ts > end:
+                    return False
+
+        return True
+
+    def search_advanced(self, filters=None):
+        filters = filters or {}
+        entries = [e for e in self.history if self._entry_matches(e, filters)]
+
+        if filters.get('unique'):
+            seen = set()
+            unique_entries = []
+            for entry in entries:
+                normalized = self._normalize_plate(entry.get('plate_text', ''))
+                if normalized and normalized not in seen:
+                    seen.add(normalized)
+                    unique_entries.append(entry)
+            entries = unique_entries
+
+        sort = filters.get('sort') or 'timestamp'
+        reverse = (filters.get('order') or 'desc').lower() != 'asc'
+        if sort == 'confidence':
+            entries.sort(key=lambda e: float(e.get('confidence') or 0), reverse=reverse)
+        elif sort == 'plate':
+            entries.sort(key=lambda e: self._normalize_plate(e.get('plate_text', '')), reverse=reverse)
+        else:
+            entries.sort(key=lambda e: e.get('timestamp', ''), reverse=reverse)
+
+        total = len(entries)
+        limit = int(filters.get('limit') or config_manager.get('search', 'default_limit') or 50)
+        offset = int(filters.get('offset') or 0)
+        return {'entries': entries[offset:offset + limit], 'total': total, 'limit': limit, 'offset': offset}
+
+    def get_facets(self):
+        def counts(key):
+            c = Counter(str(e.get(key, 'Unbekannt') or 'Unbekannt') for e in self.history)
+            return [{'value': k, 'count': v} for k, v in c.most_common()]
+        return {
+            'sources': counts('source'),
+            'vehicle_types': counts('vehicle_type'),
+            'vehicle_colors': counts('vehicle_color'),
+            'plate_formats': counts('plate_format')
+        }
+
+
+    def _safe_float(self, value, default=0.0):
+        try:
+            return float(value)
+        except Exception:
+            return default
+
+    def _safe_int(self, value, default=0):
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+    def _entry_timestamp(self, entry):
+        return self._parse_datetime(entry.get('timestamp'))
+
+    def _entry_confidence(self, entry):
+        return self._safe_float(entry.get('confidence'), 0.0)
+
+    def _entry_center(self, entry, axis='x'):
+        """Returns the best available center coordinate for movement heuristics."""
+        axis = (axis or 'x').lower()
+        direct_keys = ['vehicle_center_x', 'plate_center_x', 'center_x'] if axis == 'x' else ['vehicle_center_y', 'plate_center_y', 'center_y']
+        for key in direct_keys:
+            if entry.get(key) is not None:
+                return self._safe_float(entry.get(key), None)
+        bbox_keys = ['vehicle_bbox', 'plate_bbox', 'bbox']
+        for key in bbox_keys:
+            bbox = entry.get(key)
+            if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                try:
+                    x1, y1, x2, y2 = [float(v) for v in bbox]
+                    return (x1 + x2) / 2.0 if axis == 'x' else (y1 + y2) / 2.0
+                except Exception:
+                    continue
+        return None
+
+    def _direction_from_entry(self, entry):
+        raw = str(entry.get('direction') or entry.get('movement') or entry.get('event_type') or '').strip().lower()
+        if not raw:
+            return None
+        if raw in ('in', 'enter', 'entered', 'arrival', 'arrived', 'kommen', 'gekommen', 'rein', 'einfahrt'):
+            return 'arrival'
+        if raw in ('out', 'exit', 'exited', 'departure', 'departed', 'gehen', 'gegangen', 'raus', 'ausfahrt'):
+            return 'departure'
+        if 'ein' in raw or 'komm' in raw or 'arrival' in raw or 'enter' in raw:
+            return 'arrival'
+        if 'aus' in raw or 'geh' in raw or 'depart' in raw or 'exit' in raw:
+            return 'departure'
+        return None
+
+    def _traffic_filters_from_request(self, filters=None):
+        filters = filters or {}
+        cfg = config_manager.get('traffic') or {}
+        now = datetime.now()
+        days = self._safe_int(filters.get('days'), self._safe_int(config_manager.get('dashboard', 'default_range_days'), 7) or 7)
+        explicit_to = filters.get('date_to')
+        explicit_from = filters.get('date_from')
+        date_to = self._parse_datetime(explicit_to) if explicit_to else now
+        if date_to and explicit_to and len(str(explicit_to)) <= 10:
+            date_to = date_to.replace(hour=23, minute=59, second=59)
+        if explicit_from:
+            date_from = self._parse_datetime(explicit_from)
+        else:
+            base = date_to or now
+            # Default ranges are calendar-day based, not last N*24 hours from the current minute.
+            date_from = base.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=max(days - 1, 0))
+        return {
+            'date_from': date_from,
+            'date_to': date_to,
+            'min_confidence': self._safe_float(filters.get('min_confidence'), self._safe_float(cfg.get('min_confidence'), 0.0)),
+            'ignore_unknown_plates': str(filters.get('ignore_unknown_plates', cfg.get('ignore_unknown_plates', True))).lower() not in ('0', 'false', 'no', 'nein'),
+            'include_duplicate_events': str(filters.get('include_duplicate_events', cfg.get('include_duplicate_events', False))).lower() in ('1', 'true', 'yes', 'ja'),
+            'visit_gap_minutes': self._safe_int(filters.get('visit_gap_minutes'), self._safe_int(cfg.get('visit_gap_minutes'), 15) or 15),
+            'active_timeout_minutes': self._safe_int(filters.get('active_timeout_minutes'), self._safe_int(cfg.get('active_timeout_minutes'), 30) or 30),
+            'daily_count_mode': filters.get('daily_count_mode') or cfg.get('daily_count_mode') or 'visits',
+            'movement_axis': filters.get('movement_axis') or cfg.get('movement_axis') or 'x',
+            'movement_threshold_percent': self._safe_float(filters.get('movement_threshold_percent'), self._safe_float(cfg.get('movement_threshold_percent'), 8.0)),
+        }
+
+    def _traffic_entries(self, filters=None):
+        f = self._traffic_filters_from_request(filters)
+        entries = []
+        seen_event_ids = set()
+        for entry in self.history:
+            ts = self._entry_timestamp(entry)
+            if not ts:
+                continue
+            ts_naive = ts.replace(tzinfo=None) if getattr(ts, 'tzinfo', None) else ts
+            if f['date_from'] and ts_naive < f['date_from'].replace(tzinfo=None):
+                continue
+            if f['date_to'] and ts_naive > f['date_to'].replace(tzinfo=None):
+                continue
+            if self._entry_confidence(entry) < f['min_confidence']:
+                continue
+            plate = self._normalize_plate(entry.get('plate_text', ''))
+            if f['ignore_unknown_plates'] and (not plate or plate in ('UNKNOWN', 'UNBEKANNT')):
+                continue
+            if not f['include_duplicate_events']:
+                event_key = entry.get('id') or f"{plate}:{entry.get('timestamp')}"
+                if event_key in seen_event_ids:
+                    continue
+                seen_event_ids.add(event_key)
+            enriched = dict(entry)
+            enriched['_ts'] = ts_naive
+            enriched['_plate_norm'] = plate or 'UNKNOWN'
+            enriched['_center_x'] = self._entry_center(entry, 'x')
+            enriched['_center_y'] = self._entry_center(entry, 'y')
+            enriched['_direction'] = self._direction_from_entry(entry)
+            entries.append(enriched)
+        entries.sort(key=lambda e: e['_ts'])
+        return entries, f
+
+    def _build_traffic_sessions(self, filters=None):
+        entries, f = self._traffic_entries(filters)
+        by_plate = defaultdict(list)
+        for entry in entries:
+            by_plate[entry['_plate_norm']].append(entry)
+
+        sessions = []
+        gap = timedelta(minutes=max(f['visit_gap_minutes'], 1))
+        active_timeout = timedelta(minutes=max(f['active_timeout_minutes'], 1))
+        now = datetime.now()
+        for plate, plate_entries in by_plate.items():
+            current = []
+            for entry in plate_entries:
+                if not current or (entry['_ts'] - current[-1]['_ts']) <= gap:
+                    current.append(entry)
+                else:
+                    sessions.append(self._session_summary(plate, current, now, active_timeout, f))
+                    current = [entry]
+            if current:
+                sessions.append(self._session_summary(plate, current, now, active_timeout, f))
+        sessions.sort(key=lambda s: s['start_time'], reverse=True)
+        return sessions, entries, f
+
+    def _session_summary(self, plate, entries, now, active_timeout, filters):
+        first = entries[0]
+        last = entries[-1]
+        start = first['_ts']
+        end = last['_ts']
+        duration_seconds = max(0, int((end - start).total_seconds()))
+        directions = [e.get('_direction') for e in entries if e.get('_direction')]
+        direction_quality = 'explicit' if directions else 'heuristic'
+        arrival_detected = 'arrival' in directions
+        departure_detected = 'departure' in directions
+
+        movement = None
+        movement_label = 'unbekannt'
+        movement_delta = None
+        axis = filters.get('movement_axis') or 'x'
+        centers = [self._entry_center(e, axis) for e in entries]
+        centers = [c for c in centers if c is not None]
+        if len(centers) >= 2:
+            movement_delta = centers[-1] - centers[0]
+            frame_size = None
+            size_keys = ['frame_width', 'image_width', 'source_width'] if axis == 'x' else ['frame_height', 'image_height', 'source_height']
+            for key in size_keys:
+                for e in entries:
+                    if e.get(key):
+                        frame_size = self._safe_float(e.get(key), None)
+                        break
+                if frame_size:
+                    break
+            threshold = self._safe_float(filters.get('movement_threshold_percent'), 8.0)
+            min_delta = (frame_size * threshold / 100.0) if frame_size else max(40.0, abs(centers[0]) * threshold / 100.0)
+            if abs(movement_delta) >= min_delta:
+                movement = 'positive' if movement_delta > 0 else 'negative'
+                movement_label = 'rechts/abwärts' if movement == 'positive' else 'links/aufwärts'
+
+        status = 'present_recently' if (now - end) <= active_timeout else 'departed_assumed'
+        if departure_detected:
+            status = 'departed_detected'
+        elif arrival_detected and len(entries) == 1 and (now - end) <= active_timeout:
+            status = 'arrived_detected'
+
+        avg_confidence = sum(self._entry_confidence(e) for e in entries) / len(entries) if entries else 0
+        return {
+            'plate_text': last.get('plate_text') or first.get('plate_text') or PlateUtils.pretty(plate),
+            'plate_text_normalized': plate,
+            'start_time': start.isoformat(),
+            'end_time': end.isoformat(),
+            'date': start.date().isoformat(),
+            'duration_seconds': duration_seconds,
+            'duration_label': self._format_duration(duration_seconds),
+            'detections': len(entries),
+            'average_confidence': round(avg_confidence, 4),
+            'first_entry_id': first.get('id'),
+            'last_entry_id': last.get('id'),
+            'vehicle_type': last.get('vehicle_type') or first.get('vehicle_type') or 'Unbekannt',
+            'vehicle_color': last.get('vehicle_color') or first.get('vehicle_color') or 'Unbekannt',
+            'source': last.get('source') or first.get('source') or 'unknown',
+            'status': status,
+            'arrival_detected': bool(arrival_detected or len(entries) >= 1),
+            'departure_detected': bool(departure_detected),
+            'departure_assumed': status == 'departed_assumed',
+            'direction_quality': direction_quality,
+            'movement': movement,
+            'movement_label': movement_label,
+            'movement_delta': round(movement_delta, 2) if movement_delta is not None else None,
+            'has_images': bool(last.get('plate_image') or last.get('vehicle_image') or last.get('full_frame')),
+            'watchlist_match': last.get('watchlist_match') or first.get('watchlist_match')
+        }
+
+    def _format_duration(self, seconds):
+        seconds = int(seconds or 0)
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes = seconds // 60
+        if minutes < 60:
+            return f"{minutes}m {seconds % 60}s"
+        hours = minutes // 60
+        return f"{hours}h {minutes % 60}m"
+
+    def get_traffic_statistics(self, filters=None):
+        sessions, entries, f = self._build_traffic_sessions(filters)
+        daily = defaultdict(lambda: {
+            'date': '', 'detections': 0, 'visits': 0, 'unique_vehicles': set(),
+            'arrivals': 0, 'departures_detected': 0, 'departures_assumed': 0,
+            'present_recently': 0, 'repeat_visits': 0
+        })
+        hourly = defaultdict(int)
+        plate_stats = {}
+
+        for entry in entries:
+            day = entry['_ts'].date().isoformat()
+            daily[day]['date'] = day
+            daily[day]['detections'] += 1
+            daily[day]['unique_vehicles'].add(entry['_plate_norm'])
+            hourly[entry['_ts'].strftime('%Y-%m-%d %H:00')] += 1
+
+        plate_day_visits = defaultdict(lambda: defaultdict(int))
+        for session in sessions:
+            day = session['date']
+            daily[day]['date'] = day
+            daily[day]['visits'] += 1
+            daily[day]['unique_vehicles'].add(session['plate_text_normalized'])
+            daily[day]['arrivals'] += 1 if session.get('arrival_detected') else 0
+            daily[day]['departures_detected'] += 1 if session.get('departure_detected') else 0
+            daily[day]['departures_assumed'] += 1 if session.get('departure_assumed') else 0
+            daily[day]['present_recently'] += 1 if session.get('status') in ('present_recently', 'arrived_detected') else 0
+            plate_day_visits[day][session['plate_text_normalized']] += 1
+
+            p = plate_stats.setdefault(session['plate_text_normalized'], {
+                'plate_text': session['plate_text'], 'normalized': session['plate_text_normalized'],
+                'detections': 0, 'visits': 0, 'days_seen': set(), 'first_seen': session['start_time'],
+                'last_seen': session['end_time'], 'average_confidence_sum': 0.0,
+                'last_status': session['status'], 'vehicle_type': session['vehicle_type'],
+                'vehicle_color': session['vehicle_color'], 'watchlist_match': session.get('watchlist_match')
+            })
+            p['detections'] += session['detections']
+            p['visits'] += 1
+            p['days_seen'].add(day)
+            p['first_seen'] = min(p['first_seen'], session['start_time'])
+            p['last_seen'] = max(p['last_seen'], session['end_time'])
+            p['average_confidence_sum'] += session['average_confidence']
+            p['last_status'] = session['status']
+            p['vehicle_type'] = session['vehicle_type'] or p['vehicle_type']
+            p['vehicle_color'] = session['vehicle_color'] or p['vehicle_color']
+
+        daily_items = []
+        for day, row in sorted(daily.items()):
+            repeats = sum(1 for _, count in plate_day_visits[day].items() if count > 1)
+            daily_items.append({
+                'date': day,
+                'detections': row['detections'],
+                'visits': row['visits'],
+                'unique_vehicles': len(row['unique_vehicles']),
+                'arrivals': row['arrivals'],
+                'departures_detected': row['departures_detected'],
+                'departures_assumed': row['departures_assumed'],
+                'present_recently': row['present_recently'],
+                'repeat_vehicles': repeats
+            })
+
+        plates = []
+        for p in plate_stats.values():
+            visits = max(p['visits'], 1)
+            plates.append({
+                'plate_text': p['plate_text'],
+                'normalized': p['normalized'],
+                'detections': p['detections'],
+                'visits': p['visits'],
+                'days_seen': len(p['days_seen']),
+                'first_seen': p['first_seen'],
+                'last_seen': p['last_seen'],
+                'average_confidence': round(p['average_confidence_sum'] / visits, 4),
+                'last_status': p['last_status'],
+                'vehicle_type': p['vehicle_type'],
+                'vehicle_color': p['vehicle_color'],
+                'watchlist_match': p.get('watchlist_match'),
+                'repeat_vehicle': p['visits'] > 1 or p['detections'] > 1
+            })
+        plates.sort(key=lambda p: (p['visits'], p['detections'], p['last_seen']), reverse=True)
+        repeat_vehicles = [p for p in plates if p['repeat_vehicle']]
+        current_present = [s for s in sessions if s['status'] in ('present_recently', 'arrived_detected')]
+
+        total_visits = len(sessions)
+        total_detections = len(entries)
+        unique_vehicles = len(plate_stats)
+        busiest_day = max(daily_items, key=lambda d: d['visits'], default=None)
+        busiest_hour = max([{'hour': k, 'count': v} for k, v in hourly.items()], key=lambda h: h['count'], default=None)
+
+        return {
+            'filters': {
+                'date_from': f['date_from'].isoformat() if f['date_from'] else None,
+                'date_to': f['date_to'].isoformat() if f['date_to'] else None,
+                'visit_gap_minutes': f['visit_gap_minutes'],
+                'active_timeout_minutes': f['active_timeout_minutes'],
+                'daily_count_mode': f['daily_count_mode'],
+                'min_confidence': f['min_confidence']
+            },
+            'summary': {
+                'total_detections': total_detections,
+                'total_visits': total_visits,
+                'unique_vehicles': unique_vehicles,
+                'repeat_vehicles': len(repeat_vehicles),
+                'currently_present': len(current_present),
+                'departures_detected': sum(1 for s in sessions if s.get('departure_detected')),
+                'departures_assumed': sum(1 for s in sessions if s.get('departure_assumed')),
+                'average_detections_per_visit': round(total_detections / total_visits, 2) if total_visits else 0,
+                'busiest_day': busiest_day,
+                'busiest_hour': busiest_hour,
+                'note': 'Kommen/Gehen wird sicher erkannt, wenn explizite Richtungsdaten vorhanden sind. Ohne Richtungsdaten wird Gehen nach Timeout angenommen.'
+            },
+            'daily': daily_items,
+            'hourly': [{'hour': k, 'count': v} for k, v in sorted(hourly.items())],
+            'top_plates': plates[:50],
+            'repeat_vehicles': repeat_vehicles[:50],
+            'sessions': sessions[:500],
+            'currently_present': current_present[:100]
+        }
+
+    def get_plate_profile(self, plate_text, filters=None):
+        norm = self._normalize_plate(plate_text)
+        sessions, entries, f = self._build_traffic_sessions(filters)
+        plate_sessions = [s for s in sessions if s['plate_text_normalized'] == norm]
+        plate_entries = [e for e in entries if e['_plate_norm'] == norm]
+        days = sorted({s['date'] for s in plate_sessions})
+        return {
+            'plate_text': PlateUtils.pretty(norm),
+            'normalized': norm,
+            'detections': len(plate_entries),
+            'visits': len(plate_sessions),
+            'days_seen': len(days),
+            'days': days,
+            'first_seen': min([s['start_time'] for s in plate_sessions], default=None),
+            'last_seen': max([s['end_time'] for s in plate_sessions], default=None),
+            'sessions': plate_sessions,
+            'entries': [{k: v for k, v in e.items() if not k.startswith('_')} for e in plate_entries[-100:]]
+        }
+
     def get_statistics(self):
         total = len(self.history)
         today = datetime.now().date().isoformat()
+        now = datetime.now()
         today_count = sum(1 for e in self.history if e.get('timestamp', '').startswith(today))
-        
+        last_hour_count = 0
         unique_plates = set()
-        vehicle_types = {}
-        
+        vehicle_types = Counter()
+        vehicle_colors = Counter()
+        sources = Counter()
+        plate_counts = Counter()
+        confidence_values = []
+        hourly = defaultdict(int)
+        daily = defaultdict(int)
+        confidence_buckets = {'0-40': 0, '40-60': 0, '60-80': 0, '80-100': 0}
+
         for e in self.history:
             normalized = self._normalize_plate(e.get('plate_text', ''))
             if normalized:
                 unique_plates.add(normalized)
-            
-            v_type = e.get('vehicle_type', 'unknown')
-            vehicle_types[v_type] = vehicle_types.get(v_type, 0) + 1
-        
-        plate_counts = {}
-        for e in self.history:
-            plate = e.get('plate_text', '')
-            if plate:
-                plate_counts[plate] = plate_counts.get(plate, 0) + 1
-        
-        top_plates = sorted(plate_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-        
+                plate_counts[e.get('plate_text', normalized)] += 1
+
+            vehicle_types[e.get('vehicle_type', 'Unbekannt') or 'Unbekannt'] += 1
+            vehicle_colors[e.get('vehicle_color', 'Unbekannt') or 'Unbekannt'] += 1
+            sources[e.get('source', 'unknown') or 'unknown'] += 1
+
+            confidence = float(e.get('confidence') or 0)
+            confidence_values.append(confidence)
+            if confidence < 0.4:
+                confidence_buckets['0-40'] += 1
+            elif confidence < 0.6:
+                confidence_buckets['40-60'] += 1
+            elif confidence < 0.8:
+                confidence_buckets['60-80'] += 1
+            else:
+                confidence_buckets['80-100'] += 1
+
+            ts = self._parse_datetime(e.get('timestamp'))
+            if ts:
+                daily[ts.date().isoformat()] += 1
+                hourly[ts.strftime('%H:00')] += 1
+                if (now - ts.replace(tzinfo=None)).total_seconds() <= 3600:
+                    last_hour_count += 1
+
+        top_plates = plate_counts.most_common(10)
+        avg_conf = sum(confidence_values) / len(confidence_values) if confidence_values else 0
+        last_detection = self.history[0] if self.history else None
+
+        traffic_preview = self.get_traffic_statistics({'days': 1})
         return {
             'total_detections': total,
             'today_detections': today_count,
+            'last_hour_detections': last_hour_count,
             'unique_plates': len(unique_plates),
-            'vehicle_types': vehicle_types,
-            'top_plates': top_plates
+            'average_confidence': avg_conf,
+            'vehicle_types': dict(vehicle_types),
+            'vehicle_colors': dict(vehicle_colors),
+            'sources': dict(sources),
+            'top_plates': top_plates,
+            'hourly': dict(sorted(hourly.items())),
+            'daily': dict(sorted(daily.items())[-30:]),
+            'confidence_buckets': confidence_buckets,
+            'last_detection': last_detection,
+            'valid_plates': sum(1 for e in self.history if e.get('is_valid_plate', True)),
+            'watchlist_hits': sum(1 for e in self.history if e.get('watchlist_match')),
+            'traffic_today': traffic_preview.get('summary', {})
         }
+
+
+# ============================================================
+# WATCHLIST MANAGER
+# ============================================================
+
+class WatchlistManager:
+    """Bekannte, erlaubte oder gesuchte Kennzeichen verwalten."""
+
+    WATCHLIST_FILE = 'data/watchlist.json'
+
+    def __init__(self):
+        self.items = self.load()
+        self.lock = threading.Lock()
+
+    def load(self):
+        if os.path.exists(self.WATCHLIST_FILE):
+            try:
+                with open(self.WATCHLIST_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Fehler beim Laden der Watchlist: {e}")
+        return []
+
+    def save(self):
+        try:
+            with open(self.WATCHLIST_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.items, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern der Watchlist: {e}")
+            return False
+
+    def list(self):
+        return self.items
+
+    def add(self, plate_text, label='', category='known', notes='', notify=True):
+        normalized = PlateUtils.normalize(plate_text, compact=True)
+        if not normalized:
+            raise ValueError('Leeres Kennzeichen')
+        with self.lock:
+            for item in self.items:
+                if item.get('normalized') == normalized:
+                    item.update({'plate_text': PlateUtils.pretty(plate_text), 'label': label or item.get('label', ''), 'category': category or item.get('category', 'known'), 'notes': notes or item.get('notes', ''), 'notify': bool(notify)})
+                    self.save()
+                    return item
+            item = {
+                'id': str(uuid.uuid4()),
+                'plate_text': PlateUtils.pretty(plate_text),
+                'normalized': normalized,
+                'label': label,
+                'category': category,
+                'notes': notes,
+                'notify': bool(notify),
+                'created_at': datetime.now().isoformat()
+            }
+            self.items.insert(0, item)
+            self.save()
+            return item
+
+    def delete(self, item_id):
+        with self.lock:
+            before = len(self.items)
+            self.items = [i for i in self.items if i.get('id') != item_id and i.get('normalized') != PlateUtils.normalize(item_id, compact=True)]
+            self.save()
+            return len(self.items) != before
+
+    def check(self, plate_text):
+        normalized = PlateUtils.normalize(plate_text, compact=True)
+        if not normalized:
+            return None
+        for item in self.items:
+            if item.get('normalized') == normalized:
+                return item
+        fuzzy_threshold = config_manager.get('history', 'fuzzy_duplicate_similarity') or 0.88
+        for item in self.items:
+            if PlateUtils.similarity(item.get('normalized'), normalized) >= fuzzy_threshold:
+                match = item.copy()
+                match['fuzzy_match'] = True
+                match['similarity'] = PlateUtils.similarity(item.get('normalized'), normalized)
+                return match
+        return None
 
 
 # ============================================================
@@ -418,6 +1403,15 @@ class LicensePlateDetector:
                 traceback.print_exc()
                 return False
     
+    def _yolo_runtime_kwargs(self):
+        kwargs = {}
+        device = self.config_manager.get('models', 'device') or 'auto'
+        if device and device != 'auto':
+            kwargs['device'] = device
+        if self.config_manager.get('models', 'half_precision') and device not in ('cpu', 'auto'):
+            kwargs['half'] = True
+        return kwargs
+
     def _is_duplicate(self, plate_text):
         if not plate_text or len(plate_text) < 3:
             return True
@@ -434,10 +1428,15 @@ class LicensePlateDetector:
             if current_time - v < timeout
         }
         
-        normalized = plate_text.upper().replace(' ', '').replace('-', '')
+        normalized = PlateUtils.normalize(plate_text, compact=True)
         
         if normalized in self.recent_plates:
             return True
+        if self.config_manager.get('history', 'fuzzy_duplicate_detection'):
+            threshold = self.config_manager.get('history', 'fuzzy_duplicate_similarity') or 0.88
+            for recent_plate in self.recent_plates.keys():
+                if PlateUtils.similarity(recent_plate, normalized) >= threshold:
+                    return True
         
         self.recent_plates[normalized] = current_time
         return False
@@ -520,18 +1519,36 @@ class LicensePlateDetector:
                 processed = cv2.resize(processed, (new_width, new_height), 
                                        interpolation=cv2.INTER_CUBIC)
             
+            border_padding = int(config.get('border_padding', 0) or 0)
+            if border_padding > 0:
+                processed = cv2.copyMakeBorder(processed, border_padding, border_padding, border_padding, border_padding, cv2.BORDER_REPLICATE)
+
             if len(processed.shape) == 3:
                 gray = cv2.cvtColor(processed, cv2.COLOR_BGR2GRAY)
             else:
                 gray = processed
             
             variants = [gray.copy()]
+
+            if config.get('gamma_correction'):
+                gamma = float(config.get('gamma', 1.2) or 1.2)
+                gamma = max(0.2, min(gamma, 5.0))
+                inv_gamma = 1.0 / gamma
+                table = np.array([(i / 255.0) ** inv_gamma * 255 for i in range(256)]).astype('uint8')
+                gray = cv2.LUT(gray, table)
+                variants.append(gray.copy())
             
             if config.get('denoise', True):
-                gray = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+                denoise_strength = int(config.get('denoise_strength', 10) or 10)
+                gray = cv2.fastNlMeansDenoising(gray, None, denoise_strength, 7, 21)
+
+            if config.get('bilateral_filter'):
+                gray = cv2.bilateralFilter(gray, 7, 50, 50)
             
             if config.get('contrast_enhance', True):
-                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                clip_limit = float(config.get('clahe_clip_limit', 3.0) or 3.0)
+                tile = int(config.get('clahe_tile_grid', 8) or 8)
+                clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile, tile))
                 gray = clahe.apply(gray)
             
             variants.append(gray.copy())
@@ -542,15 +1559,25 @@ class LicensePlateDetector:
                 variants.append(sharpened)
             
             if config.get('adaptive_threshold', True):
+                block_size = int(config.get('threshold_block_size', 11) or 11)
+                if block_size % 2 == 0:
+                    block_size += 1
+                block_size = max(3, block_size)
+                c_value = int(config.get('threshold_c', 2) or 2)
                 thresh1 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                                cv2.THRESH_BINARY, 11, 2)
+                                                cv2.THRESH_BINARY, block_size, c_value)
                 variants.append(thresh1)
                 
                 _, thresh3 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                 variants.append(thresh3)
+
+            if config.get('morphology', True):
+                kernel = np.ones((2, 2), np.uint8)
+                variants.append(cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel))
             
-            inverted = cv2.bitwise_not(gray)
-            variants.append(inverted)
+            if config.get('invert_variant', True):
+                inverted = cv2.bitwise_not(gray)
+                variants.append(inverted)
             
             return gray, variants
             
@@ -571,27 +1598,56 @@ class LicensePlateDetector:
             
             min_confidence = self.config_manager.get('ocr', 'min_confidence') or 0.25
             allowed_chars = self.config_manager.get('ocr', 'allowed_characters') or ''
+            use_allowlist = self.config_manager.get('ocr', 'use_allowlist')
+            max_variants = int(self.config_manager.get('ocr', 'max_variants_to_read') or 8)
+            early_stop = float(self.config_manager.get('ocr', 'early_stop_confidence') or 0.85)
+            paragraph_mode = bool(self.config_manager.get('ocr', 'paragraph_mode'))
+            decoder = self.config_manager.get('ocr', 'decoder') or 'greedy'
+            rotation_variants = bool(self.config_manager.get('ocr', 'rotation_variants'))
             
+            if rotation_variants:
+                rotated = []
+                for variant in variants[:3]:
+                    try:
+                        rotated.append(cv2.rotate(variant, cv2.ROTATE_180))
+                    except Exception:
+                        pass
+                variants.extend(rotated)
+
             best_result = None
             best_confidence = 0
             
-            for i, variant in enumerate(variants[:6]):
+            for i, variant in enumerate(variants[:max_variants]):
                 try:
-                    results = self.ocr_reader.readtext(variant, detail=1)
+                    kwargs = {'detail': 1, 'paragraph': paragraph_mode, 'decoder': decoder}
+                    if use_allowlist and allowed_chars:
+                        kwargs['allowlist'] = allowed_chars
+                    results = self.ocr_reader.readtext(variant, **kwargs)
                     text, confidence = self._process_ocr_results(results, min_confidence * 0.7, allowed_chars)
                     
                     if text and confidence > best_confidence:
                         best_confidence = confidence
                         best_result = text
                     
-                    if best_confidence >= 0.85:
+                    if best_confidence >= early_stop:
                         break
                         
-                except:
+                except Exception:
                     continue
             
             if best_result:
-                best_result = self._correct_common_errors(best_result)
+                country_hint = self.config_manager.get('plate_recognition', 'country_hint') or 'auto'
+                analysis = PlateUtils.best_candidate(best_result, country_hint=country_hint)
+                best_result = analysis.get('corrected') or self._correct_common_errors(best_result)
+                if not PlateUtils.is_valid(
+                    best_result,
+                    self.config_manager.get('plate_recognition', 'min_length') or 3,
+                    self.config_manager.get('plate_recognition', 'max_length') or 12,
+                    self.config_manager.get('plate_recognition', 'validation_regex') or None
+                ):
+                    return None, 0
+                if self.config_manager.get('plate_recognition', 'format_pretty_output'):
+                    best_result = analysis.get('pretty') or PlateUtils.pretty(best_result)
             
             return best_result, best_confidence
             
@@ -602,52 +1658,44 @@ class LicensePlateDetector:
     def _process_ocr_results(self, results, min_confidence, allowed_chars):
         if not results:
             return None, 0
-        
-        texts = []
-        confidences = []
-        
+
+        candidates = []
+        allowed_upper = allowed_chars.upper() if allowed_chars else ''
         for result in results:
             if len(result) >= 3:
-                bbox, text, confidence = result[0], result[1], result[2]
+                text, confidence = result[1], float(result[2])
             elif len(result) == 2:
-                text, confidence = result[0], result[1]
+                text, confidence = result[0], float(result[1])
             else:
                 continue
-                
-            if confidence >= min_confidence:
-                clean_text = ''.join(c for c in text.upper() 
-                                    if not allowed_chars or c in allowed_chars.upper())
-                if clean_text and len(clean_text) >= 2:
-                    texts.append(clean_text)
-                    confidences.append(confidence)
-        
-        if texts:
-            combined_text = ''.join(texts)
-            combined_text = ' '.join(combined_text.split())
-            avg_confidence = sum(confidences) / len(confidences)
-            return combined_text, avg_confidence
-        
-        return None, 0
-    
+            if confidence < min_confidence:
+                continue
+            raw_text = str(text).upper() if self.config_manager.get('ocr', 'uppercase_output') else str(text)
+            clean_text = ''.join(c for c in raw_text if not allowed_upper or c.upper() in allowed_upper)
+            clean_text = PlateUtils.normalize(clean_text, compact=True)
+            min_text_length = int(self.config_manager.get('ocr', 'min_text_length') or 2)
+            if len(clean_text) >= min_text_length:
+                candidates.append((clean_text, confidence))
+
+        if not candidates:
+            return None, 0
+
+        # Einzelne OCR-Fragmente und zusammengesetzte Variante bewerten.
+        if self.config_manager.get('ocr', 'merge_fragments'):
+            combined = ''.join(c[0] for c in candidates)
+            avg = sum(c[1] for c in candidates) / len(candidates)
+            candidates.append((combined, avg))
+        best_text, best_conf = max(candidates, key=lambda item: (item[1], len(item[0])))
+        return best_text, best_conf
+
     def _correct_common_errors(self, text):
         if not text or len(text) < 2:
             return text
-        
-        result = list(text)
-        
-        for i, char in enumerate(result):
-            prev_is_digit = i > 0 and result[i-1].isdigit()
-            next_is_digit = i < len(result)-1 and result[i+1].isdigit()
-            
-            if char == 'O' and (prev_is_digit or next_is_digit):
-                result[i] = '0'
-            elif char == 'I' and (prev_is_digit or next_is_digit):
-                result[i] = '1'
-            elif char == 'l' and (prev_is_digit or next_is_digit):
-                result[i] = '1'
-        
-        return ''.join(result)
-    
+        if not self.config_manager.get('plate_recognition', 'smart_ocr_correction'):
+            return PlateUtils.normalize(text, compact=True)
+        country_hint = self.config_manager.get('plate_recognition', 'country_hint') or 'auto'
+        return PlateUtils.smart_correct(text, country_hint=country_hint)
+
     def process_frame(self, frame, apply_analysis_area=False):
         """Verarbeitet einen einzelnen Frame"""
         if not self.models_loaded:
@@ -672,9 +1720,15 @@ class LicensePlateDetector:
         
         try:
             confidence_threshold = self.config_manager.get('detection', 'confidence_threshold') or 0.5
-            zoom_enabled = self.config_manager.get('detection', 'zoom_enabled') or True
+            zoom_enabled = self.config_manager.get('detection', 'zoom_enabled') is not False
             zoom_factor = self.config_manager.get('detection', 'zoom_factor') or 2.5
             zoom_padding = self.config_manager.get('detection', 'zoom_padding') or 100
+            max_detections_per_frame = int(self.config_manager.get('detection', 'max_detections_per_frame') or 0)
+            allowed_vehicle_names = set(self.config_manager.get('detection', 'vehicle_class_filter') or ['car', 'truck', 'bus', 'motorcycle'])
+            min_vehicle_width = int(self.config_manager.get('detection', 'min_vehicle_width') or 0)
+            min_vehicle_height = int(self.config_manager.get('detection', 'min_vehicle_height') or 0)
+            annotate_frames = self.config_manager.get('detection', 'annotate_frames') is not False
+            draw_confidence = self.config_manager.get('detection', 'draw_confidence') is not False
             
             annotated = frame.copy()
             detected_vehicles = []
@@ -682,14 +1736,19 @@ class LicensePlateDetector:
             
             # Fahrzeugerkennung
             if self.coco_model and self.config_manager.get('detection', 'car_detection_enabled'):
-                vehicle_results = self.coco_model(frame, conf=confidence_threshold, verbose=False)[0]
+                vehicle_results = self.coco_model(frame, conf=confidence_threshold, verbose=False, **self._yolo_runtime_kwargs())[0]
                 
                 for detection in vehicle_results.boxes.data.tolist():
                     x1, y1, x2, y2, score, class_id = detection
                     class_id = int(class_id)
                     
                     if class_id in self.VEHICLE_CLASSES:
+                        class_name_en = self.VEHICLE_CLASSES_EN.get(class_id, 'unknown')
+                        if allowed_vehicle_names and class_name_en not in allowed_vehicle_names:
+                            continue
                         x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                        if (x2 - x1) < min_vehicle_width or (y2 - y1) < min_vehicle_height:
+                            continue
                         
                         vehicle_crop = frame[y1:y2, x1:x2].copy()
                         vehicle_color = self._estimate_vehicle_color(vehicle_crop)
@@ -704,10 +1763,13 @@ class LicensePlateDetector:
                         }
                         detected_vehicles.append(vehicle_info)
                         
-                        cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                        label = f"{self.VEHICLE_CLASSES[class_id]} ({vehicle_color})"
-                        cv2.putText(annotated, label, (x1, y1 - 10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                        if annotate_frames:
+                            cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                            label = f"{self.VEHICLE_CLASSES[class_id]} ({vehicle_color})"
+                            if draw_confidence:
+                                label += f" {score:.2f}"
+                            cv2.putText(annotated, label, (x1, y1 - 10),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
             
             result['vehicles'] = detected_vehicles
             
@@ -746,6 +1808,13 @@ class LicensePlateDetector:
                             'scale': scale,
                             'vehicle': vehicle
                         })
+                    if self.config_manager.get('detection', 'scan_full_frame_when_vehicle_found'):
+                        frames_to_process.append({
+                            'frame': frame,
+                            'offset': (0, 0),
+                            'scale': 1,
+                            'vehicle': None
+                        })
                 else:
                     frames_to_process.append({
                         'frame': frame,
@@ -763,7 +1832,8 @@ class LicensePlateDetector:
                     if proc_frame is None or proc_frame.size == 0:
                         continue
                     
-                    license_results = self.license_model(proc_frame, conf=0.3, verbose=False)[0]
+                    plate_conf_factor = float(self.config_manager.get('detection', 'plate_detector_confidence_factor') or 0.6)
+                    license_results = self.license_model(proc_frame, conf=max(0.05, confidence_threshold * plate_conf_factor), verbose=False, **self._yolo_runtime_kwargs())[0]
                     
                     for plate_detection in license_results.boxes.data.tolist():
                         px1, py1, px2, py2, plate_score, _ = plate_detection
@@ -777,50 +1847,78 @@ class LicensePlateDetector:
                         
                         if plate_crop_scaled.size == 0:
                             continue
+                        plate_w = max(1, orig_px2 - orig_px1)
+                        plate_h = max(1, orig_py2 - orig_py1)
+                        min_plate_w = self.config_manager.get('detection', 'min_plate_width') or 0
+                        min_plate_h = self.config_manager.get('detection', 'min_plate_height') or 0
+                        if plate_w < min_plate_w or plate_h < min_plate_h:
+                            continue
+                        aspect = plate_w / plate_h
+                        aspect_min = float(self.config_manager.get('detection', 'plate_aspect_ratio_min') or 0)
+                        aspect_max = float(self.config_manager.get('detection', 'plate_aspect_ratio_max') or 99)
+                        if aspect < aspect_min or aspect > aspect_max:
+                            continue
+                        if max_detections_per_frame and len(result['detections']) >= max_detections_per_frame:
+                            break
                         
                         plate_text, ocr_confidence = self._read_plate_enhanced(plate_crop_scaled)
                         
                         min_save_conf = self.config_manager.get('history', 'min_confidence_to_save') or 0.35
                         
                         if not plate_text or ocr_confidence < min_save_conf:
-                            cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), (0, 165, 255), 2)
+                            if annotate_frames:
+                                cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), (0, 165, 255), 2)
                             continue
                         
                         if self._is_duplicate(plate_text):
                             continue
                         
-                        cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), (0, 255, 0), 3)
-                        
-                        text_size = cv2.getTextSize(plate_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
-                        cv2.rectangle(annotated, (orig_px1, orig_py1 - text_size[1] - 15),
-                                     (orig_px1 + text_size[0] + 10, orig_py1), (0, 255, 0), -1)
-                        cv2.putText(annotated, plate_text, (orig_px1 + 5, orig_py1 - 8),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
+                        if annotate_frames:
+                            cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), (0, 255, 0), 3)
+                            label_text = f"{plate_text} {ocr_confidence:.2f}" if draw_confidence else plate_text
+                            text_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
+                            cv2.rectangle(annotated, (orig_px1, orig_py1 - text_size[1] - 15),
+                                         (orig_px1 + text_size[0] + 10, orig_py1), (0, 255, 0), -1)
+                            cv2.putText(annotated, label_text, (orig_px1 + 5, orig_py1 - 8),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
                         
                         # Bilder speichern
                         plate_image_b64 = None
                         vehicle_image_b64 = None
                         
                         if self.config_manager.get('detection', 'save_detected_plates'):
-                            _, buffer = cv2.imencode('.jpg', plate_crop_scaled, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                            plate_quality = int(self.config_manager.get('storage', 'jpeg_quality_plate') or 95)
+                            _, buffer = cv2.imencode('.jpg', plate_crop_scaled, [cv2.IMWRITE_JPEG_QUALITY, plate_quality])
                             plate_image_b64 = base64.b64encode(buffer).decode('utf-8')
                         
                         if self.config_manager.get('detection', 'save_detected_vehicles') and vehicle:
                             vehicle_crop = vehicle.get('crop')
                             if vehicle_crop is not None and vehicle_crop.size > 0:
-                                _, buffer = cv2.imencode('.jpg', vehicle_crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                                vehicle_quality = int(self.config_manager.get('storage', 'jpeg_quality_vehicle') or 90)
+                                _, buffer = cv2.imencode('.jpg', vehicle_crop, [cv2.IMWRITE_JPEG_QUALITY, vehicle_quality])
                                 vehicle_image_b64 = base64.b64encode(buffer).decode('utf-8')
                         
                         detection_info = {
                             'plate_text': plate_text,
                             'confidence': ocr_confidence,
                             'plate_bbox': [orig_px1, orig_py1, orig_px2, orig_py2],
+                            'plate_center_x': round((orig_px1 + orig_px2) / 2, 2),
+                            'plate_center_y': round((orig_py1 + orig_py2) / 2, 2),
+                            'frame_width': frame_w,
+                            'frame_height': frame_h,
+                            'vehicle_bbox': vehicle['bbox'] if vehicle else None,
+                            'vehicle_center_x': round((vehicle['bbox'][0] + vehicle['bbox'][2]) / 2, 2) if vehicle else None,
+                            'vehicle_center_y': round((vehicle['bbox'][1] + vehicle['bbox'][3]) / 2, 2) if vehicle else None,
                             'plate_score': plate_score,
                             'plate_image_base64': plate_image_b64,
                             'vehicle_image_base64': vehicle_image_b64,
                             'vehicle_type': vehicle['type'] if vehicle else 'Unbekannt',
                             'vehicle_type_en': vehicle['type_en'] if vehicle else 'unknown',
                             'vehicle_color': vehicle['color'] if vehicle else 'Unbekannt',
+                            'plate_text_normalized': PlateUtils.normalize(plate_text, compact=True),
+                            'plate_format': PlateUtils.detect_format(plate_text),
+                            'is_valid_plate': PlateUtils.is_valid(plate_text),
+                            'watchlist_match': watchlist_manager.check(plate_text) if self.config_manager.get('plate_recognition', 'watchlist_enabled') else None,
                         }
                         
                         result['detections'].append(detection_info)
@@ -854,6 +1952,7 @@ class LicensePlateDetector:
 
 config_manager = ConfigManager()
 history_manager = HistoryManager()
+watchlist_manager = WatchlistManager()
 detector = LicensePlateDetector(config_manager)
 
 # RTSP Handler importieren
@@ -872,7 +1971,7 @@ threading.Thread(target=init_models, daemon=True).start()
 
 @app.route('/')
 def index():
-    return render_template('index.html', 
+    return render_template('dashboard.html', 
                           page='dashboard',
                           stats=history_manager.get_statistics(),
                           stream_status=stream_manager.get_status(),
@@ -954,6 +2053,20 @@ def history():
                           source_filter=source_filter,
                           vehicle_type_filter=vehicle_type_filter,
                           sort_order=sort_order)
+
+@app.route('/search')
+def search_page():
+    return render_template('search.html',
+                          page='search',
+                          stream_status=stream_manager.get_status(),
+                          config=config_manager.config)
+
+@app.route('/statistics')
+def statistics_page():
+    return render_template('statistics.html',
+                          page='statistics',
+                          stream_status=stream_manager.get_status(),
+                          config=config_manager.config)
 
 @app.route('/rtsp-settings')
 def rtsp_settings():
@@ -1048,6 +2161,12 @@ def api_stream_snapshot():
 # API ROUTEN - KONFIGURATION
 # ============================================================
 
+@app.route('/api/config/reset', methods=['POST'])
+def api_reset_config():
+    config_manager.config = json.loads(json.dumps(config_manager.DEFAULT_CONFIG))
+    config_manager.save_config()
+    return jsonify({'success': True})
+
 @app.route('/api/config', methods=['GET'])
 def api_get_config():
     return jsonify(config_manager.config)
@@ -1135,6 +2254,48 @@ def api_save_history_config():
         return jsonify({'success': False, 'error': str(e)}), 400
 
 
+@app.route('/api/config/storage', methods=['POST'])
+def api_save_storage_config():
+    try:
+        data = request.get_json(silent=True) or {}
+        config_manager.config.setdefault('storage', {})
+        config_manager.config['storage'].update(data)
+        config_manager.save_config()
+        return jsonify({'success': True, 'config': _public_config()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+
+@app.route('/api/config/models', methods=['POST'])
+def api_save_models_config():
+    try:
+        data = request.get_json(silent=True) or {}
+        reload_requested = bool(data.pop('reload', False))
+        config_manager.config.setdefault('models', {})
+        config_manager.config['models'].update(data)
+        config_manager.save_config()
+        if reload_requested:
+            detector.models_loaded = False
+            config_manager.config['models']['last_reload_at'] = datetime.now().isoformat()
+            config_manager.save_config()
+            threading.Thread(target=detector.load_models, daemon=True).start()
+        return jsonify({'success': True, 'config': _public_config(), 'reload': reload_requested})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+
+@app.route('/api/config/about', methods=['POST'])
+def api_save_about_config():
+    try:
+        data = request.get_json(silent=True) or {}
+        config_manager.config.setdefault('about', {})
+        config_manager.config['about'].update(data)
+        config_manager.save_config()
+        return jsonify({'success': True, 'config': _public_config()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+
 # ============================================================
 # API ROUTEN - HISTORIE
 # ============================================================
@@ -1173,6 +2334,99 @@ def api_clear_history():
 @app.route('/api/history/statistics')
 def api_history_statistics():
     return jsonify(history_manager.get_statistics())
+
+@app.route('/api/history/search', methods=['GET', 'POST'])
+def api_history_search():
+    filters = request.get_json(silent=True) if request.method == 'POST' else request.args.to_dict()
+    filters = filters or {}
+    for key in ('unique', 'regex', 'fuzzy', 'valid_only', 'watchlist_only'):
+        if key in filters:
+            filters[key] = str(filters[key]).lower() in ('true', '1', 'yes', 'on')
+    return jsonify(history_manager.search_advanced(filters))
+
+@app.route('/api/history/facets')
+def api_history_facets():
+    return jsonify(history_manager.get_facets())
+
+@app.route('/api/history/export')
+def api_history_export():
+    fmt = request.args.get('format', 'csv').lower()
+    filters = request.args.to_dict()
+    filters['limit'] = int(filters.get('limit') or 100000)
+    rows = history_manager.search_advanced(filters)['entries']
+    filename = f"platevision_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    fields = ['timestamp', 'plate_text', 'plate_text_normalized', 'confidence', 'source', 'vehicle_type', 'vehicle_color', 'plate_format', 'is_valid_plate', 'filename']
+    if fmt == 'json':
+        return Response(json.dumps(rows, indent=2, ensure_ascii=False), mimetype='application/json', headers={'Content-Disposition': f'attachment; filename={filename}.json'})
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return Response(output.getvalue(), mimetype='text/csv; charset=utf-8', headers={'Content-Disposition': f'attachment; filename={filename}.csv'})
+
+@app.route('/api/dashboard/overview')
+def api_dashboard_overview():
+    stats = history_manager.get_statistics()
+    latest = history_manager.get_all(limit=12)
+    status = stream_manager.get_status()
+    return jsonify({
+        'statistics': stats,
+        'latest': latest,
+        'stream': status,
+        'facets': history_manager.get_facets(),
+        'config': {
+            'dashboard': config_manager.get('dashboard'),
+            'search': config_manager.get('search'),
+            'plate_recognition': config_manager.get('plate_recognition')
+        }
+    })
+
+@app.route('/api/plate/normalize', methods=['POST'])
+def api_plate_normalize():
+    data = request.get_json(silent=True) or {}
+    plate = data.get('plate_text') or data.get('plate') or ''
+    return jsonify({
+        'input': plate,
+        'normalized': PlateUtils.normalize(plate, compact=True),
+        'pretty': PlateUtils.pretty(plate),
+        'corrected': PlateUtils.smart_correct(plate, config_manager.get('plate_recognition', 'country_hint') or 'auto'),
+        'format': PlateUtils.detect_format(plate),
+        'valid': PlateUtils.is_valid(plate)
+    })
+
+@app.route('/api/watchlist', methods=['GET', 'POST'])
+def api_watchlist():
+    if request.method == 'GET':
+        return jsonify({'items': watchlist_manager.list(), 'total': len(watchlist_manager.list())})
+    data = request.get_json(silent=True) or {}
+    try:
+        item = watchlist_manager.add(
+            data.get('plate_text') or data.get('plate') or '',
+            data.get('label', ''),
+            data.get('category', 'known'),
+            data.get('notes', ''),
+            data.get('notify', True)
+        )
+        return jsonify({'success': True, 'item': item})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/api/watchlist/<item_id>', methods=['DELETE'])
+def api_watchlist_delete(item_id):
+    return jsonify({'success': watchlist_manager.delete(item_id)})
+
+@app.route('/api/config/advanced', methods=['POST'])
+def api_save_advanced_config():
+    try:
+        data = request.get_json(silent=True) or {}
+        for section in ('general', 'ui', 'privacy', 'plate_recognition', 'search', 'dashboard', 'alerts', 'traffic', 'recognition_profiles'):
+            if section in data:
+                config_manager.config.setdefault(section, {}).update(data[section])
+        config_manager.save_config()
+        return jsonify({'success': True, 'config': config_manager.config})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 
 
@@ -1919,6 +3173,489 @@ def api_delete_job(job_id):
     return jsonify({'success': True})
 
 
+
+
+
+@app.route('/api/system/about')
+def api_system_about():
+    return jsonify({
+        'name': 'PlateVision',
+        'version': '0.7.2',
+        'edition': 'ProTraffic Plus',
+        'features': [
+            'RTSP Live Stream', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
+            'Statistik', 'Suche', 'Watchlist', 'Mehrsprachige Einstellungen',
+            'Erweiterte Original-Einstellungen'
+        ],
+        'config': config_manager.get('about') or {},
+        'models_loaded': detector.models_loaded,
+        'history_count': len(history_manager.history)
+    })
+
+
+# ============================================================
+# API ROUTEN - PRO ERWEITERUNGEN, SPRACHE, EINSTELLUNGEN
+# ============================================================
+
+TRANSLATIONS = {
+    'de': {
+        'dashboard': 'Dashboard', 'history': 'Historie', 'search': 'Suche & Analyse',
+        'statistics': 'Statistik', 'settings': 'Einstellungen', 'diagnostics': 'Diagnose', 'live': 'Live Stream',
+        'latest': 'Letzte Erkennung', 'test': 'Test & Upload', 'stream': 'Stream',
+        'plates': 'Kennzeichen', 'confidence': 'Konfidenz', 'watchlist': 'Watchlist', 'traffic': 'Verkehr', 'arrived': 'Gekommen', 'departed': 'Gegangen'
+    },
+    'en': {
+        'dashboard': 'Dashboard', 'history': 'History', 'search': 'Search & Analysis',
+        'statistics': 'Statistics', 'settings': 'Settings', 'diagnostics': 'Diagnostics', 'live': 'Live Stream',
+        'latest': 'Latest Detection', 'test': 'Test & Upload', 'stream': 'Stream',
+        'plates': 'License plates', 'confidence': 'Confidence', 'watchlist': 'Watchlist', 'traffic': 'Traffic', 'arrived': 'Arrived', 'departed': 'Departed'
+    },
+    'fr': {
+        'dashboard': 'Tableau de bord', 'history': 'Historique', 'search': 'Recherche & Analyse',
+        'statistics': 'Statistiques', 'settings': 'Paramètres', 'diagnostics': 'Diagnostic', 'live': 'Flux en direct',
+        'latest': 'Dernière détection', 'test': 'Test & Upload', 'stream': 'Flux',
+        'plates': 'Plaques', 'confidence': 'Confiance', 'watchlist': 'Liste', 'traffic': 'Trafic', 'arrived': 'Arrivé', 'departed': 'Parti'
+    },
+    'it': {
+        'dashboard': 'Dashboard', 'history': 'Cronologia', 'search': 'Ricerca & Analisi',
+        'statistics': 'Statistiche', 'settings': 'Impostazioni', 'diagnostics': 'Diagnostica', 'live': 'Live Stream',
+        'latest': 'Ultimo rilevamento', 'test': 'Test & Upload', 'stream': 'Stream',
+        'plates': 'Targhe', 'confidence': 'Confidenza', 'watchlist': 'Watchlist', 'traffic': 'Traffico', 'arrived': 'Arrivato', 'departed': 'Uscito'
+    }
+}
+
+
+
+
+@app.context_processor
+def inject_i18n_helpers():
+    lang = config_manager.get('general', 'language') or 'de'
+    translations = TRANSLATIONS.get(lang, TRANSLATIONS['de'])
+    def t(key):
+        return translations.get(key, TRANSLATIONS['de'].get(key, key))
+    return {'lang': lang, 't': t, 'translations': translations}
+
+
+def _deep_update(target, updates):
+    for key, value in (updates or {}).items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_update(target[key], value)
+        else:
+            target[key] = value
+    return target
+
+
+def _public_config():
+    cfg = json.loads(json.dumps(config_manager.config, ensure_ascii=False))
+    rtsp = cfg.get('rtsp', {})
+    if rtsp.get('url'):
+        rtsp['url_masked'] = re.sub(r'//([^:/@]+):([^@]+)@', r'//\1:***@', rtsp['url'])
+    return cfg
+
+
+def _setting_schema():
+    return {
+        'general': {
+            'title': 'Allgemein & Sprache',
+            'fields': {
+                'language': {'type': 'select', 'options': ['de', 'en', 'fr', 'it'], 'label': 'Sprache'},
+                'theme': {'type': 'select', 'options': ['dark', 'light', 'auto'], 'label': 'Design'},
+                'timezone': {'type': 'text', 'label': 'Zeitzone'},
+                'max_history_entries': {'type': 'number', 'label': 'Max. Historie'},
+                'notification_enabled': {'type': 'boolean', 'label': 'Benachrichtigungen'},
+                'debug_mode': {'type': 'boolean', 'label': 'Debug-Modus'}
+            }
+        },
+        'ui': {
+            'title': 'Layout & Oberfläche',
+            'fields': {
+                'accent_color': {'type': 'color', 'label': 'Akzentfarbe'},
+                'density': {'type': 'select', 'options': ['compact', 'comfortable', 'spacious'], 'label': 'Dichte'},
+                'animations': {'type': 'boolean', 'label': 'Animationen'},
+                'sidebar_labels': {'type': 'boolean', 'label': 'Sidebar-Text'},
+                'card_style': {'type': 'select', 'options': ['flat', 'glass', 'bordered'], 'label': 'Kartenstil'},
+                'show_help_text': {'type': 'boolean', 'label': 'Hilfetexte'}
+            }
+        },
+        'plate_recognition': {
+            'title': 'Kennzeichen-Erkennung',
+            'fields': {
+                'country_hint': {'type': 'select', 'options': ['auto', 'CH', 'FL', 'DE', 'AT', 'FR', 'IT'], 'label': 'Länder-Hinweis'},
+                'min_length': {'type': 'number', 'label': 'Min. Länge'},
+                'max_length': {'type': 'number', 'label': 'Max. Länge'},
+                'validation_regex': {'type': 'text', 'label': 'Regex-Validierung'},
+                'smart_ocr_correction': {'type': 'boolean', 'label': 'Intelligente OCR-Korrektur'},
+                'format_pretty_output': {'type': 'boolean', 'label': 'Schöne Ausgabe'},
+                'watchlist_enabled': {'type': 'boolean', 'label': 'Watchlist prüfen'}
+            }
+        },
+        'search': {
+            'title': 'Suche',
+            'fields': {
+                'default_limit': {'type': 'number', 'label': 'Standard-Limit'},
+                'enable_fuzzy_search': {'type': 'boolean', 'label': 'Fuzzy-Suche'},
+                'fuzzy_similarity': {'type': 'number', 'step': 0.01, 'label': 'Fuzzy-Schwelle'},
+                'allow_regex_search': {'type': 'boolean', 'label': 'Regex erlauben'},
+                'remember_last_filters': {'type': 'boolean', 'label': 'Filter merken'}
+            }
+        },
+        'traffic': {
+            'title': 'Verkehrsstatistik & Sessions',
+            'fields': {
+                'visit_gap_minutes': {'type': 'number', 'label': 'Besuch trennen nach Minuten'},
+                'active_timeout_minutes': {'type': 'number', 'label': 'Als gegangen nach Minuten ohne Erkennung'},
+                'daily_count_mode': {'type': 'select', 'options': ['visits', 'detections', 'unique_vehicles'], 'label': 'Tageszählung'},
+                'direction_mode': {'type': 'select', 'options': ['auto', 'explicit', 'spatial', 'timeout'], 'label': 'Kommen/Gehen-Modus'},
+                'min_confidence': {'type': 'number', 'step': 0.01, 'label': 'Min. Konfidenz für Statistik'},
+                'ignore_unknown_plates': {'type': 'boolean', 'label': 'Unbekannte Kennzeichen ignorieren'},
+                'include_duplicate_events': {'type': 'boolean', 'label': 'Duplikat-Events mitzählen'},
+                'movement_axis': {'type': 'select', 'options': ['x', 'y'], 'label': 'Bewegungsachse'},
+                'movement_threshold_percent': {'type': 'number', 'label': 'Bewegungs-Schwelle in %'}
+            }
+        },
+        'privacy': {
+            'title': 'Datenschutz & Aufbewahrung',
+            'fields': {
+                'mask_plate_numbers': {'type': 'boolean', 'label': 'Kennzeichen maskieren'},
+                'blur_plate_images': {'type': 'boolean', 'label': 'Kennzeichenbilder weichzeichnen'},
+                'retention_days': {'type': 'number', 'label': 'Aufbewahrung in Tagen (0 = unbegrenzt)'},
+                'export_include_images': {'type': 'boolean', 'label': 'Bilder in Exporten erlauben'}
+            }
+        },
+        'storage': {
+            'title': 'Speicher',
+            'fields': {
+                'jpeg_quality_plate': {'type': 'number', 'label': 'JPEG Qualität Kennzeichen'},
+                'jpeg_quality_vehicle': {'type': 'number', 'label': 'JPEG Qualität Fahrzeuge'},
+                'auto_cleanup_images': {'type': 'boolean', 'label': 'Bilder automatisch bereinigen'},
+                'cleanup_images_days': {'type': 'number', 'label': 'Bild-Aufbewahrung Tage'},
+                'max_storage_mb': {'type': 'number', 'label': 'Max. Speicher MB'}
+            }
+        },
+        'models': {
+            'title': 'Modelle',
+            'fields': {
+                'device': {'type': 'select', 'options': ['auto', 'cpu', 'cuda', 'mps'], 'label': 'Gerät'},
+                'half_precision': {'type': 'boolean', 'label': 'FP16'},
+                'auto_reload_on_change': {'type': 'boolean', 'label': 'Auto Reload'},
+                'fallback_to_cpu': {'type': 'boolean', 'label': 'CPU-Fallback'}
+            }
+        },
+        'about': {
+            'title': 'Über',
+            'fields': {
+                'release_channel': {'type': 'select', 'options': ['stable', 'beta', 'dev'], 'label': 'Release Kanal'},
+                'support_url': {'type': 'text', 'label': 'Support URL'},
+                'documentation_url': {'type': 'text', 'label': 'Dokumentation URL'}
+            }
+        }
+    }
+
+
+@app.route('/diagnostics')
+def diagnostics_page():
+    return render_template('diagnostics.html', page='diagnostics', stream_status=stream_manager.get_status(), config=config_manager.config)
+
+
+@app.route('/api/i18n')
+def api_i18n():
+    lang = request.args.get('lang') or config_manager.get('general', 'language') or 'de'
+    return jsonify({'language': lang, 'available': list(TRANSLATIONS.keys()), 'translations': TRANSLATIONS.get(lang, TRANSLATIONS['de'])})
+
+
+@app.route('/api/settings/schema')
+def api_settings_schema():
+    return jsonify({'schema': _setting_schema(), 'config': _public_config()})
+
+
+@app.route('/api/config/general', methods=['POST'])
+def api_save_general_config():
+    try:
+        data = request.get_json(silent=True) or {}
+        config_manager.config.setdefault('general', {})
+        config_manager.config['general'].update(data)
+        config_manager.save_config()
+        return jsonify({'success': True, 'config': _public_config()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+
+@app.route('/api/config/ui', methods=['POST'])
+def api_save_ui_config():
+    try:
+        data = request.get_json(silent=True) or {}
+        config_manager.config.setdefault('ui', {})
+        config_manager.config['ui'].update(data)
+        config_manager.save_config()
+        return jsonify({'success': True, 'config': _public_config()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+
+@app.route('/api/config/privacy', methods=['POST'])
+def api_save_privacy_config():
+    try:
+        data = request.get_json(silent=True) or {}
+        config_manager.config.setdefault('privacy', {})
+        config_manager.config['privacy'].update(data)
+        config_manager.save_config()
+        return jsonify({'success': True, 'config': _public_config()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+
+@app.route('/api/config/export')
+def api_config_export():
+    filename = f"platevision_config_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    return Response(json.dumps(config_manager.config, indent=2, ensure_ascii=False), mimetype='application/json', headers={'Content-Disposition': f'attachment; filename={filename}'})
+
+
+@app.route('/api/config/import', methods=['POST'])
+def api_config_import():
+    try:
+        payload = None
+        if request.files.get('file'):
+            payload = json.load(request.files['file'].stream)
+        else:
+            payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError('Keine gültige JSON-Konfiguration')
+        merged = config_manager._merge_configs(config_manager.DEFAULT_CONFIG, payload)
+        config_manager.config = merged
+        config_manager.save_config()
+        return jsonify({'success': True, 'config': _public_config()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+
+@app.route('/api/profile/apply/<profile_name>', methods=['POST'])
+def api_apply_profile(profile_name):
+    profiles = config_manager.get('recognition_profiles', 'profiles') or {}
+    profile = profiles.get(profile_name)
+    if not profile:
+        return jsonify({'success': False, 'error': 'Profil nicht gefunden'}), 404
+    config_manager.config.setdefault('detection', {})['confidence_threshold'] = profile.get('confidence_threshold', config_manager.get('detection', 'confidence_threshold'))
+    config_manager.config.setdefault('detection', {})['process_interval'] = profile.get('process_interval', config_manager.get('detection', 'process_interval'))
+    config_manager.config.setdefault('ocr', {})['min_confidence'] = profile.get('ocr_min_confidence', config_manager.get('ocr', 'min_confidence'))
+    config_manager.config.setdefault('recognition_profiles', {})['active'] = profile_name
+    config_manager.save_config()
+    return jsonify({'success': True, 'active': profile_name, 'config': _public_config()})
+
+
+@app.route('/api/plate/analyze', methods=['POST'])
+def api_plate_analyze():
+    data = request.get_json(silent=True) or {}
+    plate = data.get('plate_text') or data.get('plate') or ''
+    country_hint = data.get('country_hint') or config_manager.get('plate_recognition', 'country_hint') or 'auto'
+    return jsonify({'analysis': PlateUtils.analyze(plate, country_hint=country_hint), 'candidates': PlateUtils.generate_candidates(plate, country_hint=country_hint)})
+
+
+@app.route('/api/plate/batch-analyze', methods=['POST'])
+def api_plate_batch_analyze():
+    data = request.get_json(silent=True) or {}
+    values = data.get('plates') or data.get('values') or []
+    if isinstance(values, str):
+        values = re.split(r'[\n,;]+', values)
+    country_hint = data.get('country_hint') or config_manager.get('plate_recognition', 'country_hint') or 'auto'
+    rows = [{'input': value, 'best': PlateUtils.best_candidate(value, country_hint=country_hint), 'candidates': PlateUtils.generate_candidates(value, country_hint=country_hint, max_candidates=5)} for value in values if str(value).strip()]
+    return jsonify({'rows': rows, 'total': len(rows)})
+
+
+@app.route('/api/history/autocomplete')
+def api_history_autocomplete():
+    q = PlateUtils.normalize(request.args.get('q', ''), compact=True)
+    limit = request.args.get('limit', 12, type=int)
+    counter = Counter()
+    for entry in history_manager.history:
+        plate = PlateUtils.normalize(entry.get('plate_text', ''), compact=True)
+        if plate and (not q or q in plate or PlateUtils.similarity(q, plate) >= 0.65):
+            counter[entry.get('plate_text', plate)] += 1
+    return jsonify({'items': [{'plate_text': plate, 'count': count} for plate, count in counter.most_common(limit)]})
+
+
+@app.route('/api/history/timeline')
+def api_history_timeline():
+    bucket = request.args.get('bucket', 'day')
+    limit = request.args.get('limit', 60, type=int)
+    counts = Counter()
+    for entry in history_manager.history:
+        ts = history_manager._parse_datetime(entry.get('timestamp'))
+        if not ts:
+            continue
+        key = ts.strftime('%Y-%m-%d %H:00') if bucket == 'hour' else ts.date().isoformat()
+        counts[key] += 1
+    items = [{'time': k, 'count': v} for k, v in sorted(counts.items())[-limit:]]
+    return jsonify({'bucket': bucket, 'items': items})
+
+
+@app.route('/api/history/duplicates')
+def api_history_duplicates():
+    threshold = request.args.get('similarity', config_manager.get('history', 'fuzzy_duplicate_similarity') or 0.88, type=float)
+    groups = []
+    used = set()
+    entries = history_manager.history[:1000]
+    for idx, entry in enumerate(entries):
+        if idx in used:
+            continue
+        plate = PlateUtils.normalize(entry.get('plate_text', ''), compact=True)
+        if not plate:
+            continue
+        group = [entry]
+        used.add(idx)
+        for j, other in enumerate(entries[idx + 1:], start=idx + 1):
+            if j in used:
+                continue
+            other_plate = PlateUtils.normalize(other.get('plate_text', ''), compact=True)
+            if other_plate and PlateUtils.similarity(plate, other_plate) >= threshold:
+                group.append(other)
+                used.add(j)
+        if len(group) > 1:
+            groups.append({'plate': entry.get('plate_text', plate), 'normalized': plate, 'count': len(group), 'entries': group[:10]})
+    return jsonify({'groups': groups, 'total_groups': len(groups), 'similarity': threshold})
+
+
+@app.route('/api/history/cleanup', methods=['POST'])
+def api_history_cleanup():
+    data = request.get_json(silent=True) or {}
+    retention_days = int(data.get('retention_days') or config_manager.get('privacy', 'retention_days') or 0)
+    dry_run = str(data.get('dry_run', True)).lower() in ('true', '1', 'yes', 'on')
+    if retention_days <= 0:
+        return jsonify({'success': True, 'deleted': 0, 'kept': len(history_manager.history), 'dry_run': dry_run})
+    cutoff = datetime.now().timestamp() - retention_days * 86400
+    keep, delete = [], []
+    for entry in history_manager.history:
+        ts = history_manager._parse_datetime(entry.get('timestamp'))
+        if ts and ts.timestamp() < cutoff:
+            delete.append(entry)
+        else:
+            keep.append(entry)
+    if not dry_run:
+        with history_manager.lock:
+            history_manager.history = keep
+            history_manager.save_history()
+    return jsonify({'success': True, 'deleted': len(delete), 'kept': len(keep), 'dry_run': dry_run, 'retention_days': retention_days})
+
+
+@app.route('/api/watchlist/export')
+def api_watchlist_export():
+    filename = f"platevision_watchlist_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    return Response(json.dumps(watchlist_manager.list(), indent=2, ensure_ascii=False), mimetype='application/json', headers={'Content-Disposition': f'attachment; filename={filename}'})
+
+
+@app.route('/api/watchlist/import', methods=['POST'])
+def api_watchlist_import():
+    try:
+        payload = None
+        if request.files.get('file'):
+            payload = json.load(request.files['file'].stream)
+        else:
+            payload = request.get_json(silent=True)
+        if isinstance(payload, dict):
+            payload = payload.get('items') or payload.get('watchlist') or []
+        if not isinstance(payload, list):
+            raise ValueError('Watchlist muss eine Liste sein')
+        added = 0
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            plate = item.get('plate_text') or item.get('plate') or item.get('normalized')
+            if plate:
+                watchlist_manager.add(plate, item.get('label', ''), item.get('category', 'known'), item.get('notes', ''), item.get('notify', True))
+                added += 1
+        return jsonify({'success': True, 'added': added, 'items': watchlist_manager.list()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+
+
+@app.route('/api/statistics/traffic')
+def api_statistics_traffic():
+    filters = dict(request.args)
+    return jsonify(history_manager.get_traffic_statistics(filters))
+
+
+@app.route('/api/statistics/plate/<plate_text>')
+def api_statistics_plate(plate_text):
+    filters = dict(request.args)
+    return jsonify(history_manager.get_plate_profile(plate_text, filters))
+
+
+@app.route('/api/statistics/export')
+def api_statistics_export():
+    fmt = (request.args.get('format') or 'csv').lower()
+    data = history_manager.get_traffic_statistics(dict(request.args))
+    filename = f"platevision_traffic_statistics_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    if fmt == 'json':
+        response = app.response_class(
+            response=json.dumps(data, ensure_ascii=False, indent=2),
+            status=200,
+            mimetype='application/json'
+        )
+        response.headers['Content-Disposition'] = f'attachment; filename={filename}.json'
+        return response
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['date', 'detections', 'visits', 'unique_vehicles', 'arrivals', 'departures_detected', 'departures_assumed', 'present_recently', 'repeat_vehicles'])
+    for row in data.get('daily', []):
+        writer.writerow([row.get('date'), row.get('detections'), row.get('visits'), row.get('unique_vehicles'), row.get('arrivals'), row.get('departures_detected'), row.get('departures_assumed'), row.get('present_recently'), row.get('repeat_vehicles')])
+    writer.writerow([])
+    writer.writerow(['plate_text', 'visits', 'detections', 'days_seen', 'first_seen', 'last_seen', 'last_status', 'vehicle_type', 'vehicle_color'])
+    for row in data.get('top_plates', []):
+        writer.writerow([row.get('plate_text'), row.get('visits'), row.get('detections'), row.get('days_seen'), row.get('first_seen'), row.get('last_seen'), row.get('last_status'), row.get('vehicle_type'), row.get('vehicle_color')])
+    response = app.response_class(response=output.getvalue(), status=200, mimetype='text/csv')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}.csv'
+    return response
+
+
+@app.route('/api/config/traffic', methods=['POST'])
+def api_save_traffic_config():
+    try:
+        data = request.get_json(silent=True) or {}
+        config_manager.config.setdefault('traffic', {})
+        config_manager.config['traffic'].update(data)
+        config_manager.save_config()
+        return jsonify({'success': True, 'config': _public_config()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+
+@app.route('/api/system/health')
+def api_system_health():
+    checks = []
+    def add(name, ok, detail=''):
+        checks.append({'name': name, 'ok': bool(ok), 'detail': detail})
+    add('models_directory', os.path.isdir('models'), 'models/')
+    add('vehicle_model', os.path.exists(config_manager.get('models', 'vehicle_detector') or ''), config_manager.get('models', 'vehicle_detector') or '')
+    add('plate_model', os.path.exists(config_manager.get('models', 'license_plate_detector') or ''), config_manager.get('models', 'license_plate_detector') or '')
+    add('history_writable', os.access(os.path.dirname(history_manager.HISTORY_FILE), os.W_OK), history_manager.HISTORY_FILE)
+    add('watchlist_writable', os.access(os.path.dirname(watchlist_manager.WATCHLIST_FILE), os.W_OK), watchlist_manager.WATCHLIST_FILE)
+    add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
+    add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
+    ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.7.2'})
+
+
+@app.route('/api/system/audit')
+def api_system_audit():
+    issues = []
+    suggestions = []
+    if not os.path.exists(config_manager.get('models', 'license_plate_detector') or ''):
+        issues.append({'level': 'warning', 'title': 'Kennzeichen-Modell fehlt', 'detail': 'Ohne license_plate_detector.pt kann keine Kennzeichenerkennung laufen.'})
+    if not os.path.exists(config_manager.get('models', 'vehicle_detector') or ''):
+        issues.append({'level': 'warning', 'title': 'Fahrzeug-Modell fehlt', 'detail': 'Ohne yolov8n.pt ist Fahrzeug-Zoom eingeschränkt.'})
+    if (config_manager.get('ocr', 'min_confidence') or 0) < 0.15:
+        issues.append({'level': 'info', 'title': 'OCR-Konfidenz sehr niedrig', 'detail': 'Das erhöht Treffer, aber auch Fehlalarme.'})
+    if config_manager.get('history', 'duplicate_timeout') and config_manager.get('history', 'duplicate_timeout') < 10:
+        suggestions.append('Duplikat-Timeout auf 30-120 Sekunden setzen, wenn derselbe Wagen mehrfach erkannt wird.')
+    if not config_manager.get('plate_recognition', 'smart_ocr_correction'):
+        suggestions.append('Intelligente OCR-Korrektur aktivieren, um O/0, I/1 und S/5 besser zu behandeln.')
+    if not config_manager.get('search', 'enable_fuzzy_search'):
+        suggestions.append('Fuzzy-Suche aktivieren, damit ähnliche Kennzeichen gefunden werden.')
+    if (config_manager.get('traffic', 'active_timeout_minutes') or 0) < 5:
+        suggestions.append('Traffic-Timeout auf mindestens 10-30 Minuten setzen, damit Kommen/Gehen realistischer ausgewertet wird.')
+    return jsonify({'issues': issues, 'suggestions': suggestions, 'stats': history_manager.get_statistics(), 'config': _public_config()})
+
+
 # ============================================================
 # WEBSOCKET EVENTS
 # ============================================================
@@ -1963,11 +3700,36 @@ def internal_error(e):
 # HAUPTPROGRAMM
 # ============================================================
 
+
+@app.route('/api/system/compatibility')
+def api_system_compatibility():
+    """Reports whether original PlateVision routes and config sections are still present."""
+    original_config_sections = ['rtsp', 'detection', 'ocr', 'general', 'history', 'models']
+    original_routes = [
+        '/', '/dashboard', '/history', '/rtsp-settings', '/settings', '/test', '/live', '/latest',
+        '/api/stream/start', '/api/stream/stop', '/api/stream/status', '/api/stream/resolution', '/api/stream/feed', '/api/stream/snapshot',
+        '/api/config', '/api/config/rtsp', '/api/config/detection', '/api/config/ocr', '/api/config/history',
+        '/api/history', '/api/history/statistics', '/api/storage/info', '/api/process/image', '/api/latest',
+        '/api/models/status', '/api/models/reload', '/api/system/info', '/api/process/video', '/api/process/jobs'
+    ]
+    available_routes = sorted(str(rule.rule) for rule in app.url_map.iter_rules())
+    missing_sections = [section for section in original_config_sections if section not in config_manager.config]
+    missing_routes = [route for route in original_routes if route not in available_routes]
+    return jsonify({
+        'success': True,
+        'original_config_sections_present': len(missing_sections) == 0,
+        'original_routes_present': len(missing_routes) == 0,
+        'missing_config_sections': missing_sections,
+        'missing_routes': missing_routes,
+        'mode': 'additive-extension',
+        'note': 'Original sections/routes are preserved; ProTraffic settings are added on top.'
+    })
+
 if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 4.0                                          ║
+    ║     Version 0.7.2 ProTraffic Plus                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

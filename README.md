@@ -1,3 +1,5 @@
+# PlateVision v0.7.2 ProTraffic Plus
+
 # PlateVision – Home Assistant Add-on
 
 🚗 **Automatic License Plate Recognition for Home Assistant**
@@ -57,6 +59,16 @@ PlateVision connects to your **RTSP camera** and automatically recognizes licens
 - **JSON API** for REST sensors
 - **Automations** possible (e.g., open gate)
 - **Persistent data** – survives updates
+
+
+### 🧠 Pro-Erkennung & Analyse (v0.7.2)
+- Verbesserte Kennzeichen-Normalisierung mit OCR-Korrekturen für typische Verwechslungen wie O/0, I/1, S/5
+- Länder-/Format-Hinweis für CH/DE/AT sowie automatische Format-Erkennung
+- Erweiterte Suche mit Fuzzy-Suche, Regex, Datum, Konfidenz, Quelle, Fahrzeugtyp, Farbe und eindeutigen Kennzeichen
+- CSV/JSON-Export der Historie inklusive Filter
+- Watchlist für bekannte oder wichtige Kennzeichen
+- Neues Dashboard Pro mit Live-Kennzahlen, Charts, Top-Kennzeichen und Schnellaktionen
+- Neue Pro-Einstellungen für OCR-Logik, Suche, Dashboard-Refresh und Benachrichtigungen
 
 ### 🧪 Test Mode
 - **Upload function** for images/videos
@@ -330,3 +342,42 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 
 
 
+
+### 🚦 ProTraffic Statistik (v0.7.2)
+- Neue Statistik-Seite `/statistics` mit Autos pro Tag, eindeutigen Fahrzeugen und Roh-Erkennungen.
+- Wiederkehrer-Analyse: zeigt, wie oft dasselbe Kennzeichen erkannt wurde.
+- Besuchs-/Session-Logik: Mehrfach-Erkennungen eines Autos werden zu einem Besuch gruppiert.
+- Kommen/Gehen-Auswertung: explizite Richtung wird genutzt; ohne Richtung wird „gegangen“ nach Timeout angenommen.
+- CSV-/JSON-Export für Tagesstatistik und Top-Kennzeichen.
+- Neue Traffic-Einstellungen für Besuchslücke, Timeout, Mindestkonfidenz und Bewegungsachse.
+
+## 🔒 Original-Einstellungen bleiben erhalten
+
+Diese Version ist bewusst **additiv** aufgebaut: Die ursprünglichen PlateVision-Einstellungen und API-Endpunkte bleiben erhalten. Neue Funktionen wie Suche, Statistik, Kommen/Gehen-Heuristik, Dashboard-Optionen, Datenschutz und Alerts werden nur ergänzt.
+
+Erhaltene Originalbereiche:
+
+- RTSP: URL, Aktivierung, Reconnect, Buffer, Auflösung, Analysebereich
+- Erkennung: Confidence, Fahrzeugerkennung, Zoom, Intervall, Speichern, Mindestgrössen
+- OCR: Sprachen, GPU, Confidence, Zeichenliste, Modus, Retry, Preprocessing
+- Historie: Duplikatfilter, Timeout, Mindest-Konfidenz, Bildspeicherung
+- Speicher: Platten-/Fahrzeug-/Frame-Speicherung, Auto-Historie, maximale Einträge
+- Allgemein: Sprache, Theme, Benachrichtigungen, Debug
+- Modelle: Fahrzeugmodell und Kennzeichenmodell
+
+Die neue Einstellungsseite basiert wieder auf der Originalstruktur und erweitert sie um zusätzliche Tabs.
+
+### ⚙️ Erweiterte Original-Einstellungen (v0.7.2)
+
+Alle Original-Bereiche bleiben erhalten und wurden erweitert:
+
+- **Erkennung**: Fahrzeugklassen, Seitenverhältnis-Filter, maximale Erkennungen, Vollbild-Zusatzscan, Annotationen, Confidence-Anzeige.
+- **OCR / Texterkennung**: Decoder, Allowlist, Rotation-Varianten, Early-Stop, Fragment-Merge, OCR-Variantenlimit.
+- **Bildvorverarbeitung**: Gamma, CLAHE, Denoise-Stärke, Threshold-Parameter, Invert-Variante, Bilateralfilter, Rand-Padding.
+- **Historie**: Fuzzy-Duplikate, Besuchsgruppen, Roh-OCR, Kandidaten, Positionsdaten, Auto-Cleanup, Exportformat.
+- **Speicher**: JPEG-Qualität, Tagesordner, Metadaten-JSON, Thumbnail-Optionen, Speicherlimit, Bild-Cleanup.
+- **Allgemein**: Sprache DE/EN/FR/IT, Theme Auto, Zeitzone, Startseite, Log-Level, Standortname, Bediener, Barrierearm-Modus.
+- **Modelle**: editierbare Modellpfade, Gerät-Auswahl, Auto-Reload, Warmup, FP16, CPU-Fallback, Modellordner.
+- **Über**: Version, Release-Kanal, Support-/Dokumentations-URLs, Lizenzhinweis.
+
+Neue APIs: `/api/config/storage`, `/api/config/models`, `/api/config/about`, `/api/system/about`.

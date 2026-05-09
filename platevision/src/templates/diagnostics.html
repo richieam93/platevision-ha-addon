@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Diagnose - PlateVision{% endblock %}
+{% block page_title %}Diagnose & Audit{% endblock %}
+{% block content %}
+<div class="layout-upgrade-banner mb-3"><i class="fas fa-wand-magic-sparkles me-2"></i>Diagnose prüft jetzt auch sinnvolle Traffic-Timeouts.</div>
+<div class="pro-hero mb-4"><h2>Systemdiagnose</h2><p class="text-secondary mb-0">Prüft Modelle, Speicher, Stream, Konfiguration und gibt Empfehlungen.</p></div>
+<div class="row g-4"><div class="col-lg-6"><div class="soft-card p-3"><h5><i class="fas fa-heartbeat text-success me-2"></i>Health Checks</h5><div id="healthRows" class="d-grid gap-2 mt-3"></div></div></div><div class="col-lg-6"><div class="soft-card p-3"><h5><i class="fas fa-lightbulb text-warning me-2"></i>Empfehlungen</h5><div id="auditRows" class="mt-3 text-secondary">Lade...</div></div></div></div>
+{% endblock %}
+{% block extra_js %}
+<script>
+function loadDiag(){fetch('/api/system/health').then(r=>r.json()).then(d=>{healthRows.innerHTML=(d.checks||[]).map(c=>`<div class="border rounded p-3 d-flex justify-content-between" style="border-color:var(--card-border)!important"><div><b>${c.name}</b><div class="text-secondary small">${c.detail||''}</div></div><span class="badge ${c.ok?'bg-success':'bg-warning text-dark'} align-self-start">${c.ok?'OK':'Prüfen'}</span></div>`).join('');});fetch('/api/system/audit').then(r=>r.json()).then(d=>{auditRows.innerHTML=[...(d.issues||[]).map(i=>`<div class="alert alert-${i.level==='warning'?'warning':'info'}"><b>${i.title}</b><br>${i.detail}</div>`),...(d.suggestions||[]).map(s=>`<div class="border rounded p-2 mb-2" style="border-color:var(--card-border)!important"><i class="fas fa-check text-success me-2"></i>${s}</div>`)].join('')||'<div class="text-success">Keine offenen Empfehlungen.</div>';});}
+document.addEventListener('DOMContentLoaded',loadDiag);
+</script>
+{% endblock %}

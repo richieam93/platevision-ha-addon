@@ -473,9 +473,17 @@ class RTSPHandler:
             "full_frame": detection.get('full_frame_base64'),
             "vehicle_type": detection.get('vehicle_type', 'Unbekannt'),
             "vehicle_color": detection.get('vehicle_color', 'Unbekannt'),
+            "plate_bbox": detection.get('plate_bbox'),
+            "vehicle_bbox": detection.get('vehicle_bbox'),
+            "plate_center_x": detection.get('plate_center_x'),
+            "plate_center_y": detection.get('plate_center_y'),
+            "vehicle_center_x": detection.get('vehicle_center_x'),
+            "vehicle_center_y": detection.get('vehicle_center_y'),
+            "frame_width": detection.get('frame_width'),
+            "frame_height": detection.get('frame_height'),
         }
         
-        saved_entry = self.history_manager.add_entry(entry, check_duplicate=False)
+        saved_entry = self.history_manager.add_entry(entry, check_duplicate=True)
         
         if saved_entry:
             self.detection_count += 1

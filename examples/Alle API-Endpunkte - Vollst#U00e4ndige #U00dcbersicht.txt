@@ -1,0 +1,84 @@
+Alle API-Endpunkte - Vollständige Übersicht
+
+🎬 Stream-Kontrolle
+Methode	Endpoint	Beschreibung
+POST	/api/stream/start	RTSP-Stream starten
+POST	/api/stream/stop	RTSP-Stream stoppen
+GET	/api/stream/status	Stream-Status abrufen
+GET	/api/stream/resolution	Stream-Auflösung abrufen
+GET	/api/stream/feed	Live-Video-Feed (MJPEG)
+GET	/api/stream/snapshot	Einzelnes Bild vom Stream
+
+⚙️ Konfiguration
+Methode	Endpoint	Beschreibung
+GET	/api/config	Gesamte Konfiguration abrufen
+POST	/api/config	Gesamte Konfiguration speichern
+POST	/api/config/rtsp	RTSP-Einstellungen speichern
+POST	/api/config/detection	Erkennungs-Einstellungen speichern
+POST	/api/config/ocr	OCR-Einstellungen speichern
+POST	/api/config/history	Historie-Einstellungen speichern
+
+📜 Historie
+Methode	Endpoint	Beschreibung
+GET	/api/history	Historie abrufen (mit Pagination)
+GET	/api/history/<entry_id>	Einzelnen Eintrag abrufen
+DELETE	/api/history/<entry_id>	Eintrag löschen
+POST	/api/history/clear	Gesamte Historie löschen
+GET	/api/history/statistics	Statistiken abrufen
+
+🖼️ Bildverarbeitung
+Methode	Endpoint	Beschreibung
+POST	/api/process/image	Bild hochladen & analysieren
+
+Letzte Erkennung (Latest)
+Methode	Endpoint	Rückgabe	Beschreibung
+GET	/api/latest	JSON	Kompletter letzter Eintrag
+GET	/api/latest/plate	JSON	Nur Kennzeichen-Daten
+GET	/api/latest/plate/image	JPEG	Kennzeichen-Bild
+GET	/api/latest/vehicle	JSON	Nur Fahrzeug-Daten
+GET	/api/latest/vehicle/image	JPEG	Fahrzeug-Bild
+GET	/api/latest/full	JSON	Alles inkl. Base64-Bilder
+GET	/api/latest/image	JPEG	Bestes verfügbares Bild
+
+
+🤖 System & Modelle
+Methode	Endpoint	Beschreibung
+GET	/api/models/status	Modell-Status abrufen
+POST	/api/models/reload	Modelle neu laden
+GET	/api/system/info	System-Informationen
+
+
+🎥 Video-Verarbeitung 
+Methode	Endpoint	Beschreibung
+POST	/api/process/video	Video hochladen & verarbeiten
+GET	/api/process/video/<job_id>/status	Job-Status abrufen
+GET	/api/process/video/<job_id>/output	Verarbeitetes Video herunterladen
+GET	/api/process/jobs	Alle Jobs auflisten
+DELETE	/api/process/jobs/<job_id>	Job löschen
+
+
+
+# Stream
+http://192.168.1.240:8087/api/stream/status
+http://192.168.1.240:8087/api/stream/snapshot
+
+# Letzte Erkennung
+http://192.168.1.240:8087/api/latest
+http://192.168.1.240:8087/api/latest/plate
+http://192.168.1.240:8087/api/latest/plate/image
+http://192.168.1.240:8087/api/latest/vehicle
+http://192.168.1.240:8087/api/latest/vehicle/image
+http://192.168.1.240:8087/api/latest/full
+http://192.168.1.240:8087/api/latest/image
+
+# Historie
+http://192.168.1.240:8087/api/history
+http://192.168.1.240:8087/api/history/statistics
+
+# System
+http://192.168.1.240:8087/api/system/info
+http://192.168.1.240:8087/api/models/status
+http://192.168.1.240:8087/api/config
+
+# Jobs
+http://192.168.1.240:8087/api/process/jobs
