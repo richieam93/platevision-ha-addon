@@ -445,7 +445,7 @@ class RTSPHandler:
                                 self._handle_detection(detection, results)
 
                         for person in results.get('people', []):
-                            self._handle_person_detection(person, results)
+                            self._handle_person_detection(person, results, frame=frame, annotated=annotated)
                                 
                     except Exception as e:
                         logger.error(f"Erkennungsfehler: {e}")
@@ -531,7 +531,7 @@ class RTSPHandler:
                 pass  # SocketIO nicht verfügbar oder Fehler
 
 
-    def _handle_person_detection(self, person, full_results):
+    def _handle_person_detection(self, person, full_results, frame=None, annotated=None):
         """Speichert Personenereignisse in separater Historie."""
         if not self.person_history_manager:
             return
@@ -554,7 +554,7 @@ class RTSPHandler:
             'source': 'rtsp',
             'source_model': person.get('source_model'),
         }
-        saved = self.person_history_manager.add_event(event)
+        saved = self.person_history_manager.add_event(event, frame=frame, annotated_frame=annotated)
         if saved:
             try:
                 from flask_socketio import emit

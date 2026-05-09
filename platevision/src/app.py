@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.3 ProTraffic People Test Upload & Model Upload
+Version 0.8.5 ProTraffic People Image History & Recount Guard
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -68,6 +68,9 @@ DIRECTORIES = [
     'data/history',
     'data/people',
     'data/people/images',
+    'data/people/images/crops',
+    'data/people/images/full_frames',
+    'data/people/images/annotated',
     'data/models',
     'models',
     'templates'
@@ -546,6 +549,19 @@ class ConfigManager:
             'save_full_frame': False,
             'privacy_blur_people': False,
             'blur_strength': 35,
+            'person_recount_block_enabled': True,
+            'person_recount_block_minutes': 15,
+            'person_recount_identity_mode': 'track_or_position',
+            'person_recount_position_tolerance_percent': 12,
+            'image_history_enabled': True,
+            'image_history_store_crop': False,
+            'image_history_store_annotated': True,
+            'image_history_store_full_frame': False,
+            'image_history_jpeg_quality': 85,
+            'image_history_retention_days': 90,
+            'image_history_auto_cleanup_enabled': False,
+            'image_history_cleanup_on_add': True,
+            'image_history_last_cleanup': '',
             'test_environment_enabled': True,
             'test_image_upload_enabled': True,
             'test_force_enable_people': True,
@@ -556,6 +572,12 @@ class ConfigManager:
             'auto_cleanup_enabled': False,
             'export_default_format': 'csv',
             'alert_threshold_per_hour': 0,
+            'settings_preview_enabled': True,
+            'settings_preview_refresh_seconds': 5,
+            'settings_preview_show_fallback': True,
+            'settings_preview_fallback_label': 'RTSP Stream nicht erreichbar - Kalibrierungsbild',
+            'calibration_preview_enabled': True,
+            'test_apply_saved_settings': True,
             'note': 'Personenzählung ist ohne klare Zähllinie oder zweite Kamera heuristisch.'
         },
         'alerts': {
@@ -1450,7 +1472,8 @@ class PersonHistoryManager:
 
     def __init__(self):
         self.history = self.load_history()
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self._last_auto_cleanup_ts = 0
 
     def load_history(self):
         if os.path.exists(self.HISTORY_FILE):
@@ -1479,7 +1502,186 @@ class PersonHistoryManager:
         except Exception:
             return None
 
-    def add_event(self, event, check_duplicate=True):
+    IMAGE_ROOT = Path('data/people/images')
+
+    def _cfg(self):
+        try:
+            return config_manager.get('people') or {}
+        except Exception:
+            return {}
+
+    def _event_dt(self, item):
+        return self._parse_datetime((item or {}).get('timestamp'))
+
+    def _position_signature(self, item, tolerance_percent=None):
+        """Build a privacy-friendly signature from track/location without face recognition."""
+        cfg = self._cfg()
+        tol = float(tolerance_percent or cfg.get('person_recount_position_tolerance_percent') or 12)
+        tol = max(1.0, min(50.0, tol))
+        fw = float(item.get('frame_width') or 100)
+        fh = float(item.get('frame_height') or 100)
+        cx = float(item.get('center_x') or 0)
+        cy = float(item.get('center_y') or 0)
+        bbox = item.get('bbox') or []
+        if len(bbox) == 4:
+            area = max(0, float(bbox[2]) - float(bbox[0])) * max(0, float(bbox[3]) - float(bbox[1]))
+        else:
+            area = float(item.get('area_percent') or 0) * fw * fh / 100.0
+        bx = round((cx / max(1.0, fw) * 100.0) / tol)
+        by = round((cy / max(1.0, fh) * 100.0) / tol)
+        ba = round(((area / max(1.0, fw * fh)) * 100.0) / max(1.0, tol / 2.0))
+        source = item.get('source') or 'unknown'
+        return f"pos:{source}:{bx}:{by}:{ba}"
+
+    def _identity_keys(self, item):
+        cfg = self._cfg()
+        mode = cfg.get('person_recount_identity_mode') or 'track_or_position'
+        source = item.get('source') or 'unknown'
+        keys = []
+        track_id = item.get('track_id')
+        if track_id is not None and str(track_id) != '' and mode in ('track', 'track_only', 'track_or_position'):
+            keys.append(f"track:{source}:{track_id}")
+        if mode in ('position', 'position_only', 'track_or_position'):
+            keys.append(self._position_signature(item))
+        return keys
+
+    def _recent_counted_match(self, item):
+        cfg = self._cfg()
+        if not cfg.get('person_recount_block_enabled', True):
+            return None
+        if not item.get('counted', True):
+            return None
+        minutes = float(cfg.get('person_recount_block_minutes') or 0)
+        if minutes <= 0:
+            return None
+        ts = self._event_dt(item) or datetime.now()
+        ts = ts.replace(tzinfo=None) if getattr(ts, 'tzinfo', None) else ts
+        cutoff = ts - timedelta(minutes=minutes)
+        keys = set(self._identity_keys(item))
+        if not keys:
+            return None
+        for old in self.history:
+            if not old.get('counted'):
+                continue
+            old_ts = self._event_dt(old)
+            if not old_ts:
+                continue
+            old_ts = old_ts.replace(tzinfo=None) if getattr(old_ts, 'tzinfo', None) else old_ts
+            if old_ts < cutoff:
+                # history is newest first; older entries can be skipped.
+                continue
+            if keys.intersection(self._identity_keys(old)):
+                return old
+        return None
+
+    def _prepare_image(self, image, item=None, blur_people=False):
+        if image is None:
+            return None
+        out = image.copy()
+        if blur_people and item:
+            try:
+                bbox = item.get('bbox') or []
+                if len(bbox) == 4:
+                    x1, y1, x2, y2 = [int(float(v)) for v in bbox]
+                    h, w = out.shape[:2]
+                    x1, y1 = max(0, x1), max(0, y1)
+                    x2, y2 = min(w, x2), min(h, y2)
+                    if x2 > x1 and y2 > y1:
+                        k = int(self._cfg().get('blur_strength') or 35)
+                        k = k if k % 2 == 1 else k + 1
+                        out[y1:y2, x1:x2] = cv2.GaussianBlur(out[y1:y2, x1:x2], (k, k), 0)
+            except Exception as exc:
+                logger.warning(f"Personen-Weichzeichnung fehlgeschlagen: {exc}")
+        return out
+
+    def _save_jpeg(self, image, relative_path, quality=85):
+        if image is None:
+            return None
+        target = self.IMAGE_ROOT / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        ok, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
+        if not ok:
+            return None
+        target.write_bytes(buffer.tobytes())
+        return str(relative_path).replace('\\\\', '/')
+
+    def attach_images(self, item, frame=None, annotated_frame=None):
+        cfg = self._cfg()
+        if not cfg.get('image_history_enabled', True):
+            return {}
+        if frame is None and annotated_frame is None:
+            return {}
+        quality = int(cfg.get('image_history_jpeg_quality') or 85)
+        quality = max(35, min(100, quality))
+        date_part = str(item.get('timestamp') or datetime.now().isoformat())[:10]
+        safe_id = str(item.get('id') or uuid.uuid4()).replace('/', '_')
+        images = dict(item.get('images') or {})
+        blur = bool(cfg.get('privacy_blur_people'))
+        try:
+            if cfg.get('save_person_crops') or cfg.get('image_history_store_crop'):
+                bbox = item.get('bbox') or []
+                if frame is not None and len(bbox) == 4:
+                    h, w = frame.shape[:2]
+                    x1, y1, x2, y2 = [int(float(v)) for v in bbox]
+                    pad = int(cfg.get('image_history_crop_padding_px') or 8)
+                    x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
+                    x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
+                    if x2 > x1 and y2 > y1:
+                        crop = frame[y1:y2, x1:x2].copy()
+                        if blur:
+                            k = int(cfg.get('blur_strength') or 35)
+                            k = k if k % 2 == 1 else k + 1
+                            crop = cv2.GaussianBlur(crop, (k, k), 0)
+                        rel = Path('crops') / date_part / f'{safe_id}.jpg'
+                        saved = self._save_jpeg(crop, rel, quality)
+                        if saved:
+                            images['crop'] = saved
+            if cfg.get('save_full_frame') or cfg.get('image_history_store_full_frame'):
+                img = self._prepare_image(frame, item, blur) if frame is not None else None
+                saved = self._save_jpeg(img, Path('full_frames') / date_part / f'{safe_id}.jpg', quality)
+                if saved:
+                    images['full_frame'] = saved
+            if cfg.get('image_history_store_annotated', True):
+                img = self._prepare_image(annotated_frame, item, blur) if annotated_frame is not None else None
+                saved = self._save_jpeg(img, Path('annotated') / date_part / f'{safe_id}.jpg', quality)
+                if saved:
+                    images['annotated'] = saved
+        except Exception as exc:
+            logger.warning(f"Personenbild konnte nicht gespeichert werden: {exc}")
+        if images:
+            item['images'] = images
+        return images
+
+    def _delete_images_for_item(self, item):
+        images = (item or {}).get('images') or {}
+        deleted = 0
+        for rel in list(images.values()):
+            try:
+                target = (self.IMAGE_ROOT / str(rel)).resolve()
+                root = self.IMAGE_ROOT.resolve()
+                if str(target).startswith(str(root)) and target.exists() and target.is_file():
+                    target.unlink()
+                    deleted += 1
+            except Exception as exc:
+                logger.warning(f"Personenbild konnte nicht gelöscht werden: {rel} - {exc}")
+        return deleted
+
+    def _maybe_auto_cleanup_images(self):
+        cfg = self._cfg()
+        if not cfg.get('image_history_auto_cleanup_enabled') and not cfg.get('auto_cleanup_enabled'):
+            return
+        if not cfg.get('image_history_cleanup_on_add', True):
+            return
+        now = time.time()
+        if now - float(getattr(self, '_last_auto_cleanup_ts', 0) or 0) < 3600:
+            return
+        self._last_auto_cleanup_ts = now
+        try:
+            self.cleanup_images(cfg.get('image_history_retention_days') or cfg.get('retention_days'))
+        except Exception as exc:
+            logger.warning(f"Auto-Cleanup Personenbilder fehlgeschlagen: {exc}")
+
+    def add_event(self, event, check_duplicate=True, frame=None, annotated_frame=None):
         if not (config_manager.get('people', 'history_enabled') is not False):
             return None
         with self.lock:
@@ -1492,20 +1694,110 @@ class PersonHistoryManager:
             item.setdefault('counted', True)
             item.setdefault('confidence', 0)
             item.setdefault('track_id', None)
+            if item.get('counted'):
+                match = self._recent_counted_match(item)
+                if match:
+                    item['counted_original'] = True
+                    item['counted'] = False
+                    item['repeat_blocked'] = True
+                    item['repeat_block_minutes'] = int(float(self._cfg().get('person_recount_block_minutes') or 15))
+                    item['repeat_match_id'] = match.get('id')
+                    item['event_type'] = 'repeat_blocked'
+                    item['note'] = f"Nicht erneut gezählt: ähnliche Person/Track innerhalb von {item['repeat_block_minutes']} Minuten."
+            self.attach_images(item, frame=frame, annotated_frame=annotated_frame)
             self.history.insert(0, item)
             max_entries = int(config_manager.get('general', 'max_history_entries') or 1000)
             if len(self.history) > max_entries:
+                removed = self.history[max_entries:]
+                for old in removed:
+                    self._delete_images_for_item(old)
                 self.history = self.history[:max_entries]
             self.save_history()
+            self._maybe_auto_cleanup_images()
             return item
 
     def get_all(self, limit=100, offset=0):
         return self.history[offset:offset + limit]
 
-    def clear_history(self):
+    def clear_history(self, delete_images=True):
         with self.lock:
+            deleted_images = 0
+            if delete_images:
+                for item in self.history:
+                    deleted_images += self._delete_images_for_item(item)
             self.history = []
             self.save_history()
+            return {'deleted_images': deleted_images}
+
+    def delete_event(self, event_id, delete_images=True):
+        with self.lock:
+            kept = []
+            deleted = None
+            deleted_images = 0
+            for item in self.history:
+                if str(item.get('id')) == str(event_id):
+                    deleted = item
+                    if delete_images:
+                        deleted_images += self._delete_images_for_item(item)
+                else:
+                    kept.append(item)
+            if deleted is None:
+                return {'success': False, 'deleted': 0, 'deleted_images': 0}
+            self.history = kept
+            self.save_history()
+            return {'success': True, 'deleted': 1, 'deleted_images': deleted_images, 'item': deleted}
+
+    def image_history(self, filters=None):
+        filters = filters or {}
+        limit = int(filters.get('limit') or 60)
+        offset = int(filters.get('offset') or 0)
+        rows = []
+        for item in self.search(filters):
+            images = item.get('images') or {}
+            if not images:
+                continue
+            row = dict(item)
+            row['image_urls'] = {k: f"/api/people/images/{v}" for k, v in images.items()}
+            rows.append(row)
+        return {'entries': rows[offset:offset + limit], 'total': len(rows), 'limit': limit, 'offset': offset}
+
+    def cleanup_images(self, retention_days=None, delete_orphan_files=True, delete_records=False):
+        """Delete old person image files. By default keep the statistical person events."""
+        cfg = self._cfg()
+        days = int(retention_days or cfg.get('image_history_retention_days') or cfg.get('retention_days') or 0)
+        if days <= 0:
+            return {'cleared_image_events': 0, 'removed_events': 0, 'deleted_images': 0, 'remaining': len(self.history), 'retention_days': days}
+        cutoff = datetime.now() - timedelta(days=days)
+        deleted_images = 0
+        removed_events = 0
+        cleared_image_events = 0
+        kept = []
+        with self.lock:
+            for item in self.history:
+                ts = self._event_dt(item)
+                ts = ts.replace(tzinfo=None) if ts and getattr(ts, 'tzinfo', None) else ts
+                if ts and ts < cutoff and item.get('images'):
+                    deleted_images += self._delete_images_for_item(item)
+                    cleared_image_events += 1
+                    if delete_records:
+                        removed_events += 1
+                        continue
+                    item['images'] = {}
+                    item['images_deleted_at'] = datetime.now().isoformat()
+                kept.append(item)
+            self.history = kept
+            self.save_history()
+        # delete orphan files older than cutoff
+        if delete_orphan_files and self.IMAGE_ROOT.exists():
+            for file in self.IMAGE_ROOT.rglob('*.jpg'):
+                try:
+                    mtime = datetime.fromtimestamp(file.stat().st_mtime)
+                    if mtime < cutoff:
+                        file.unlink()
+                        deleted_images += 1
+                except Exception:
+                    pass
+        return {'cleared_image_events': cleared_image_events, 'removed_events': removed_events, 'deleted_images': deleted_images, 'remaining': len(self.history), 'retention_days': days}
 
     def _filters(self, filters=None):
         filters = filters or {}
@@ -2680,7 +2972,7 @@ def settings():
 
 @app.route('/test')
 def test_page():
-    return render_template('test.html', page='test', jobs=video_processing_jobs)
+    return render_template('test.html', page='test', jobs=video_processing_jobs, config=config_manager.config)
 
 @app.route('/live')
 def live_view():
@@ -3300,7 +3592,9 @@ def api_process_image():
             if person.get('counted') or config_manager.get('people', 'save_all_detections'):
                 event = dict(person)
                 event.update({'source': 'image_upload', 'filename': file.filename})
-                person_history_manager.add_event(event)
+                saved_person_event = person_history_manager.add_event(event, frame=image, annotated_frame=result.get('annotated_frame'))
+                if saved_person_event:
+                    person.update({k: saved_person_event.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved_person_event})
         
         return jsonify({
             'success': True,
@@ -3639,6 +3933,174 @@ def _safe_image_upload(file_storage):
     if image is None:
         return None, 'Ungültiges oder beschädigtes Bild'
     return {'filename': filename, 'data': data, 'image': image, 'suffix': suffix}, None
+
+
+
+def _people_config_with_overrides(overrides=None):
+    """Return a deep-copied people configuration with optional temporary overrides."""
+    base = json.loads(json.dumps(config_manager.get('people') or {}, ensure_ascii=False))
+    if isinstance(overrides, dict):
+        _deep_update(base, overrides)
+    return base
+
+
+def _people_cfg_from_preview_args(args):
+    """Build safe people preview overrides from query parameters."""
+    def as_bool(value, default=False):
+        return _bool_from_request(value, default)
+    def as_float(value, default):
+        try:
+            return float(value)
+        except Exception:
+            return default
+    cfg = {}
+    if 'enabled' in args:
+        cfg['enabled'] = as_bool(args.get('enabled'))
+    if 'draw_boxes' in args:
+        cfg['draw_boxes'] = as_bool(args.get('draw_boxes'), True)
+    if 'line_enabled' in args:
+        cfg['line_crossing_enabled'] = as_bool(args.get('line_enabled'), True)
+    if 'line_percent' in args:
+        cfg['virtual_line_position_percent'] = max(1, min(99, as_float(args.get('line_percent'), 50)))
+    if 'movement_axis' in args:
+        cfg['movement_axis'] = 'x' if str(args.get('movement_axis')).lower() == 'x' else 'y'
+    if 'crossing_direction' in args:
+        cfg['crossing_direction'] = str(args.get('crossing_direction') or 'both')
+    if 'count_strategy' in args:
+        cfg['count_strategy'] = str(args.get('count_strategy') or 'line_crossing')
+    if 'confidence' in args:
+        cfg['confidence_threshold'] = max(0, min(1, as_float(args.get('confidence'), 0.45)))
+    if 'zone_enabled' in args:
+        cfg['zone_enabled'] = as_bool(args.get('zone_enabled'))
+    zone = {}
+    for key, target in [('zone_x','x'), ('zone_y','y'), ('zone_w','width'), ('zone_h','height')]:
+        if key in args:
+            zone[target] = max(0, min(100, as_float(args.get(key), 0 if target in ('x','y') else 100)))
+    if zone:
+        existing = cfg.get('zone') if isinstance(cfg.get('zone'), dict) else {}
+        existing.update(zone)
+        existing['unit'] = 'percent'
+        cfg['zone'] = existing
+    return cfg
+
+
+def _create_people_preview_fallback(width=1280, height=720, message=None):
+    """Create a readable fallback frame when no RTSP frame is available."""
+    width = int(width or 1280)
+    height = int(height or 720)
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    # Soft dark gradient
+    for y in range(height):
+        shade = int(18 + (y / max(1, height - 1)) * 32)
+        frame[y, :] = (shade, max(10, shade - 8), max(18, shade - 2))
+    # Grid and entrance hint
+    grid_color = (65, 75, 95)
+    for x in range(0, width, max(80, width // 12)):
+        cv2.line(frame, (x, 0), (x, height), grid_color, 1)
+    for y in range(0, height, max(60, height // 10)):
+        cv2.line(frame, (0, y), (width, y), grid_color, 1)
+    # Simple corridor/path visual
+    pts = np.array([[int(width*0.18), height], [int(width*0.43), int(height*0.35)], [int(width*0.57), int(height*0.35)], [int(width*0.82), height]], np.int32)
+    overlay = frame.copy()
+    cv2.fillPoly(overlay, [pts], (45, 60, 90))
+    frame = cv2.addWeighted(overlay, 0.35, frame, 0.65, 0)
+    label = message or (config_manager.get('people', 'settings_preview_fallback_label') or 'RTSP Stream nicht erreichbar - Kalibrierungsbild')
+    cv2.putText(frame, 'PlateVision Personen-Kalibrierung', (40, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.25, (241, 245, 249), 2)
+    cv2.putText(frame, label, (40, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (148, 163, 184), 2)
+    cv2.putText(frame, 'Linie, Zone und Richtung werden trotzdem anhand deiner Einstellungen angezeigt.', (40, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (148, 163, 184), 2)
+    return frame
+
+
+def _draw_people_calibration_overlay(frame, cfg=None, source_label='Live/RTSP'):
+    """Draw line/zone/counting settings on a frame for settings and test previews."""
+    if frame is None:
+        frame = _create_people_preview_fallback()
+    cfg = cfg or (config_manager.get('people') or {})
+    img = frame.copy()
+    h, w = img.shape[:2]
+    overlay = img.copy()
+    # Person zone
+    zone = cfg.get('zone') or {}
+    zone_enabled = bool(cfg.get('zone_enabled'))
+    if zone_enabled:
+        zx = float(zone.get('x') or 0); zy = float(zone.get('y') or 0)
+        zw = float(zone.get('width') or 100); zh = float(zone.get('height') or 100)
+        if (zone.get('unit') or 'percent') == 'percent':
+            x1 = int(w * zx / 100); y1 = int(h * zy / 100)
+            x2 = int(w * min(100, zx + zw) / 100); y2 = int(h * min(100, zy + zh) / 100)
+        else:
+            x1, y1, x2, y2 = int(zx), int(zy), int(zx + zw), int(zy + zh)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w-1, x2), min(h-1, y2)
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), (99, 102, 241), -1)
+        img = cv2.addWeighted(overlay, 0.16, img, 0.84, 0)
+        cv2.rectangle(img, (x1, y1), (x2, y2), (129, 140, 248), 3)
+        cv2.putText(img, 'Personen-Zone', (x1 + 10, max(28, y1 + 28)), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (199, 210, 254), 2)
+    # Count line
+    axis = str(cfg.get('movement_axis') or 'y').lower()
+    line_enabled = cfg.get('line_crossing_enabled') is not False
+    line_percent = max(1, min(99, float(cfg.get('virtual_line_position_percent') or 50)))
+    line_color = (34, 211, 238)
+    direction = str(cfg.get('crossing_direction') or 'both')
+    if line_enabled:
+        if axis == 'x':
+            x = int(w * line_percent / 100.0)
+            cv2.line(img, (x, 0), (x, h), line_color, 4)
+            cv2.putText(img, f'Zaehllinie X={line_percent:.0f}% / {direction}', (min(w-520, max(20, x + 12)), 42), cv2.FONT_HERSHEY_SIMPLEX, 0.75, line_color, 2)
+            # direction arrows
+            cv2.arrowedLine(img, (max(20, x - 130), int(h*0.50)), (max(20, x - 30), int(h*0.50)), (16,185,129), 3, tipLength=0.25)
+            cv2.arrowedLine(img, (min(w-20, x + 130), int(h*0.58)), (min(w-20, x + 30), int(h*0.58)), (245,158,11), 3, tipLength=0.25)
+            cv2.putText(img, 'links/rechts', (max(20, x - 120), int(h*0.50)-16), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (241,245,249), 2)
+        else:
+            y = int(h * line_percent / 100.0)
+            cv2.line(img, (0, y), (w, y), line_color, 4)
+            cv2.putText(img, f'Zaehllinie Y={line_percent:.0f}% / {direction}', (20, max(36, y - 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.75, line_color, 2)
+            cv2.arrowedLine(img, (int(w*0.42), max(20, y - 110)), (int(w*0.42), max(20, y - 25)), (16,185,129), 3, tipLength=0.25)
+            cv2.arrowedLine(img, (int(w*0.52), min(h-20, y + 110)), (int(w*0.52), min(h-20, y + 25)), (245,158,11), 3, tipLength=0.25)
+            cv2.putText(img, 'oben/unten', (int(w*0.42)+15, max(30, y - 55)), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (241,245,249), 2)
+    # Status strip
+    strip_h = 86
+    strip = img.copy()
+    cv2.rectangle(strip, (0, h-strip_h), (w, h), (15, 23, 42), -1)
+    img = cv2.addWeighted(strip, 0.72, img, 0.28, 0)
+    status = 'AKTIV' if cfg.get('enabled') else 'INAKTIV'
+    model = cfg.get('selected_model_file') or cfg.get('custom_model_path') or cfg.get('model_path') or 'COCO Person-Klasse'
+    text1 = f'Personenanalyse: {status} | Strategie: {cfg.get("count_strategy") or "line_crossing"} | Konfidenz: {float(cfg.get("confidence_threshold") or 0):.2f}'
+    text2 = f'Modell: {Path(str(model)).name} | Quelle: {source_label}'
+    cv2.putText(img, text1, (24, h-48), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (241,245,249), 2)
+    cv2.putText(img, text2, (24, h-18), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (148,163,184), 2)
+    return img
+
+
+def _people_settings_summary(cfg=None):
+    cfg = cfg or (config_manager.get('people') or {})
+    zone = cfg.get('zone') or {}
+    return {
+        'enabled': bool(cfg.get('enabled')),
+        'history_enabled': cfg.get('history_enabled') is not False,
+        'model_mode': cfg.get('model_mode') or 'coco_person',
+        'selected_model': cfg.get('selected_model_file') or cfg.get('custom_model_path') or cfg.get('model_path') or 'COCO Person-Klasse',
+        'confidence_threshold': cfg.get('confidence_threshold'),
+        'count_strategy': cfg.get('count_strategy'),
+        'line_crossing_enabled': cfg.get('line_crossing_enabled') is not False,
+        'virtual_line_position_percent': cfg.get('virtual_line_position_percent'),
+        'movement_axis': cfg.get('movement_axis'),
+        'crossing_direction': cfg.get('crossing_direction'),
+        'zone_enabled': bool(cfg.get('zone_enabled')),
+        'zone': zone,
+        'session_gap_minutes': cfg.get('session_gap_minutes'),
+        'present_timeout_minutes': cfg.get('present_timeout_minutes'),
+        'save_all_detections': bool(cfg.get('save_all_detections')),
+        'test_environment_enabled': bool(cfg.get('test_environment_enabled')),
+        'save_person_crops': bool(cfg.get('save_person_crops')),
+        'save_full_frame': bool(cfg.get('save_full_frame')),
+        'privacy_blur_people': bool(cfg.get('privacy_blur_people')),
+        'export_default_format': cfg.get('export_default_format'),
+        'retention_days': cfg.get('retention_days'),
+        'auto_cleanup_enabled': bool(cfg.get('auto_cleanup_enabled')),
+        'simulation_enabled': bool(cfg.get('simulation_enabled')),
+        'alert_threshold_per_hour': cfg.get('alert_threshold_per_hour')
+    }
 
 def _scan_model_files():
     cfg_models = config_manager.get('models') or {}
@@ -4218,7 +4680,7 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.3',
+        'version': '0.8.5',
         'edition': 'ProTraffic People',
         'features': [
             'RTSP Live Stream', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
@@ -4659,6 +5121,57 @@ def api_save_traffic_config():
 
 
 
+
+@app.route('/api/people/settings-state')
+def api_people_settings_state():
+    cfg = config_manager.get('people') or {}
+    return jsonify({
+        'success': True,
+        'people': cfg,
+        'summary': _people_settings_summary(cfg),
+        'stream_status': stream_manager.get_status(),
+        'models': _scan_model_files(),
+        'model_status': {
+            'models_loaded': detector.models_loaded,
+            'human_model_loaded': detector.human_model is not None,
+            'coco_model_loaded': detector.coco_model is not None
+        }
+    })
+
+
+@app.route('/api/people/preview/image')
+def api_people_preview_image():
+    """Live/fallback preview image with people counting line, zone and selected settings."""
+    cfg = _people_config_with_overrides(_people_cfg_from_preview_args(request.args))
+    frame = stream_manager.get_raw_frame()
+    source = 'RTSP Live-Frame'
+    if frame is None:
+        frame = stream_manager.get_current_frame()
+    if frame is None:
+        frame = _create_people_preview_fallback(message=cfg.get('settings_preview_fallback_label'))
+        source = 'Fallback-Bild'
+    annotated = _draw_people_calibration_overlay(frame, cfg, source_label=source)
+    ok, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    if not ok:
+        return jsonify({'success': False, 'error': 'Vorschaubild konnte nicht erstellt werden.'}), 500
+    resp = Response(buffer.tobytes(), mimetype='image/jpeg')
+    resp.headers['Cache-Control'] = 'no-store, max-age=0'
+    resp.headers['X-PlateVision-Preview-Source'] = source
+    return resp
+
+
+@app.route('/api/people/preview/status')
+def api_people_preview_status():
+    stream_status = stream_manager.get_status()
+    frame_available = stream_manager.get_raw_frame() is not None or stream_manager.get_current_frame() is not None
+    return jsonify({
+        'success': True,
+        'frame_available': frame_available,
+        'source': 'rtsp' if frame_available else 'fallback',
+        'stream_status': stream_status,
+        'summary': _people_settings_summary()
+    })
+
 @app.route('/api/people/statistics')
 def api_people_statistics():
     return jsonify(person_history_manager.get_statistics(request.args.to_dict()))
@@ -4671,8 +5184,50 @@ def api_people_history():
 
 @app.route('/api/people/history/clear', methods=['POST'])
 def api_people_history_clear():
-    person_history_manager.clear_history()
-    return jsonify({'success': True})
+    data = request.get_json(silent=True) or {}
+    result = person_history_manager.clear_history(delete_images=data.get('delete_images', True))
+    return jsonify({'success': True, **(result or {})})
+
+@app.route('/api/people/history/<event_id>/delete', methods=['POST', 'DELETE'])
+def api_people_history_delete_event(event_id):
+    data = request.get_json(silent=True) or {}
+    result = person_history_manager.delete_event(event_id, delete_images=data.get('delete_images', True))
+    status = 200 if result.get('success') else 404
+    return jsonify(result), status
+
+@app.route('/api/people/images/history')
+def api_people_images_history():
+    return jsonify(person_history_manager.image_history(request.args.to_dict()))
+
+@app.route('/api/people/images/<path:filename>')
+def api_people_images_file(filename):
+    root = person_history_manager.IMAGE_ROOT.resolve()
+    target = (root / filename).resolve()
+    if not str(target).startswith(str(root)) or not target.exists() or not target.is_file():
+        return jsonify({'success': False, 'error': 'Bild nicht gefunden'}), 404
+    return send_from_directory(str(root), filename)
+
+@app.route('/api/people/images/delete', methods=['POST'])
+def api_people_images_delete():
+    data = request.get_json(silent=True) or {}
+    ids = data.get('ids') or data.get('event_ids') or []
+    if isinstance(ids, str):
+        ids = [ids]
+    deleted_events = 0
+    deleted_images = 0
+    for event_id in ids:
+        result = person_history_manager.delete_event(event_id, delete_images=True)
+        if result.get('success'):
+            deleted_events += 1
+            deleted_images += int(result.get('deleted_images') or 0)
+    return jsonify({'success': True, 'deleted_events': deleted_events, 'deleted_images': deleted_images})
+
+@app.route('/api/people/images/cleanup', methods=['POST'])
+def api_people_images_cleanup():
+    data = request.get_json(silent=True) or {}
+    result = person_history_manager.cleanup_images(data.get('retention_days'), delete_records=bool(data.get('delete_records', False)))
+    return jsonify({'success': True, **result})
+
 
 @app.route('/api/people/export')
 def api_people_export():
@@ -4693,12 +5248,13 @@ def api_people_export():
 def api_people_test_snapshot():
     frame = stream_manager.get_raw_frame()
     if frame is None:
-        return jsonify({'success': False, 'error': 'Kein Live-Frame verfügbar. Bitte Stream starten oder Bild im Testbereich hochladen.'}), 400
+        return jsonify({'success': False, 'error': 'Kein Live-Frame verfügbar. Es wird in den Einstellungen automatisch ein Fallback-Bild für die Kalibrierung angezeigt.'}), 400
     previous_enabled = config_manager.get('people', 'enabled')
     config_manager.config.setdefault('people', {})['enabled'] = True
     try:
         result = detector.process_frame(frame)
-        _, buffer = cv2.imencode('.jpg', result['annotated_frame'])
+        annotated = _draw_people_calibration_overlay(result.get('annotated_frame'), config_manager.get('people') or {}, source_label='RTSP Live-Frame')
+        _, buffer = cv2.imencode('.jpg', annotated)
         return jsonify({
             'success': True,
             'people': result.get('people', []),
@@ -4710,53 +5266,69 @@ def api_people_test_snapshot():
         config_manager.config.setdefault('people', {})['enabled'] = previous_enabled
 
 
-@app.route('/api/people/test/image', methods=['POST'])
-def api_people_test_image_upload():
-    """Dedicated image upload for testing and tuning person detection on /test.
-    This can force-enable the people detector for the single test without changing saved settings.
-    """
+
+
+def _handle_people_image_analysis(source_name='people_upload'):
+    """Analyze an uploaded image with the saved/overridden people settings."""
     try:
         people_cfg = config_manager.get('people') or {}
         if people_cfg.get('test_image_upload_enabled') is False:
-            return jsonify({'success': False, 'error': 'Personen-Bildtest ist in den Einstellungen deaktiviert.'}), 403
+            return jsonify({'success': False, 'error': 'Personen-Bildanalyse ist in den Einstellungen deaktiviert.'}), 403
         if 'file' not in request.files:
             return jsonify({'success': False, 'error': 'Keine Bilddatei erhalten.'}), 400
         payload, error = _safe_image_upload(request.files['file'])
         if error:
             return jsonify({'success': False, 'error': error}), 400
 
-        force_enable = _bool_from_request(request.form.get('force_enable'), people_cfg.get('test_force_enable_people', True))
-        save_to_history = _bool_from_request(request.form.get('save_history'), people_cfg.get('test_save_to_history_default', False))
-        save_upload = _bool_from_request(request.form.get('save_upload'), people_cfg.get('test_save_uploads', False))
-        draw_boxes = _bool_from_request(request.form.get('draw_boxes'), people_cfg.get('draw_boxes', True))
+        override_cfg = {}
+        raw_settings = request.form.get('settings_json')
+        if raw_settings:
+            try:
+                parsed = json.loads(raw_settings)
+                if isinstance(parsed, dict):
+                    override_cfg = parsed.get('people') if isinstance(parsed.get('people'), dict) else parsed
+            except Exception as exc:
+                logger.warning(f'Ungueltige settings_json fuer Personenanalyse: {exc}')
+        effective_cfg = _people_config_with_overrides(override_cfg)
+
+        force_enable = _bool_from_request(request.form.get('force_enable'), effective_cfg.get('test_force_enable_people', True))
+        save_to_history = _bool_from_request(request.form.get('save_history'), effective_cfg.get('test_save_to_history_default', False))
+        save_upload = _bool_from_request(request.form.get('save_upload'), effective_cfg.get('test_save_uploads', False))
+        draw_boxes = _bool_from_request(request.form.get('draw_boxes'), effective_cfg.get('draw_boxes', True))
+        if force_enable:
+            effective_cfg['enabled'] = True
+        effective_cfg['draw_boxes'] = draw_boxes
 
         saved_filename = payload['filename']
-        if save_upload:
+        if save_upload or effective_cfg.get('test_save_uploads'):
             target_dir = Path('uploads/people_tests') / datetime.now().strftime('%Y-%m-%d')
             target_dir.mkdir(parents=True, exist_ok=True)
             saved_filename = f"{datetime.now().strftime('%H%M%S')}_{uuid.uuid4().hex[:8]}_{payload['filename']}"
             (target_dir / saved_filename).write_bytes(payload['data'])
 
-        previous_enabled = config_manager.get('people', 'enabled')
-        previous_draw = config_manager.get('people', 'draw_boxes')
-        if force_enable:
-            config_manager.config.setdefault('people', {})['enabled'] = True
-        config_manager.config.setdefault('people', {})['draw_boxes'] = draw_boxes
+        original_people = json.loads(json.dumps(config_manager.config.get('people') or {}, ensure_ascii=False))
+        config_manager.config['people'] = effective_cfg
         try:
             result = detector.process_frame(payload['image'])
         finally:
-            config_manager.config.setdefault('people', {})['enabled'] = previous_enabled
-            config_manager.config.setdefault('people', {})['draw_boxes'] = previous_draw
+            config_manager.config['people'] = original_people
+
+        annotated = result.get('annotated_frame') if result.get('annotated_frame') is not None else payload['image'].copy()
+        # Ensure the calibration line and zone are visible even when no person is detected.
+        annotated = _draw_people_calibration_overlay(annotated, effective_cfg, source_label='Upload-Bild')
 
         history_saved = 0
-        if save_to_history and (people_cfg.get('history_enabled') is not False):
+        if save_to_history and (effective_cfg.get('history_enabled') is not False):
             for person in result.get('people', []):
-                event = dict(person)
-                event.update({'source': 'people_test_upload', 'filename': saved_filename})
-                person_history_manager.add_event(event)
-                history_saved += 1
+                if person.get('counted') or effective_cfg.get('save_all_detections'):
+                    event = dict(person)
+                    event.update({'source': source_name, 'filename': saved_filename})
+                    saved_person_event = person_history_manager.add_event(event, frame=payload['image'], annotated_frame=annotated)
+                    if saved_person_event:
+                        person.update({k: saved_person_event.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved_person_event})
+                        history_saved += 1
 
-        ok, buffer = cv2.imencode('.jpg', result.get('annotated_frame'))
+        ok, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 88])
         result_image_b64 = base64.b64encode(buffer).decode('utf-8') if ok else ''
         people = result.get('people', []) or []
         return jsonify({
@@ -4769,8 +5341,9 @@ def api_people_test_image_upload():
             'result_image': result_image_b64,
             'processing_time': result.get('processing_time', 0),
             'forced_enabled': force_enable,
-            'model_mode': config_manager.get('people', 'model_mode'),
-            'selected_model': config_manager.get('people', 'selected_model_file') or config_manager.get('people', 'custom_model_path') or (config_manager.get('models') or {}).get('person_detector'),
+            'applied_settings': _people_settings_summary(effective_cfg),
+            'model_mode': effective_cfg.get('model_mode'),
+            'selected_model': effective_cfg.get('selected_model_file') or effective_cfg.get('custom_model_path') or effective_cfg.get('model_path') or (config_manager.get('models') or {}).get('person_detector'),
             'status': {
                 'human_model_loaded': detector.human_model is not None,
                 'coco_model_loaded': detector.coco_model is not None,
@@ -4778,8 +5351,20 @@ def api_people_test_image_upload():
             }
         })
     except Exception as e:
-        logger.error(f'Personen-Bildtest Fehler: {e}')
+        logger.error(f'Personen-Bildanalyse Fehler: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/people/analyze/image', methods=['POST'])
+def api_people_analyze_image_upload():
+    """Normal project endpoint for uploaded-image people analysis."""
+    return _handle_people_image_analysis('people_image_analysis')
+
+
+@app.route('/api/people/test/image', methods=['POST'])
+def api_people_test_image_upload():
+    """Backward-compatible endpoint used by the /test page."""
+    return _handle_people_image_analysis('people_test_upload')
 
 
 @app.route('/api/people/presence')
@@ -4829,7 +5414,7 @@ def api_system_health():
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.3'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.5'})
 
 
 @app.route('/api/system/audit')
@@ -4926,7 +5511,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.3 ProTraffic People Upload Pro                                    ║
+    ║     Version 0.8.5 ProTraffic People Image History                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

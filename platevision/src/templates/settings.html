@@ -1884,6 +1884,30 @@
                                 </div>
                             </div>
 
+
+                            <div class="setting-group people-calibration-section">
+                                <div class="setting-group-title"><i class="fas fa-map-location-dot"></i>Live-Vorschau, Linie & Zone einstellen</div>
+                                <div class="row g-3">
+                                    <div class="col-lg-8">
+                                        <div class="people-preview-shell">
+                                            <img id="peoplePreviewImage" src="/api/people/preview/image?init=1" alt="Personen-Kalibrierung Vorschau">
+                                            <div class="people-preview-toolbar">
+                                                <span id="peoplePreviewSource" class="badge bg-secondary">Vorschau lädt...</span>
+                                                <button type="button" class="btn btn-sm btn-light" onclick="refreshPeoplePreview(true)"><i class="fas fa-rotate me-1"></i>Vorschau aktualisieren</button>
+                                            </div>
+                                        </div>
+                                        <small class="text-secondary d-block mt-2">Wenn der RTSP-Stream nicht erreichbar ist, wird automatisch ein Kalibrierungsbild angezeigt. Linie und Zone reagieren trotzdem auf deine Einstellungen.</small>
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <div class="people-settings-live-card h-100">
+                                            <div class="mini-label">Aktuell eingestellte Personenanalyse</div>
+                                            <div id="peopleSettingsSummary" class="people-settings-summary mt-2"></div>
+                                            <div class="alert alert-info mt-3 mb-0 py-2 small"><i class="fas fa-circle-info me-1"></i>Änderungen in diesem Register werden sofort in der Vorschau sichtbar. Dauerhaft aktiv werden sie nach dem Speichern.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div class="setting-group">
                                 <div class="setting-group-title"><i class="fas fa-brain"></i>Personenmodell auswählen</div>
                                 <div class="row g-3">
@@ -1954,6 +1978,9 @@
                                     <div class="col-md-4"><label class="form-label">Min. Track-Alter Frames</label><input type="number" class="form-control" id="peopleMinTrackAge" min="1" max="30" value="{{ config.people.min_track_age_frames if config.people is defined and config.people.min_track_age_frames is defined else 1 }}"><small class="text-secondary">Verhindert Zählung von Einzel-Fehlerkennungen.</small></div>
                                     <div class="col-md-4"><label class="form-label">Zähl-Debounce s</label><input type="number" class="form-control" id="peopleDebounce" min="0" max="120" value="{{ config.people.count_debounce_seconds if config.people is defined and config.people.count_debounce_seconds is defined else 2 }}"></div>
                                     <div class="col-md-4"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peoplePresenceEnabled" {% if config.people is not defined or config.people.presence_enabled %}checked{% endif %}><label class="form-check-label" for="peoplePresenceEnabled">Anwesenheit schätzen</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleRecountBlockEnabled" {% if config.people is not defined or config.people.person_recount_block_enabled is not defined or config.people.person_recount_block_enabled %}checked{% endif %}><label class="form-check-label" for="peopleRecountBlockEnabled">Gleiche Person nicht erneut zählen</label><br><small class="text-secondary">Verhindert Mehrfachzählung im Sperrfenster.</small></div></div>
+                                    <div class="col-md-4"><label class="form-label">Sperrzeit gleiche Person min</label><input type="number" class="form-control" id="peopleRecountBlockMinutes" min="0" max="240" value="{{ config.people.person_recount_block_minutes if config.people is defined and config.people.person_recount_block_minutes is defined else 15 }}"><small class="text-secondary">Standard: 15 Minuten.</small></div>
+                                    <div class="col-md-4"><label class="form-label">Wiedererkennungs-Modus</label>{% set ridmode = config.people.person_recount_identity_mode if config.people is defined and config.people.person_recount_identity_mode is defined else 'track_or_position' %}<select class="form-select" id="peopleRecountIdentityMode"><option value="track_or_position" {% if ridmode == 'track_or_position' %}selected{% endif %}>Track-ID oder Position</option><option value="track_only" {% if ridmode == 'track_only' %}selected{% endif %}>nur Track-ID</option><option value="position_only" {% if ridmode == 'position_only' %}selected{% endif %}>nur Position/Größe</option></select></div>
                                 </div>
                             </div>
 
@@ -1964,12 +1991,16 @@
                                     <div class="col-md-3"><label class="form-label">Anwesend Timeout min</label><input type="number" class="form-control" id="peoplePresentTimeout" min="1" max="240" value="{{ config.people.present_timeout_minutes if config.people is defined and config.people.present_timeout_minutes is defined else 10 }}"></div>
                                     <div class="col-md-3"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleSaveAll" {% if config.people is defined and config.people.save_all_detections %}checked{% endif %}><label class="form-check-label" for="peopleSaveAll">Alle Detections speichern</label></div></div>
                                     <div class="col-md-3"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleTestEnvironment" {% if config.people is not defined or config.people.test_environment_enabled %}checked{% endif %}><label class="form-check-label" for="peopleTestEnvironment">Testumgebung aktiv</label></div></div>
-                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleSaveCrops" {% if config.people is defined and config.people.save_person_crops %}checked{% endif %}><label class="form-check-label" for="peopleSaveCrops">Personenbilder speichern</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleImageHistoryEnabled" {% if config.people is not defined or config.people.image_history_enabled is not defined or config.people.image_history_enabled %}checked{% endif %}><label class="form-check-label" for="peopleImageHistoryEnabled">Bild-History aktiv</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleSaveCrops" {% if config.people is defined and config.people.save_person_crops %}checked{% endif %}><label class="form-check-label" for="peopleSaveCrops">Personen-Crops speichern</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleImageHistoryAnnotated" {% if config.people is not defined or config.people.image_history_store_annotated is not defined or config.people.image_history_store_annotated %}checked{% endif %}><label class="form-check-label" for="peopleImageHistoryAnnotated">Annotiertes Bild speichern</label></div></div>
                                     <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleSaveFullFrame" {% if config.people is defined and config.people.save_full_frame %}checked{% endif %}><label class="form-check-label" for="peopleSaveFullFrame">Vollbild speichern</label></div></div>
                                     <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peoplePrivacyBlur" {% if config.people is defined and config.people.privacy_blur_people %}checked{% endif %}><label class="form-check-label" for="peoplePrivacyBlur">Personen weichzeichnen</label></div></div>
                                     <div class="col-md-3"><label class="form-label">Export Standard</label>{% set pexport = config.people.export_default_format if config.people is defined and config.people.export_default_format is defined else 'csv' %}<select class="form-select" id="peopleExportDefault"><option value="csv" {% if pexport == 'csv' %}selected{% endif %}>CSV</option><option value="json" {% if pexport == 'json' %}selected{% endif %}>JSON</option></select></div>
                                     <div class="col-md-3"><label class="form-label">Aufbewahrung Tage</label><input type="number" class="form-control" id="peopleRetentionDays" min="0" max="3650" value="{{ config.people.retention_days if config.people is defined and config.people.retention_days is defined else 90 }}"></div>
-                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleAutoCleanup" {% if config.people is defined and config.people.auto_cleanup_enabled %}checked{% endif %}><label class="form-check-label" for="peopleAutoCleanup">Auto-Cleanup</label></div></div>
+                                    <div class="col-md-3"><label class="form-label">Bild-History Tage</label><input type="number" class="form-control" id="peopleImageHistoryRetentionDays" min="0" max="3650" value="{{ config.people.image_history_retention_days if config.people is defined and config.people.image_history_retention_days is defined else (config.people.retention_days if config.people is defined and config.people.retention_days is defined else 90) }}"></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleAutoCleanup" {% if config.people is defined and config.people.auto_cleanup_enabled %}checked{% endif %}><label class="form-check-label" for="peopleAutoCleanup">Auto-Cleanup Historie</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleImageHistoryAutoCleanup" {% if config.people is defined and config.people.image_history_auto_cleanup_enabled %}checked{% endif %}><label class="form-check-label" for="peopleImageHistoryAutoCleanup">Auto-Cleanup Bilder</label></div></div>
                                     <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleSimulationEnabled" {% if config.people is not defined or config.people.simulation_enabled %}checked{% endif %}><label class="form-check-label" for="peopleSimulationEnabled">Simulation erlauben</label></div></div>
                                     <div class="col-md-3"><label class="form-label">Alarm Schwelle / h</label><input type="number" class="form-control" id="peopleAlertThreshold" min="0" max="10000" value="{{ config.people.alert_threshold_per_hour if config.people is defined and config.people.alert_threshold_per_hour is defined else 0 }}"></div>
                                 </div>
@@ -1979,8 +2010,9 @@
                             <div class="d-flex flex-wrap gap-2 mt-4">
                                 <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Personenanalyse speichern</button>
                                 <button type="button" class="btn btn-outline-warning" onclick="savePeopleSettings(true)"><i class="fas fa-sync me-2"></i>Speichern & Modelle neu laden</button>
-                                <a href="/people" class="btn btn-outline-info"><i class="fas fa-chart-simple me-2"></i>Personenstatistik öffnen</a>
-                                <button type="button" class="btn btn-outline-success" onclick="runPeopleSnapshotTest()"><i class="fas fa-vial me-2"></i>Live-Snapshot testen</button>
+                                <a href="/people" class="btn btn-outline-info"><i class="fas fa-chart-simple me-2"></i>Personenanalyse öffnen</a>
+                                <button type="button" class="btn btn-outline-success" onclick="runPeopleSnapshotTest()"><i class="fas fa-vial me-2"></i>Live-Snapshot analysieren</button>
+                                <button type="button" class="btn btn-outline-danger" onclick="cleanupPeopleImagesFromSettings()"><i class="fas fa-images me-2"></i>Bild-History bereinigen</button>
                             </div>
                             <div id="peopleTestResult" class="mt-3"></div>
                         </form>
@@ -2002,7 +2034,7 @@
                                 <table class="table table-sm text-start">
                                     <tr>
                                         <td class="text-secondary">Version</td>
-                                        <td class="fw-bold">0.8.1 ProTraffic People Pro</td>
+                                        <td class="fw-bold">0.8.5 ProTraffic People Image History</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">YOLO Version</td>
@@ -2452,7 +2484,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.8.1-protraffic-people-pro',
+                    version: '0.8.5-protraffic-people-image-history',
                     config: config
                 };
                 
@@ -2787,6 +2819,10 @@
     document.addEventListener('DOMContentLoaded', function() {
         loadModelStatus();
         loadStorageInfo();
+        setTimeout(() => {
+            if (typeof initPeopleSettingsPreview === 'function') initPeopleSettingsPreview();
+            if (typeof loadPeopleModelOptions === 'function' && document.getElementById('peopleSelectedModelFile') && pvBool('peopleModelAutoScan')) loadPeopleModelOptions();
+        }, 0);
         
         // Hash-Navigation unterstützen
         const hash = window.location.hash;
@@ -3113,16 +3149,11 @@
         }
     });
 
-    function peopleClassIdList() {
-        return pvStr('peopleClassIds', '0').split(',').map(v => Number(v.trim())).filter(v => Number.isFinite(v));
-    }
 
-    function peopleClassNameList() {
-        return pvStr('peopleClassNames', 'person,human').split(',').map(v => v.trim()).filter(Boolean);
-    }
+    function peopleBoolLabel(value) { return value ? '<span class="text-success">Ein</span>' : '<span class="text-secondary">Aus</span>'; }
 
-    function savePeopleSettings(reloadAfterSave = false) {
-        const payload = {
+    function getPeopleSettingsPayloadFromForm() {
+        return {
             enabled: pvBool('peopleEnabled'),
             history_enabled: pvBool('peopleHistoryEnabled'),
             show_on_live: pvBool('peopleShowOnLive'),
@@ -3133,8 +3164,8 @@
             custom_model_path: pvStr('peopleCustomModelPath', 'models/best.pt'),
             model_path: (pvStr('peopleSelectedModelFile') || pvStr('peopleCustomModelPath', 'models/best.pt')),
             model_auto_scan: pvBool('peopleModelAutoScan'),
-            class_ids: peopleClassIdList(),
-            class_names: peopleClassNameList(),
+            class_ids: (pvStr('peopleClassIds', '0').split(',').map(v => Number(v.trim())).filter(v => Number.isFinite(v))),
+            class_names: (pvStr('peopleClassNames', 'person,human').split(',').map(v => v.trim()).filter(Boolean)),
             min_person_width: pvNum('peopleMinWidth', 20),
             min_person_height: pvNum('peopleMinHeight', 40),
             max_persons_per_frame: pvNum('peopleMaxPerFrame', 30),
@@ -3151,6 +3182,9 @@
             tracker_timeout_seconds: pvNum('peopleTrackerTimeout', 8),
             min_track_age_frames: pvNum('peopleMinTrackAge', 1),
             count_debounce_seconds: pvNum('peopleDebounce', 2),
+            person_recount_block_enabled: pvBool('peopleRecountBlockEnabled'),
+            person_recount_block_minutes: pvNum('peopleRecountBlockMinutes', 15),
+            person_recount_identity_mode: pvStr('peopleRecountIdentityMode', 'track_or_position'),
             count_strategy: pvStr('peopleCountStrategy', 'line_crossing'),
             count_once_per_track: pvBool('peopleCountOnce'),
             line_crossing_enabled: pvBool('peopleLineEnabled'),
@@ -3161,17 +3195,123 @@
             present_timeout_minutes: pvNum('peoplePresentTimeout', 10),
             presence_enabled: pvBool('peoplePresenceEnabled'),
             save_all_detections: pvBool('peopleSaveAll'),
+            image_history_enabled: pvBool('peopleImageHistoryEnabled'),
             save_person_crops: pvBool('peopleSaveCrops'),
+            image_history_store_crop: pvBool('peopleSaveCrops'),
+            image_history_store_annotated: pvBool('peopleImageHistoryAnnotated'),
             save_full_frame: pvBool('peopleSaveFullFrame'),
+            image_history_store_full_frame: pvBool('peopleSaveFullFrame'),
             privacy_blur_people: pvBool('peoplePrivacyBlur'),
             test_environment_enabled: pvBool('peopleTestEnvironment'),
             simulation_enabled: pvBool('peopleSimulationEnabled'),
             retention_days: pvNum('peopleRetentionDays', 90),
+            image_history_retention_days: pvNum('peopleImageHistoryRetentionDays', pvNum('peopleRetentionDays', 90)),
             auto_cleanup_enabled: pvBool('peopleAutoCleanup'),
+            image_history_auto_cleanup_enabled: pvBool('peopleImageHistoryAutoCleanup'),
             alert_threshold_per_hour: pvNum('peopleAlertThreshold', 0),
-            export_default_format: pvStr('peopleExportDefault', 'csv'),
-            reload: reloadAfterSave
+            export_default_format: pvStr('peopleExportDefault', 'csv')
         };
+    }
+
+    function renderPeopleSettingsSummary() {
+        const p = getPeopleSettingsPayloadFromForm();
+        const el = document.getElementById('peopleSettingsSummary');
+        if (!el) return;
+        const selectedModel = p.selected_model_file || p.custom_model_path || 'COCO Person-Klasse';
+        el.innerHTML = `
+            <div class="people-summary-row"><span>Modul</span><strong>${peopleBoolLabel(p.enabled)}</strong></div>
+            <div class="people-summary-row"><span>Modell</span><code>${selectedModel}</code></div>
+            <div class="people-summary-row"><span>Konfidenz</span><strong>${p.confidence_threshold}</strong></div>
+            <div class="people-summary-row"><span>Zählstrategie</span><strong>${p.count_strategy}</strong></div>
+            <div class="people-summary-row"><span>Linie</span><strong>${peopleBoolLabel(p.line_crossing_enabled)} · ${p.movement_axis.toUpperCase()} ${p.virtual_line_position_percent}% · ${p.crossing_direction}</strong></div>
+            <div class="people-summary-row"><span>Zone</span><strong>${peopleBoolLabel(p.zone_enabled)} · X ${p.zone.x}% / Y ${p.zone.y}% / ${p.zone.width}×${p.zone.height}%</strong></div>
+            <div class="people-summary-row"><span>Session-Lücke</span><strong>${p.session_gap_minutes} min</strong></div>
+            <div class="people-summary-row"><span>Anwesend Timeout</span><strong>${p.present_timeout_minutes} min</strong></div>
+            <div class="people-summary-row"><span>Gleiche Person sperren</span><strong>${peopleBoolLabel(p.person_recount_block_enabled)} · ${p.person_recount_block_minutes} min</strong></div>
+            <div class="people-summary-row"><span>Wiedererkennung</span><strong>${p.person_recount_identity_mode}</strong></div>
+            <div class="people-summary-row"><span>Alle Detections</span><strong>${peopleBoolLabel(p.save_all_detections)}</strong></div>
+            <div class="people-summary-row"><span>Testumgebung</span><strong>${peopleBoolLabel(p.test_environment_enabled)}</strong></div>
+            <div class="people-summary-row"><span>Bild-History</span><strong>${peopleBoolLabel(p.image_history_enabled)}</strong></div>
+            <div class="people-summary-row"><span>Personen-Crops</span><strong>${peopleBoolLabel(p.save_person_crops)}</strong></div>
+            <div class="people-summary-row"><span>Annotiert</span><strong>${peopleBoolLabel(p.image_history_store_annotated)}</strong></div>
+            <div class="people-summary-row"><span>Vollbild</span><strong>${peopleBoolLabel(p.save_full_frame)}</strong></div>
+            <div class="people-summary-row"><span>Weichzeichnen</span><strong>${peopleBoolLabel(p.privacy_blur_people)}</strong></div>
+            <div class="people-summary-row"><span>Export</span><strong>${p.export_default_format.toUpperCase()}</strong></div>
+            <div class="people-summary-row"><span>Aufbewahrung</span><strong>${p.retention_days} Tage</strong></div>
+            <div class="people-summary-row"><span>Auto-Cleanup Historie</span><strong>${peopleBoolLabel(p.auto_cleanup_enabled)}</strong></div>
+            <div class="people-summary-row"><span>Bild-Cleanup</span><strong>${peopleBoolLabel(p.image_history_auto_cleanup_enabled)} · ${p.image_history_retention_days} Tage</strong></div>
+            <div class="people-summary-row"><span>Simulation</span><strong>${peopleBoolLabel(p.simulation_enabled)}</strong></div>
+            <div class="people-summary-row"><span>Alarm / h</span><strong>${p.alert_threshold_per_hour}</strong></div>`;
+    }
+
+
+    function cleanupPeopleImagesFromSettings() {
+        const days = pvNum('peopleImageHistoryRetentionDays', pvNum('peopleRetentionDays', 90));
+        if (!confirm(`Personen-Bild-History älter als ${days} Tage löschen?`)) return;
+        fetch('/api/people/images/cleanup', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({retention_days: days})
+        }).then(r => r.json()).then(data => {
+            if (data.success) showToast('Bild-History', `${data.deleted_images || 0} Bilder entfernt, ${data.cleared_image_events || 0} Einträge bereinigt`, 'success');
+            else showToast('Fehler', data.error || 'Cleanup fehlgeschlagen', 'danger');
+        }).catch(() => showToast('Fehler', 'Cleanup konnte nicht ausgeführt werden', 'danger'));
+    }
+
+    let peoplePreviewTimer = null;
+    function refreshPeoplePreview(force=false) {
+        renderPeopleSettingsSummary();
+        const img = document.getElementById('peoplePreviewImage');
+        if (!img) return;
+        if (!force) {
+            clearTimeout(peoplePreviewTimer);
+            peoplePreviewTimer = setTimeout(() => refreshPeoplePreview(true), 250);
+            return;
+        }
+        const p = getPeopleSettingsPayloadFromForm();
+        const params = new URLSearchParams({
+            ts: Date.now(),
+            enabled: p.enabled ? '1' : '0',
+            draw_boxes: p.draw_boxes ? '1' : '0',
+            line_enabled: p.line_crossing_enabled ? '1' : '0',
+            line_percent: p.virtual_line_position_percent,
+            movement_axis: p.movement_axis,
+            crossing_direction: p.crossing_direction,
+            count_strategy: p.count_strategy,
+            confidence: p.confidence_threshold,
+            zone_enabled: p.zone_enabled ? '1' : '0',
+            zone_x: p.zone.x,
+            zone_y: p.zone.y,
+            zone_w: p.zone.width,
+            zone_h: p.zone.height
+        });
+        img.src = '/api/people/preview/image?' + params.toString();
+        const source = document.getElementById('peoplePreviewSource');
+        if (source) source.textContent = 'Vorschau aktualisiert';
+    }
+
+    function initPeopleSettingsPreview() {
+        const form = document.getElementById('peopleForm');
+        if (!form) return;
+        form.querySelectorAll('input, select').forEach(el => {
+            el.addEventListener('input', () => refreshPeoplePreview(false));
+            el.addEventListener('change', () => refreshPeoplePreview(false));
+        });
+        renderPeopleSettingsSummary();
+        refreshPeoplePreview(true);
+    }
+
+    function peopleClassIdList() {
+        return pvStr('peopleClassIds', '0').split(',').map(v => Number(v.trim())).filter(v => Number.isFinite(v));
+    }
+
+    function peopleClassNameList() {
+        return pvStr('peopleClassNames', 'person,human').split(',').map(v => v.trim()).filter(Boolean);
+    }
+
+    function savePeopleSettings(reloadAfterSave = false) {
+        const payload = getPeopleSettingsPayloadFromForm();
+        payload.reload = reloadAfterSave;
         fetch('/api/config/people', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

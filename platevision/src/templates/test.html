@@ -381,14 +381,17 @@
                 <hr class="my-4">
 
                 <div class="people-test-panel p-3 rounded border border-secondary-subtle">
-                    <h6 class="mb-2"><i class="fas fa-person-walking me-2 text-info"></i>Personen-Foto-Test</h6>
-                    <p class="text-secondary small mb-3">Separater Test nur für Personenanalyse. Die Personenerkennung wird für diesen Test optional temporär aktiviert, auch wenn sie im Livebetrieb ausgeschaltet ist.</p>
+                    <h6 class="mb-2"><i class="fas fa-person-walking me-2 text-info"></i>Personenanalyse Foto-Upload</h6>
+                    <p class="text-secondary small mb-3">Lade ein Bild hoch und analysiere Personen mit denselben Einstellungen wie im Register <strong>Personenanalyse</strong>. Linie, Zone, Modell, Konfidenz, History-Optionen und Datenschutz werden angewendet.</p>
                     <input type="file" class="form-control mb-2" id="peopleTestImageInput" accept="image/*">
                     <div class="row g-2 mb-2">
-                        <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestForceEnable" checked><label class="form-check-label" for="peopleTestForceEnable">Für Test temporär aktivieren</label></div></div>
+                        <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestUseSavedSettings" checked><label class="form-check-label" for="peopleTestUseSavedSettings">Gespeicherte Personen-Einstellungen anwenden</label></div></div>
+                        <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestForceEnable" checked><label class="form-check-label" for="peopleTestForceEnable">Für diese Analyse temporär aktivieren</label></div></div>
                         <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestSaveHistory"><label class="form-check-label" for="peopleTestSaveHistory">In Personen-Historie speichern</label></div></div>
+                        <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestDrawBoxes" checked><label class="form-check-label" for="peopleTestDrawBoxes">Boxen, Linie und Zone zeichnen</label></div></div>
                     </div>
-                    <button class="btn btn-info w-100" type="button" onclick="runPeopleImageUploadTest()"><i class="fas fa-vial me-2"></i>Foto auf Personen testen</button>
+                    <div id="peopleAppliedSettingsBox" class="people-applied-settings small mb-3">Lade aktuelle Personen-Einstellungen...</div>
+                    <button class="btn btn-info w-100" type="button" onclick="runPeopleImageUploadTest()"><i class="fas fa-person-walking me-2"></i>Bild mit Personenanalyse auswerten</button>
                     <div id="peopleUploadTestResult" class="mt-3"></div>
                 </div>
             </div>
@@ -611,6 +614,7 @@
     // ============================================
     
     document.addEventListener('DOMContentLoaded', function() {
+        loadPeopleSettingsForUpload();
         initDragAndDrop();
         refreshJobs();
         
@@ -868,6 +872,35 @@
     
 
 
+
+    let currentPeopleSettingsForUpload = null;
+    function labelOnOff(value) { return value ? '<span class="text-success">Ein</span>' : '<span class="text-secondary">Aus</span>'; }
+    async function loadPeopleSettingsForUpload() {
+        const box = document.getElementById('peopleAppliedSettingsBox');
+        try {
+            const response = await fetch('/api/people/settings-state');
+            const data = await response.json();
+            currentPeopleSettingsForUpload = data.people || {};
+            const s = data.summary || {};
+            if (box) box.innerHTML = `
+                <div class="fw-semibold mb-1"><i class="fas fa-sliders me-1"></i>Aktive Einstellungen für diesen Upload</div>
+                <div class="people-upload-summary-grid">
+                    <span>Modul: <strong>${labelOnOff(s.enabled)}</strong></span>
+                    <span>Modell: <code>${s.selected_model || '-'}</code></span>
+                    <span>Konfidenz: <strong>${s.confidence_threshold ?? '-'}</strong></span>
+                    <span>Linie: <strong>${labelOnOff(s.line_crossing_enabled)} · ${(s.movement_axis || '-').toUpperCase()} ${s.virtual_line_position_percent ?? '-'}%</strong></span>
+                    <span>Zone: <strong>${labelOnOff(s.zone_enabled)}</strong></span>
+                    <span>History: <strong>${labelOnOff(s.history_enabled)}</strong></span>
+                    <span>Alle Detections: <strong>${labelOnOff(s.save_all_detections)}</strong></span>
+                    <span>Personen weichzeichnen: <strong>${labelOnOff(s.privacy_blur_people)}</strong></span>
+                    <span>Aufbewahrung: <strong>${s.retention_days ?? '-'} Tage</strong></span>
+                    <span>Export: <strong>${String(s.export_default_format || 'csv').toUpperCase()}</strong></span>
+                </div>`;
+        } catch (error) {
+            if (box) box.innerHTML = '<div class="text-warning">Aktuelle Personen-Einstellungen konnten nicht geladen werden.</div>';
+        }
+    }
+
     async function runPeopleImageUploadTest() {
         const input = document.getElementById('peopleTestImageInput');
         const box = document.getElementById('peopleUploadTestResult');
@@ -879,10 +912,13 @@
         formData.append('file', input.files[0]);
         formData.append('force_enable', document.getElementById('peopleTestForceEnable')?.checked ? 'true' : 'false');
         formData.append('save_history', document.getElementById('peopleTestSaveHistory')?.checked ? 'true' : 'false');
-        formData.append('draw_boxes', 'true');
+        formData.append('draw_boxes', document.getElementById('peopleTestDrawBoxes')?.checked ? 'true' : 'false');
+        if (document.getElementById('peopleTestUseSavedSettings')?.checked && currentPeopleSettingsForUpload) {
+            formData.append('settings_json', JSON.stringify(currentPeopleSettingsForUpload));
+        }
         if (box) box.innerHTML = '<div class="alert alert-info"><i class="fas fa-spinner fa-spin me-2"></i>Personen-Foto wird analysiert...</div>';
         try {
-            const response = await fetch('/api/people/test/image', { method: 'POST', body: formData });
+            const response = await fetch('/api/people/analyze/image', { method: 'POST', body: formData });
             const data = await response.json();
             if (!data.success) {
                 if (box) box.innerHTML = `<div class="alert alert-warning"><i class="fas fa-triangle-exclamation me-2"></i>${data.error || 'Personen-Test fehlgeschlagen'}</div>`;
@@ -895,7 +931,7 @@
                     <div class="alert alert-success">
                         <strong>${data.people_count || 0}</strong> Personen erkannt, <strong>${data.people_counted || 0}</strong> gezählt.
                         ${data.history_saved ? `<br><strong>${data.history_saved}</strong> Einträge in Personen-Historie gespeichert.` : ''}
-                        <br><small>Modus: ${data.model_mode || '-'} · Modell: ${data.selected_model || '-'}</small>
+                        <br><small>Modus: ${data.model_mode || '-'} · Modell: ${data.selected_model || '-'}</small><br><small>Angewendet: Linie ${data.applied_settings?.movement_axis || '-'} ${data.applied_settings?.virtual_line_position_percent ?? '-'}% · Konfidenz ${data.applied_settings?.confidence_threshold ?? '-'}</small>
                     </div>
                     ${data.result_image ? `<img class="img-fluid rounded border border-secondary mb-3" src="data:image/jpeg;base64,${data.result_image}" alt="Personen-Test-Ergebnis">` : ''}
                     <div class="table-responsive"><table class="table table-sm table-dark table-striped align-middle mb-0"><thead><tr><th>#</th><th>Konf.</th><th>Track</th><th>Ereignis</th><th>Richtung</th></tr></thead><tbody>${peopleRows || '<tr><td colspan="5" class="text-secondary">Keine Personen erkannt</td></tr>'}</tbody></table></div>`;

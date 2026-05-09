@@ -1,4 +1,4 @@
-# PlateVision v0.8.3 ProTraffic People Upload Pro
+
 
 # PlateVision – Home Assistant Add-on
 
@@ -340,10 +340,6 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 
 
 
-
-
-
-### 🚦 ProTraffic Statistik (v0.7.2)
 - Neue Statistik-Seite `/statistics` mit Autos pro Tag, eindeutigen Fahrzeugen und Roh-Erkennungen.
 - Wiederkehrer-Analyse: zeigt, wie oft dasselbe Kennzeichen erkannt wurde.
 - Besuchs-/Session-Logik: Mehrfach-Erkennungen eines Autos werden zu einem Besuch gruppiert.
@@ -351,39 +347,6 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 - CSV-/JSON-Export für Tagesstatistik und Top-Kennzeichen.
 - Neue Traffic-Einstellungen für Besuchslücke, Timeout, Mindestkonfidenz und Bewegungsachse.
 
-## 🔒 Original-Einstellungen bleiben erhalten
-
-Diese Version ist bewusst **additiv** aufgebaut: Die ursprünglichen PlateVision-Einstellungen und API-Endpunkte bleiben erhalten. Neue Funktionen wie Suche, Statistik, Kommen/Gehen-Heuristik, Dashboard-Optionen, Datenschutz und Alerts werden nur ergänzt.
-
-Erhaltene Originalbereiche:
-
-- RTSP: URL, Aktivierung, Reconnect, Buffer, Auflösung, Analysebereich
-- Erkennung: Confidence, Fahrzeugerkennung, Zoom, Intervall, Speichern, Mindestgrössen
-- OCR: Sprachen, GPU, Confidence, Zeichenliste, Modus, Retry, Preprocessing
-- Historie: Duplikatfilter, Timeout, Mindest-Konfidenz, Bildspeicherung
-- Speicher: Platten-/Fahrzeug-/Frame-Speicherung, Auto-Historie, maximale Einträge
-- Allgemein: Sprache, Theme, Benachrichtigungen, Debug
-- Modelle: Fahrzeugmodell und Kennzeichenmodell
-
-Die neue Einstellungsseite basiert wieder auf der Originalstruktur und erweitert sie um zusätzliche Tabs.
-
-### ⚙️ Erweiterte Original-Einstellungen (v0.7.2)
-
-Alle Original-Bereiche bleiben erhalten und wurden erweitert:
-
-- **Erkennung**: Fahrzeugklassen, Seitenverhältnis-Filter, maximale Erkennungen, Vollbild-Zusatzscan, Annotationen, Confidence-Anzeige.
-- **OCR / Texterkennung**: Decoder, Allowlist, Rotation-Varianten, Early-Stop, Fragment-Merge, OCR-Variantenlimit.
-- **Bildvorverarbeitung**: Gamma, CLAHE, Denoise-Stärke, Threshold-Parameter, Invert-Variante, Bilateralfilter, Rand-Padding.
-- **Historie**: Fuzzy-Duplikate, Besuchsgruppen, Roh-OCR, Kandidaten, Positionsdaten, Auto-Cleanup, Exportformat.
-- **Speicher**: JPEG-Qualität, Tagesordner, Metadaten-JSON, Thumbnail-Optionen, Speicherlimit, Bild-Cleanup.
-- **Allgemein**: Sprache DE/EN/FR/IT, Theme Auto, Zeitzone, Startseite, Log-Level, Standortname, Bediener, Barrierearm-Modus.
-- **Modelle**: editierbare Modellpfade, Gerät-Auswahl, Auto-Reload, Warmup, FP16, CPU-Fallback, Modellordner.
-- **Über**: Version, Release-Kanal, Support-/Dokumentations-URLs, Lizenzhinweis.
-
-Neue APIs: `/api/config/storage`, `/api/config/models`, `/api/config/about`, `/api/system/about`.
-
-
-## v0.8.1 ProTraffic People
 
 - Neue Personenanalyse mit eigenem Menüpunkt `/people`.
 - Aktivierbare Personenerkennung mit YOLOv8 COCO-Personenklasse oder eigenem HumanDetection-Modell.
@@ -392,15 +355,11 @@ Neue APIs: `/api/config/storage`, `/api/config/models`, `/api/config/about`, `/a
 - Bestehende Original-Einstellungen bleiben erhalten und werden nur erweitert.
 
 
-## v0.8.1 People Pro
-
 - Personenmodell-Auswahl direkt in den Einstellungen mit Modellscan für `models/`.
 - Neue Endpunkte für Modellliste, Modellauswahl, Config-Validierung, Personen-Anwesenheit, Cleanup und Simulation.
 - Erweiterte Personenerkennung mit Bildgröße, IoU, Flächen-/Seitenverhältnisfilter, optionaler Personen-Zone, Track-Alter und Debounce.
 - Config-Merge bewahrt unbekannte/alte Custom-Keys, damit Updates keine Einstellungen verstecken.
 
-
-## v0.8.3 - Personen-Foto-Test & eigene Modelle hochladen
 
 - Neue Test-Funktion unter `/test`: Foto hochladen und ausschließlich die Personenanalyse prüfen.
 - Der Personen-Test zeigt erkannte Personen, gezählte Personen, Track-ID, Ereignistyp, Richtung und ein annotiertes Ergebnisbild.

@@ -589,3 +589,125 @@ body.accessibility-mode .form-select {
     padding: 1rem;
     background: rgba(59, 130, 246, 0.08);
 }
+
+
+/* PlateVision v0.8.4 - People calibration and settings visibility */
+.people-calibration-section {
+    border: 1px solid rgba(34, 211, 238, 0.25);
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.08), rgba(99, 102, 241, 0.06));
+}
+.people-preview-shell {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    background: #020617;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+}
+.people-preview-shell.compact {
+    border-radius: 12px;
+}
+.people-preview-shell img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+.people-preview-toolbar {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+    padding: 8px;
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.78);
+    backdrop-filter: blur(8px);
+}
+.people-settings-live-card,
+.people-applied-settings {
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.42);
+    padding: 1rem;
+}
+.people-settings-summary,
+.people-upload-summary-grid {
+    display: grid;
+    gap: 0.45rem;
+}
+.people-upload-summary-grid {
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+.people-summary-row {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.45rem 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+.people-summary-row:last-child {
+    border-bottom: 0;
+}
+.people-summary-row span {
+    color: var(--text-secondary, #94a3b8);
+}
+.people-summary-row code,
+.people-applied-settings code {
+    color: #bae6fd;
+    white-space: normal;
+    word-break: break-word;
+}
+@media (max-width: 768px) {
+    .people-preview-toolbar {
+        position: static;
+        border-radius: 0;
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+
+
+/* People image history v0.8.5 */
+.people-image-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+}
+.people-image-card {
+    border: 1px solid rgba(148, 163, 184, .25);
+    border-radius: 16px;
+    background: rgba(15, 23, 42, .35);
+    padding: .75rem;
+    overflow: hidden;
+}
+.people-image-card img,
+.people-image-placeholder {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, .2);
+    background: rgba(2, 6, 23, .55);
+}
+.people-image-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #94a3b8;
+    font-size: .85rem;
+}
+.people-image-meta {
+    margin-top: .6rem;
+    font-size: .82rem;
+    color: #cbd5e1;
+    line-height: 1.35;
+}
+.people-image-meta a { color: #38bdf8; text-decoration: none; }
+.people-image-meta a:hover { text-decoration: underline; }
