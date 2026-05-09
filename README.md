@@ -1,4 +1,4 @@
-# PlateVision v0.8.1 ProTraffic People
+# PlateVision v0.8.3 ProTraffic People Upload Pro
 
 # PlateVision – Home Assistant Add-on
 
@@ -398,3 +398,13 @@ Neue APIs: `/api/config/storage`, `/api/config/models`, `/api/config/about`, `/a
 - Neue Endpunkte für Modellliste, Modellauswahl, Config-Validierung, Personen-Anwesenheit, Cleanup und Simulation.
 - Erweiterte Personenerkennung mit Bildgröße, IoU, Flächen-/Seitenverhältnisfilter, optionaler Personen-Zone, Track-Alter und Debounce.
 - Config-Merge bewahrt unbekannte/alte Custom-Keys, damit Updates keine Einstellungen verstecken.
+
+
+## v0.8.3 - Personen-Foto-Test & eigene Modelle hochladen
+
+- Neue Test-Funktion unter `/test`: Foto hochladen und ausschließlich die Personenanalyse prüfen.
+- Der Personen-Test zeigt erkannte Personen, gezählte Personen, Track-ID, Ereignistyp, Richtung und ein annotiertes Ergebnisbild.
+- Die Personenerkennung kann für den Einzeltest temporär aktiviert werden, ohne die gespeicherte Live-Einstellung zu ändern.
+- Neuer Einstellungs-Tab **Modelle hochladen** für `.pt`, `.onnx` und `.engine`.
+- Hochgeladene Modelle werden bevorzugt unter `/data/models` gespeichert, damit sie Add-on-Updates überstehen.
+- Personenmodelle können nach dem Upload automatisch ausgewählt und optional direkt neu geladen werden.

@@ -568,3 +568,24 @@ body.accessibility-mode .form-select {
     background: rgba(99, 102, 241, .12);
     font-size: .82rem;
 }
+
+
+/* v0.8.3: Test-Upload & Modell-Upload Erweiterungen */
+.people-test-panel,
+.model-inventory-panel {
+    background: rgba(15, 23, 42, 0.45);
+    border-radius: 14px;
+}
+.model-inventory-panel code,
+.people-test-panel code {
+    color: #93c5fd;
+}
+.model-inventory-panel .table {
+    --bs-table-bg: transparent;
+}
+.model-upload-drop-hint {
+    border: 1px dashed rgba(148, 163, 184, 0.45);
+    border-radius: 16px;
+    padding: 1rem;
+    background: rgba(59, 130, 246, 0.08);
+}

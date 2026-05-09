@@ -228,6 +228,10 @@
                         <i class="fas fa-brain"></i>
                         Modelle
                     </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#modelUpload" role="tab">
+                        <i class="fas fa-cloud-arrow-up"></i>
+                        Modelle hochladen
+                    </a>
                     <a class="nav-link" data-bs-toggle="pill" href="#plateRecognition" role="tab">
                         <i class="fas fa-id-card"></i>
                         Kennzeichen Pro
@@ -1504,6 +1508,62 @@
                 </div>
             </div>
             
+            <!-- ============================================ -->
+            <!-- MODELLE HOCHLADEN -->
+            <!-- ============================================ -->
+            <div class="tab-pane fade" id="modelUpload" role="tabpanel">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0"><i class="fas fa-cloud-arrow-up text-info me-2"></i>Eigene Modelle hochladen</h5>
+                        <span class="badge bg-info">.pt · .onnx · .engine</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Hochgeladene Modelle werden bevorzugt unter <code>/data/models</code> gespeichert und bleiben dadurch bei Add-on-Updates erhalten. Für Personenmodelle kannst du z.B. <code>best.pt</code> oder <code>last.pt</code> hochladen und direkt auswählen.
+                        </div>
+                        <form id="modelUploadForm" enctype="multipart/form-data">
+                            <div class="row g-3">
+                                <div class="col-lg-6">
+                                    <label class="form-label">Modelldatei auswählen</label>
+                                    <input type="file" class="form-control" id="modelUploadFile" accept=".pt,.onnx,.engine" required>
+                                    <small class="text-secondary">Erlaubt sind YOLO/PyTorch <code>.pt</code>, ONNX <code>.onnx</code> und TensorRT <code>.engine</code>.</small>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Modell-Typ</label>
+                                    <select class="form-select" id="modelUploadRole">
+                                        <option value="people" selected>Personenmodell</option>
+                                        <option value="vehicle">Fahrzeug-/COCO-Modell</option>
+                                        <option value="plate">Kennzeichenmodell</option>
+                                        <option value="custom">Nur hochladen</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Zielordner</label>
+                                    <input type="text" class="form-control" id="modelUploadDirectory" value="{{ config.models.model_upload_directory if config.models is defined and config.models.model_upload_directory is defined else '/data/models' }}" readonly>
+                                </div>
+                            </div>
+                            <div class="row g-3 mt-2">
+                                <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="modelUploadSelectAfter" {% if config.models.model_upload_select_after_upload is not defined or config.models.model_upload_select_after_upload %}checked{% endif %}><label class="form-check-label" for="modelUploadSelectAfter">Nach Upload auswählen</label></div></div>
+                                <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="modelUploadReload"><label class="form-check-label" for="modelUploadReload">Danach Modelle neu laden</label></div></div>
+                                <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="modelUploadOverwrite" {% if config.models.model_upload_allow_overwrite is defined and config.models.model_upload_allow_overwrite %}checked{% endif %}><label class="form-check-label" for="modelUploadOverwrite">Gleiche Namen überschreiben</label></div></div>
+                                <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="modelUploadEnabled" {% if config.models.model_upload_enabled is not defined or config.models.model_upload_enabled %}checked{% endif %}><label class="form-check-label" for="modelUploadEnabled">Upload erlaubt</label></div></div>
+                            </div>
+                            <div class="d-flex gap-2 mt-4 flex-wrap">
+                                <button type="submit" class="btn btn-primary"><i class="fas fa-cloud-arrow-up me-2"></i>Modell hochladen</button>
+                                <button type="button" class="btn btn-outline-info" onclick="loadPeopleModelOptions()"><i class="fas fa-search me-2"></i>Modelle neu scannen</button>
+                                <button type="button" class="btn btn-outline-warning" onclick="saveModelUploadPreferences()"><i class="fas fa-save me-2"></i>Upload-Einstellungen speichern</button>
+                            </div>
+                        </form>
+                        <div id="modelUploadResult" class="mt-4"></div>
+                        <div class="setting-group mt-4">
+                            <div class="setting-group-title"><i class="fas fa-list"></i>Gefundene Modelle</div>
+                            <div id="modelUploadInventory" class="model-inventory-panel small text-secondary">Noch kein Scan ausgeführt.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- ============================================ -->
             <!-- ÜBER -->
             <!-- ============================================ -->
@@ -2887,6 +2947,10 @@
             license_plate_detector: pvStr('licenseModel', 'models/license_plate_detector.pt'),
             person_detector: pvStr('personModel', 'models/best.pt'),
             person_model_labels: pvStr('peopleClassNames', 'person,human'),
+            model_upload_enabled: pvBool('modelUploadEnabled'),
+            model_upload_directory: pvStr('modelUploadDirectory', '/data/models'),
+            model_upload_allow_overwrite: pvBool('modelUploadOverwrite'),
+            model_upload_select_after_upload: pvBool('modelUploadSelectAfter'),
             device: pvStr('modelDevice', 'auto'),
             model_size_hint: pvStr('modelSizeHint', 'nano'),
             custom_model_directory: pvStr('customModelDirectory', 'models'),
@@ -2949,6 +3013,7 @@
                 const missing = missingModels.length ? `<br><span class="text-warning">Nicht gefunden: ${missingModels.map(m => m.name).join(', ')}</span>` : '';
                 panel.innerHTML = `<strong>${existingModels.length}</strong> Modelle gefunden, davon <strong>${rec}</strong> als Personenmodell empfohlen. Status: COCO ${data.status?.coco_model_loaded ? 'geladen' : 'nicht geladen'}, Human ${data.status?.human_model_loaded ? 'geladen' : 'nicht geladen'}.${missing}`;
             }
+            renderModelInventory(models, 'modelUploadInventory');
         } catch (e) {
             select.innerHTML = '<option value="">Scan fehlgeschlagen</option>';
             if (panel) panel.innerHTML = '<span class="text-danger">Modellscan fehlgeschlagen.</span>';
@@ -2975,6 +3040,78 @@
             if (this.value) document.getElementById('peopleCustomModelPath').value = this.value;
         });
     }
+
+
+    function renderModelInventory(models, targetId = 'modelUploadInventory') {
+        const target = document.getElementById(targetId);
+        if (!target) return;
+        const existing = (models || []).filter(m => m.exists !== false);
+        if (!existing.length) {
+            target.innerHTML = '<span class="text-warning">Keine vorhandenen Modelle gefunden.</span>';
+            return;
+        }
+        target.innerHTML = `<div class="table-responsive"><table class="table table-sm table-dark table-striped align-middle mb-0"><thead><tr><th>Datei</th><th>Typ</th><th>Größe</th><th>Pfad</th><th>Aktion</th></tr></thead><tbody>${existing.map(m => `<tr><td>${m.name}</td><td>${m.kind_guess || '-'}</td><td>${m.size_mb || 0} MB</td><td><code>${m.path}</code></td><td>${m.kind_guess === 'people' ? `<button type="button" class="btn btn-sm btn-outline-info" onclick="selectUploadedPeopleModel('${m.path.replace(/'/g, "\\'")}')">als Personenmodell</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+
+    function selectUploadedPeopleModel(path) {
+        const peopleSelect = document.getElementById('peopleSelectedModelFile');
+        const peopleCustom = document.getElementById('peopleCustomModelPath');
+        const peopleMode = document.getElementById('peopleModelMode');
+        if (peopleCustom) peopleCustom.value = path;
+        if (peopleMode) peopleMode.value = 'model_file';
+        fetch('/api/models/people/select', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({path, model_mode: 'model_file', reload: document.getElementById('modelUploadReload')?.checked || false})
+        }).then(r => r.json()).then(data => {
+            if (data.success) {
+                showToast('Erfolg', 'Personenmodell ausgewählt', 'success');
+                loadPeopleModelOptions();
+                if (peopleSelect) peopleSelect.dataset.current = path;
+            } else {
+                showToast('Fehler', data.error || 'Modell konnte nicht ausgewählt werden', 'danger');
+            }
+        }).catch(() => showToast('Fehler', 'Verbindungsfehler', 'danger'));
+    }
+
+    function saveModelUploadPreferences() {
+        saveModelSettings(false);
+    }
+
+    const modelUploadForm = document.getElementById('modelUploadForm');
+    if (modelUploadForm) modelUploadForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const fileInput = document.getElementById('modelUploadFile');
+        const resultBox = document.getElementById('modelUploadResult');
+        if (!fileInput || !fileInput.files || !fileInput.files.length) {
+            showToast('Hinweis', 'Bitte zuerst eine Modelldatei auswählen.', 'warning');
+            return;
+        }
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('role', pvStr('modelUploadRole', 'people'));
+        formData.append('select_after_upload', pvBool('modelUploadSelectAfter') ? 'true' : 'false');
+        formData.append('reload', pvBool('modelUploadReload') ? 'true' : 'false');
+        formData.append('overwrite', pvBool('modelUploadOverwrite') ? 'true' : 'false');
+        if (resultBox) resultBox.innerHTML = '<div class="alert alert-info"><i class="fas fa-spinner fa-spin me-2"></i>Modell wird hochgeladen...</div>';
+        try {
+            const response = await fetch('/api/models/upload', { method: 'POST', body: formData });
+            const data = await response.json();
+            if (!data.success) {
+                if (resultBox) resultBox.innerHTML = `<div class="alert alert-danger"><i class="fas fa-triangle-exclamation me-2"></i>${data.error || 'Upload fehlgeschlagen'}</div>`;
+                showToast('Fehler', data.error || 'Upload fehlgeschlagen', 'danger');
+                return;
+            }
+            if (resultBox) resultBox.innerHTML = `<div class="alert alert-success"><strong>${data.model?.name || 'Modell'}</strong> wurde hochgeladen.<br><small>Pfad: <code>${data.model?.path || '-'}</code>${data.selected ? ' · ausgewählt' : ''}${data.reload ? ' · Reload gestartet' : ''}</small></div>`;
+            renderModelInventory(data.models || [], 'modelUploadInventory');
+            await loadPeopleModelOptions();
+            loadModelStatus();
+            showToast('Erfolg', 'Modell hochgeladen', 'success');
+        } catch (error) {
+            if (resultBox) resultBox.innerHTML = '<div class="alert alert-danger">Verbindungsfehler beim Modell-Upload.</div>';
+            showToast('Fehler', 'Verbindungsfehler beim Modell-Upload', 'danger');
+        }
+    });
 
     function peopleClassIdList() {
         return pvStr('peopleClassIds', '0').split(',').map(v => Number(v.trim())).filter(v => Number.isFinite(v));

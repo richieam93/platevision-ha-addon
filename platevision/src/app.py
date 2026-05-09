@@ -1,11 +1,12 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.2 ProTraffic People Model Fix - robust model discovery and sync
+Version 0.8.3 ProTraffic People Test Upload & Model Upload
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
 from flask_socketio import SocketIO, emit
+from werkzeug.utils import secure_filename
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -55,6 +56,8 @@ DIRECTORIES = [
     'uploads/images',
     'uploads/videos',
     'uploads/processed',
+    'uploads/people_tests',
+    'uploads/models',
     'static',
     'static/css',
     'static/js',
@@ -65,6 +68,7 @@ DIRECTORIES = [
     'data/history',
     'data/people',
     'data/people/images',
+    'data/models',
     'models',
     'templates'
 ]
@@ -543,6 +547,10 @@ class ConfigManager:
             'privacy_blur_people': False,
             'blur_strength': 35,
             'test_environment_enabled': True,
+            'test_image_upload_enabled': True,
+            'test_force_enable_people': True,
+            'test_save_uploads': False,
+            'test_save_to_history_default': False,
             'simulation_enabled': True,
             'retention_days': 90,
             'auto_cleanup_enabled': False,
@@ -600,6 +608,12 @@ class ConfigManager:
             'person_model_source': 'COCO class 0 or custom YOLOv8 human model',
             'person_model_scan_enabled': True,
             'person_model_extensions': ['.pt', '.onnx', '.engine'],
+            'model_upload_enabled': True,
+            'model_upload_directory': '/data/models',
+            'model_upload_max_mb': 500,
+            'model_upload_allow_overwrite': False,
+            'model_upload_select_after_upload': True,
+            'last_uploaded_model': None,
             'last_model_scan_at': None,
             'last_reload_at': None
         },
@@ -2519,6 +2533,8 @@ def _model_path_exists(path_value):
     resolved = _resolve_model_path(path_value)
     return bool(resolved and Path(resolved).exists())
 
+
+
 # ============================================================
 # GLOBALE INSTANZEN
 # ============================================================
@@ -3488,6 +3504,7 @@ def _candidate_model_directories(*extra_values):
         str(app_dir.parent / 'src' / 'models'),
         'platevision/src/models',
         cfg_models.get('custom_model_directory'),
+        cfg_models.get('model_upload_directory'),
         *(cfg_models.get('additional_model_directories') or []),
         os.path.dirname(cfg_models.get('person_detector') or ''),
         os.path.dirname(cfg_people.get('selected_model_file') or ''),
@@ -3549,6 +3566,79 @@ def _resolve_model_path(path_value):
 def _model_path_exists(path_value):
     resolved = _resolve_model_path(path_value)
     return bool(resolved and Path(resolved).exists())
+
+
+def _bool_from_request(value, default=False):
+    if value is None:
+        return bool(default)
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on', 'ja', 'y')
+
+
+def _allowed_model_extensions():
+    cfg = config_manager.get('models') or {}
+    configured = cfg.get('person_model_extensions') or ['.pt', '.onnx', '.engine']
+    return {str(ext).lower() if str(ext).startswith('.') else f'.{str(ext).lower()}' for ext in configured}
+
+
+def _model_upload_directory():
+    cfg = config_manager.get('models') or {}
+    preferred = Path(str(cfg.get('model_upload_directory') or '/data/models')).expanduser()
+    fallback = Path.cwd() / 'models'
+    for candidate in (preferred, Path('/data/models'), fallback):
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            if os.access(candidate, os.W_OK):
+                return candidate
+        except Exception:
+            continue
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def _model_info_from_path(path_value, selected_for_people=False):
+    p = Path(path_value)
+    try:
+        resolved = str(p.resolve())
+        stat = p.stat()
+    except Exception:
+        resolved = str(p)
+        stat = None
+    try:
+        rel = str(p.resolve().relative_to(Path.cwd().resolve())).replace('\\', '/')
+    except Exception:
+        try:
+            rel = str(p.resolve().relative_to(Path(__file__).resolve().parent)).replace('\\', '/')
+        except Exception:
+            rel = str(p).replace('\\', '/')
+    return {
+        'path': rel,
+        'resolved_path': resolved,
+        'name': p.name,
+        'directory': _safe_relpath(p.parent),
+        'extension': p.suffix.lower(),
+        'size_mb': round((stat.st_size if stat else 0) / 1024 / 1024, 2),
+        'modified_at': datetime.fromtimestamp(stat.st_mtime).isoformat() if stat else None,
+        'kind_guess': _guess_model_kind(p),
+        'exists': p.exists(),
+        'selected_for_people': bool(selected_for_people)
+    }
+
+
+def _safe_image_upload(file_storage):
+    if not file_storage or not getattr(file_storage, 'filename', ''):
+        return None, 'Keine Datei ausgewählt'
+    filename = secure_filename(file_storage.filename)
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}:
+        return None, 'Nur Bilddateien JPG, PNG, WEBP oder BMP sind erlaubt'
+    data = file_storage.read()
+    if not data:
+        return None, 'Leere Datei'
+    arr = np.frombuffer(data, np.uint8)
+    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if image is None:
+        return None, 'Ungültiges oder beschädigtes Bild'
+    return {'filename': filename, 'data': data, 'image': image, 'suffix': suffix}, None
 
 def _scan_model_files():
     cfg_models = config_manager.get('models') or {}
@@ -3659,6 +3749,81 @@ def _validate_current_config():
 @app.route('/api/models/available')
 def api_models_available():
     return jsonify({'success': True, 'models': _scan_model_files(), 'config': config_manager.get('models') or {}})
+
+
+@app.route('/api/models/upload', methods=['POST'])
+def api_models_upload():
+    """Upload custom YOLO/ONNX/TensorRT models from the settings UI.
+    Files are saved to /data/models when possible so they survive add-on updates.
+    """
+    try:
+        models_cfg = config_manager.get('models') or {}
+        if models_cfg.get('model_upload_enabled') is False:
+            return jsonify({'success': False, 'error': 'Modell-Upload ist in den Einstellungen deaktiviert.'}), 403
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'Keine Modelldatei erhalten.'}), 400
+        upload = request.files['file']
+        original_name = secure_filename(upload.filename or '')
+        if not original_name:
+            return jsonify({'success': False, 'error': 'Keine Datei ausgewählt.'}), 400
+        ext = Path(original_name).suffix.lower()
+        allowed = _allowed_model_extensions()
+        if ext not in allowed:
+            return jsonify({'success': False, 'error': f'Ungültiger Dateityp {ext}. Erlaubt: {", ".join(sorted(allowed))}'}), 400
+
+        role = (request.form.get('role') or 'people').strip().lower()
+        select_after_upload = _bool_from_request(request.form.get('select_after_upload'), models_cfg.get('model_upload_select_after_upload', True))
+        reload_after_upload = _bool_from_request(request.form.get('reload'), False)
+        overwrite = _bool_from_request(request.form.get('overwrite'), models_cfg.get('model_upload_allow_overwrite', False))
+        max_mb = float(models_cfg.get('model_upload_max_mb') or 500)
+        content_length = request.content_length or 0
+        if max_mb > 0 and content_length and content_length > max_mb * 1024 * 1024:
+            return jsonify({'success': False, 'error': f'Datei ist größer als das Limit von {max_mb:g} MB.'}), 413
+
+        target_dir = _model_upload_directory()
+        target = target_dir / original_name
+        if target.exists() and not overwrite:
+            target = target_dir / f"{target.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{target.suffix}"
+        upload.save(str(target))
+
+        info = _model_info_from_path(target, selected_for_people=(role == 'people' and select_after_upload))
+        cfg_models = config_manager.config.setdefault('models', {})
+        cfg_models['last_uploaded_model'] = info
+        cfg_models['last_model_upload_at'] = datetime.now().isoformat()
+        cfg_models['model_upload_directory'] = str(target_dir)
+
+        if role in ('people', 'person', 'human') and select_after_upload:
+            cfg_people = config_manager.config.setdefault('people', {})
+            cfg_people['model_mode'] = 'model_file'
+            cfg_people['selected_model_file'] = info['path']
+            cfg_people['custom_model_path'] = info['path']
+            cfg_people['model_path'] = info['path']
+            cfg_models['person_detector'] = info['path']
+        elif role in ('vehicle', 'car', 'coco') and select_after_upload:
+            cfg_models['vehicle_detector'] = info['path']
+        elif role in ('plate', 'license', 'kennzeichen') and select_after_upload:
+            cfg_models['license_plate_detector'] = info['path']
+
+        config_manager.save_config()
+        if reload_after_upload:
+            detector.models_loaded = False
+            detector.human_model = None
+            cfg_models['last_reload_at'] = datetime.now().isoformat()
+            config_manager.save_config()
+            threading.Thread(target=detector.load_models, daemon=True).start()
+
+        return jsonify({
+            'success': True,
+            'model': info,
+            'selected': select_after_upload,
+            'role': role,
+            'reload': reload_after_upload,
+            'models': _scan_model_files(),
+            'config': _public_config()
+        })
+    except Exception as e:
+        logger.error(f'Modell-Upload Fehler: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/models/people/options')
 def api_people_model_options():
@@ -4053,7 +4218,7 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.1',
+        'version': '0.8.3',
         'edition': 'ProTraffic People',
         'features': [
             'RTSP Live Stream', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
@@ -4545,6 +4710,78 @@ def api_people_test_snapshot():
         config_manager.config.setdefault('people', {})['enabled'] = previous_enabled
 
 
+@app.route('/api/people/test/image', methods=['POST'])
+def api_people_test_image_upload():
+    """Dedicated image upload for testing and tuning person detection on /test.
+    This can force-enable the people detector for the single test without changing saved settings.
+    """
+    try:
+        people_cfg = config_manager.get('people') or {}
+        if people_cfg.get('test_image_upload_enabled') is False:
+            return jsonify({'success': False, 'error': 'Personen-Bildtest ist in den Einstellungen deaktiviert.'}), 403
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'Keine Bilddatei erhalten.'}), 400
+        payload, error = _safe_image_upload(request.files['file'])
+        if error:
+            return jsonify({'success': False, 'error': error}), 400
+
+        force_enable = _bool_from_request(request.form.get('force_enable'), people_cfg.get('test_force_enable_people', True))
+        save_to_history = _bool_from_request(request.form.get('save_history'), people_cfg.get('test_save_to_history_default', False))
+        save_upload = _bool_from_request(request.form.get('save_upload'), people_cfg.get('test_save_uploads', False))
+        draw_boxes = _bool_from_request(request.form.get('draw_boxes'), people_cfg.get('draw_boxes', True))
+
+        saved_filename = payload['filename']
+        if save_upload:
+            target_dir = Path('uploads/people_tests') / datetime.now().strftime('%Y-%m-%d')
+            target_dir.mkdir(parents=True, exist_ok=True)
+            saved_filename = f"{datetime.now().strftime('%H%M%S')}_{uuid.uuid4().hex[:8]}_{payload['filename']}"
+            (target_dir / saved_filename).write_bytes(payload['data'])
+
+        previous_enabled = config_manager.get('people', 'enabled')
+        previous_draw = config_manager.get('people', 'draw_boxes')
+        if force_enable:
+            config_manager.config.setdefault('people', {})['enabled'] = True
+        config_manager.config.setdefault('people', {})['draw_boxes'] = draw_boxes
+        try:
+            result = detector.process_frame(payload['image'])
+        finally:
+            config_manager.config.setdefault('people', {})['enabled'] = previous_enabled
+            config_manager.config.setdefault('people', {})['draw_boxes'] = previous_draw
+
+        history_saved = 0
+        if save_to_history and (people_cfg.get('history_enabled') is not False):
+            for person in result.get('people', []):
+                event = dict(person)
+                event.update({'source': 'people_test_upload', 'filename': saved_filename})
+                person_history_manager.add_event(event)
+                history_saved += 1
+
+        ok, buffer = cv2.imencode('.jpg', result.get('annotated_frame'))
+        result_image_b64 = base64.b64encode(buffer).decode('utf-8') if ok else ''
+        people = result.get('people', []) or []
+        return jsonify({
+            'success': True,
+            'filename': saved_filename,
+            'people': people,
+            'people_count': len(people),
+            'people_counted': sum(1 for p in people if p.get('counted')),
+            'history_saved': history_saved,
+            'result_image': result_image_b64,
+            'processing_time': result.get('processing_time', 0),
+            'forced_enabled': force_enable,
+            'model_mode': config_manager.get('people', 'model_mode'),
+            'selected_model': config_manager.get('people', 'selected_model_file') or config_manager.get('people', 'custom_model_path') or (config_manager.get('models') or {}).get('person_detector'),
+            'status': {
+                'human_model_loaded': detector.human_model is not None,
+                'coco_model_loaded': detector.coco_model is not None,
+                'models_loaded': detector.models_loaded
+            }
+        })
+    except Exception as e:
+        logger.error(f'Personen-Bildtest Fehler: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/people/presence')
 def api_people_presence():
     return jsonify(person_history_manager.get_presence())
@@ -4592,7 +4829,7 @@ def api_system_health():
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.1'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.3'})
 
 
 @app.route('/api/system/audit')
@@ -4689,7 +4926,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.2 ProTraffic People Pro                                    ║
+    ║     Version 0.8.3 ProTraffic People Upload Pro                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║
