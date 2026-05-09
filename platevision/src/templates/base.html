@@ -586,7 +586,7 @@
                 <i class="fas fa-car-side"></i>
                 <div>
                     <div class="sidebar-logo-text">Plate<span>Vision</span></div>
-                    <div class="mini-label">ProTraffic v0.7</div>
+                    <div class="mini-label">ProTraffic v0.8</div>
                 </div>
             </a>
         </div>
@@ -621,6 +621,11 @@
             <a href="{{ url_for('statistics_page') }}" class="nav-link {% if page == 'statistics' %}active{% endif %}">
                 <i class="fas fa-road"></i>
                 <span>{{ t('statistics') }}</span>
+            </a>
+
+            <a href="{{ url_for('people_page') }}" class="nav-link {% if page == 'people' %}active{% endif %}">
+                <i class="fas fa-person-walking"></i>
+                <span>{{ t('people') }}</span>
             </a>
 
             <a href="{{ url_for('diagnostics_page') }}" class="nav-link {% if page == 'diagnostics' %}active{% endif %}">

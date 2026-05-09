@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class RTSPHandler:
     """Handler für RTSP Videostreams"""
     
-    def __init__(self, config_manager, history_manager, detector):
+    def __init__(self, config_manager, history_manager, detector, person_history_manager=None):
         """
         Initialisiert den RTSP Handler
         
@@ -32,6 +32,7 @@ class RTSPHandler:
         self.config_manager = config_manager
         self.history_manager = history_manager
         self.detector = detector
+        self.person_history_manager = person_history_manager
         
         # Stream-Variablen
         self.cap = None
@@ -107,7 +108,9 @@ class RTSPHandler:
             'url': self.get_rtsp_url(),
             'error': self.last_error if not self.connected else None,
             'resolution': self.get_stream_resolution(),
-            'analysis_area_enabled': self.config_manager.get('rtsp', 'analysis_area', 'enabled') or False
+            'analysis_area_enabled': self.config_manager.get('rtsp', 'analysis_area', 'enabled') or False,
+            'people_enabled': bool(self.config_manager.get('people', 'enabled')),
+            'people_history_count': len(self.person_history_manager.history) if self.person_history_manager else 0
         }
     
     def get_current_frame(self):
@@ -398,8 +401,30 @@ class RTSPHandler:
                                 else:
                                     cv2.rectangle(annotated, (px1, py1), (px2, py2), (0, 165, 255), 2)
                         
+                        # Personenerkennungen mit Offset einzeichnen
+                        for person in results.get('people', []):
+                            bbox = person.get('bbox', [])
+                            if len(bbox) == 4:
+                                x1, y1, x2, y2 = bbox
+                                x1 += offset_x
+                                y1 += offset_y
+                                x2 += offset_x
+                                y2 += offset_y
+                                person['bbox'] = [x1, y1, x2, y2]
+                                person['center_x'] = round((x1 + x2) / 2, 2)
+                                person['center_y'] = round((y1 + y2) / 2, 2)
+                                person['frame_width'] = frame_w
+                                person['frame_height'] = frame_h
+                                if self.config_manager.get('people', 'show_on_live') is not False:
+                                    color = (16, 185, 129) if person.get('counted') else (245, 158, 11)
+                                    cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                                    label = f"Person #{person.get('track_id', '?')}"
+                                    if person.get('counted'):
+                                        label += " gezählt"
+                                    cv2.putText(annotated, label, (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+
                         # Status-Info einzeichnen
-                        status_text = f"FPS: {self.get_fps()} | Frames: {self.frame_count} | Erkennungen: {self.detection_count}"
+                        status_text = f"FPS: {self.get_fps()} | Frames: {self.frame_count} | Erkennungen: {self.detection_count} | Personen: {len(results.get('people', []))}"
                         cv2.putText(annotated, status_text, (10, 30),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                         
@@ -418,6 +443,9 @@ class RTSPHandler:
                         for detection in results.get('detections', []):
                             if detection.get('plate_text'):
                                 self._handle_detection(detection, results)
+
+                        for person in results.get('people', []):
+                            self._handle_person_detection(person, results)
                                 
                     except Exception as e:
                         logger.error(f"Erkennungsfehler: {e}")
@@ -501,3 +529,41 @@ class RTSPHandler:
                 }, broadcast=True, namespace='/')
             except:
                 pass  # SocketIO nicht verfügbar oder Fehler
+
+
+    def _handle_person_detection(self, person, full_results):
+        """Speichert Personenereignisse in separater Historie."""
+        if not self.person_history_manager:
+            return
+        if not self.config_manager.get('people', 'enabled'):
+            return
+        save_all = bool(self.config_manager.get('people', 'save_all_detections'))
+        if not person.get('counted') and not save_all:
+            return
+        event = {
+            'event_type': person.get('event_type', 'person_detected'),
+            'counted': bool(person.get('counted')),
+            'direction': person.get('direction', 'unknown'),
+            'track_id': person.get('track_id'),
+            'confidence': person.get('confidence', 0),
+            'bbox': person.get('bbox'),
+            'center_x': person.get('center_x'),
+            'center_y': person.get('center_y'),
+            'frame_width': person.get('frame_width'),
+            'frame_height': person.get('frame_height'),
+            'source': 'rtsp',
+            'source_model': person.get('source_model'),
+        }
+        saved = self.person_history_manager.add_event(event)
+        if saved:
+            try:
+                from flask_socketio import emit
+                emit('person_detected', {
+                    'counted': saved.get('counted'),
+                    'direction': saved.get('direction'),
+                    'track_id': saved.get('track_id'),
+                    'confidence': saved.get('confidence'),
+                    'timestamp': saved.get('timestamp')
+                }, broadcast=True, namespace='/')
+            except Exception:
+                pass

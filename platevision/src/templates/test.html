@@ -420,19 +420,25 @@
                     
                     <!-- Stats -->
                     <div class="row g-2 mb-4">
-                        <div class="col-4">
+                        <div class="col-6 col-md-3">
                             <div class="bg-dark rounded p-3 text-center">
                                 <div class="h4 mb-0 text-primary" id="statVehicles">0</div>
                                 <small class="text-secondary">Fahrzeuge</small>
                             </div>
                         </div>
-                        <div class="col-4">
+                        <div class="col-6 col-md-3">
                             <div class="bg-dark rounded p-3 text-center">
                                 <div class="h4 mb-0 text-success" id="statPlates">0</div>
                                 <small class="text-secondary">Kennzeichen</small>
                             </div>
                         </div>
-                        <div class="col-4">
+                        <div class="col-6 col-md-3">
+                            <div class="bg-dark rounded p-3 text-center">
+                                <div class="h4 mb-0 text-info" id="statPeople">0</div>
+                                <small class="text-secondary">Personen</small>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
                             <div class="bg-dark rounded p-3 text-center">
                                 <div class="h4 mb-0 text-info" id="statTime">0</div>
                                 <small class="text-secondary">ms</small>
@@ -446,6 +452,12 @@
                         Erkannte Kennzeichen
                     </h6>
                     <div id="detectionsList"></div>
+
+                    <h6 class="mb-3 mt-4">
+                        <i class="fas fa-person-walking me-2"></i>
+                        Erkannte Personen
+                    </h6>
+                    <div id="peopleList"></div>
                 </div>
                 
                 <!-- Video Progress -->
@@ -754,7 +766,7 @@
             
             if (data.success) {
                 displayImageResults(data);
-                showToast('Erfolg', `${data.detections ? data.detections.length : 0} Kennzeichen erkannt`, 'success');
+                showToast('Erfolg', `${data.detections ? data.detections.length : 0} Kennzeichen und ${data.people ? data.people.length : 0} Personen erkannt`, 'success');
             } else {
                 showError(data.error || 'Verarbeitung fehlgeschlagen');
             }
@@ -777,6 +789,7 @@
         // Update stats
         document.getElementById('statVehicles').textContent = data.vehicles ? data.vehicles.length : 0;
         document.getElementById('statPlates').textContent = data.detections ? data.detections.length : 0;
+        document.getElementById('statPeople').textContent = data.people ? data.people.length : 0;
         document.getElementById('statTime').textContent = data.processing_time ? Math.round(data.processing_time * 1000) : 0;
         
         // Show result badge
@@ -788,6 +801,7 @@
         
         // Display detections list
         displayDetectionsList(data.detections);
+        displayPeopleList(data.people);
     }
     
     function displayDetectionsList(detections) {
@@ -838,6 +852,29 @@
         `).join('');
     }
     
+
+    function displayPeopleList(people) {
+        const listEl = document.getElementById('peopleList');
+        if (!listEl) return;
+        if (!people || people.length === 0) {
+            listEl.innerHTML = `<div class="alert alert-secondary mb-0"><i class="fas fa-info-circle me-2"></i>Keine Personen erkannt oder Personenanalyse ist deaktiviert.</div>`;
+            return;
+        }
+        listEl.innerHTML = people.map((p, index) => `
+            <div class="detection-result">
+                <div class="detection-result-placeholder"><i class="fas fa-person-walking text-info"></i></div>
+                <div class="detection-result-info">
+                    <div class="fw-bold">Person ${p.track_id ? '#' + p.track_id : index + 1} ${p.counted ? '<span class="badge bg-success ms-2">gezählt</span>' : ''}</div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center small text-secondary mt-2">
+                        <span><i class="fas fa-route me-1"></i>${p.event_type || 'person_detected'}</span>
+                        <span><i class="fas fa-arrow-right-arrow-left me-1"></i>${p.direction || 'unknown'}</span>
+                        <span class="confidence-badge ${getConfidenceClass(p.confidence)}">${p.confidence ? Math.round(p.confidence * 100) : 0}%</span>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
     function getConfidenceClass(confidence) {
         if (!confidence) return 'confidence-low';
         if (confidence >= 0.8) return 'confidence-high';

@@ -244,6 +244,10 @@
                         <i class="fas fa-chart-line"></i>
                         Dashboard & Layout
                     </a>
+                    <a class="nav-link" data-bs-toggle="pill" href="#peopleSettings" role="tab">
+                        <i class="fas fa-person-walking"></i>
+                        Personenanalyse
+                    </a>
                     <a class="nav-link" data-bs-toggle="pill" href="#privacyAlerts" role="tab">
                         <i class="fas fa-shield-alt"></i>
                         Datenschutz & Alerts
@@ -1439,6 +1443,12 @@
                                 <input type="text" class="form-control" id="licenseModel"
                                        value="{{ config.models.license_plate_detector }}">
                             </div>
+                            <div class="mb-3">
+                                <label class="form-label">Personen-Detektor / Human Model</label>
+                                <input type="text" class="form-control" id="personModel"
+                                       value="{{ config.models.person_detector if config.models.person_detector is defined else 'models/human_best.pt' }}">
+                                <small class="text-secondary">Optionales separates HumanDetection-Modell. Die Personenanalyse kann auch das Standard-COCO-Modell verwenden.</small>
+                            </div>
                         </div>
                         
                         <form id="modelsForm">
@@ -1796,6 +1806,93 @@
                 </div>
             </div>
 
+
+            <!-- Personenanalyse Settings -->
+            <div class="tab-pane fade" id="peopleSettings" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0"><i class="fas fa-person-walking text-info me-2"></i>Personenanalyse & Personenzählung</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="peopleForm">
+                            <div class="setting-group settings-pro-section">
+                                <div class="setting-group-title"><i class="fas fa-toggle-on"></i>Aktivierung</div>
+                                <div class="row g-3">
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleEnabled" {% if config.people is defined and config.people.enabled %}checked{% endif %}><label class="form-check-label" for="peopleEnabled"><strong>Personenerkennung aktivieren</strong></label><br><small class="text-secondary">Schalter für das gesamte Personenmodul.</small></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleHistoryEnabled" {% if config.people is defined and config.people.history_enabled %}checked{% endif %}><label class="form-check-label" for="peopleHistoryEnabled">Personen-Historie speichern</label></div></div>
+                                    <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleShowOnLive" {% if config.people is not defined or config.people.show_on_live %}checked{% endif %}><label class="form-check-label" for="peopleShowOnLive">Auf Live-Bild anzeigen</label></div></div>
+                                </div>
+                            </div>
+
+                            <div class="setting-group">
+                                <div class="setting-group-title"><i class="fas fa-brain"></i>Personenmodell auswählen</div>
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Modus</label>
+                                        {% set pmode = config.people.model_mode if config.people is defined and config.people.model_mode is defined else 'coco_person' %}
+                                        <select class="form-select" id="peopleModelMode">
+                                            <option value="coco_person" {% if pmode == 'coco_person' %}selected{% endif %}>Standard YOLOv8 COCO Person</option>
+                                            <option value="custom_human" {% if pmode == 'custom_human' %}selected{% endif %}>Eigenes HumanDetection Modell</option>
+                                            <option value="custom_path" {% if pmode == 'custom_path' %}selected{% endif %}>Benutzerdefinierter Pfad</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <label class="form-label">Pfad zum Human-Modell (.pt)</label>
+                                        <input type="text" class="form-control" id="peopleCustomModelPath" value="{{ config.people.custom_model_path if config.people is defined and config.people.custom_model_path is defined else 'models/human_best.pt' }}" placeholder="models/human_best.pt">
+                                        <small class="text-secondary">Für das genannte YOLOv8-HumanDetection Repository kannst du z.B. <code>best.pt</code> als <code>models/human_best.pt</code> ablegen.</small>
+                                    </div>
+                                    <div class="col-md-4"><label class="form-label">Min. Konfidenz</label><input type="number" class="form-control" id="peopleConfidence" min="0.05" max="0.95" step="0.01" value="{{ config.people.confidence_threshold if config.people is defined and config.people.confidence_threshold is defined else 0.45 }}"></div>
+                                    <div class="col-md-4"><label class="form-label">Min. Breite px</label><input type="number" class="form-control" id="peopleMinWidth" min="1" max="1000" value="{{ config.people.min_person_width if config.people is defined and config.people.min_person_width is defined else 20 }}"></div>
+                                    <div class="col-md-4"><label class="form-label">Min. Höhe px</label><input type="number" class="form-control" id="peopleMinHeight" min="1" max="1000" value="{{ config.people.min_person_height if config.people is defined and config.people.min_person_height is defined else 40 }}"></div>
+                                    <div class="col-md-4"><label class="form-label">Max. Personen pro Frame</label><input type="number" class="form-control" id="peopleMaxPerFrame" min="0" max="200" value="{{ config.people.max_persons_per_frame if config.people is defined and config.people.max_persons_per_frame is defined else 30 }}"></div>
+                                    <div class="col-md-4"><label class="form-label">Class IDs</label><input type="text" class="form-control" id="peopleClassIds" value="{{ (config.people.class_ids|join(',')) if config.people is defined and config.people.class_ids is defined else '0' }}"></div>
+                                    <div class="col-md-4"><label class="form-label">Class Names</label><input type="text" class="form-control" id="peopleClassNames" value="{{ (config.people.class_names|join(',')) if config.people is defined and config.people.class_names is defined else 'person,human' }}"></div>
+                                </div>
+                            </div>
+
+                            <div class="setting-group">
+                                <div class="setting-group-title"><i class="fas fa-route"></i>Zählung, Tracking & Richtung</div>
+                                <div class="row g-3">
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTrackerEnabled" {% if config.people is not defined or config.people.tracker_enabled %}checked{% endif %}><label class="form-check-label" for="peopleTrackerEnabled">Tracker aktiv</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleLineEnabled" {% if config.people is not defined or config.people.line_crossing_enabled %}checked{% endif %}><label class="form-check-label" for="peopleLineEnabled">Zähllinie aktiv</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleCountOnce" {% if config.people is not defined or config.people.count_once_per_track %}checked{% endif %}><label class="form-check-label" for="peopleCountOnce">Einmal pro Track zählen</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleDrawBoxes" {% if config.people is not defined or config.people.draw_boxes %}checked{% endif %}><label class="form-check-label" for="peopleDrawBoxes">Boxen zeichnen</label></div></div>
+                                    <div class="col-md-4"><label class="form-label">Zählstrategie</label>{% set strategy = config.people.count_strategy if config.people is defined and config.people.count_strategy is defined else 'line_crossing' %}<select class="form-select" id="peopleCountStrategy"><option value="line_crossing" {% if strategy == 'line_crossing' %}selected{% endif %}>Virtuelle Linie</option><option value="first_seen" {% if strategy == 'first_seen' %}selected{% endif %}>Erstes Auftauchen</option><option value="every_detection" {% if strategy == 'every_detection' %}selected{% endif %}>Jede Erkennung</option></select></div>
+                                    <div class="col-md-4"><label class="form-label">Bewegungsachse</label>{% set paxis = config.people.movement_axis if config.people is defined and config.people.movement_axis is defined else 'y' %}<select class="form-select" id="peopleMovementAxis"><option value="y" {% if paxis == 'y' %}selected{% endif %}>Y / oben-unten</option><option value="x" {% if paxis == 'x' %}selected{% endif %}>X / links-rechts</option></select></div>
+                                    <div class="col-md-4"><label class="form-label">Richtung zählen</label>{% set pdir = config.people.crossing_direction if config.people is defined and config.people.crossing_direction is defined else 'both' %}<select class="form-select" id="peopleCrossingDirection"><option value="both" {% if pdir == 'both' %}selected{% endif %}>beide</option><option value="down" {% if pdir == 'down' %}selected{% endif %}>runter</option><option value="up" {% if pdir == 'up' %}selected{% endif %}>hoch</option><option value="right" {% if pdir == 'right' %}selected{% endif %}>rechts</option><option value="left" {% if pdir == 'left' %}selected{% endif %}>links</option></select></div>
+                                    <div class="col-md-4"><label class="form-label">Linienposition %</label><input type="number" class="form-control" id="peopleLinePercent" min="1" max="99" value="{{ config.people.virtual_line_position_percent if config.people is defined and config.people.virtual_line_position_percent is defined else 50 }}"></div>
+                                    <div class="col-md-4"><label class="form-label">Tracker Distanz px</label><input type="number" class="form-control" id="peopleTrackerDistance" min="10" max="1000" value="{{ config.people.tracker_max_distance if config.people is defined and config.people.tracker_max_distance is defined else 120 }}"></div>
+                                    <div class="col-md-4"><label class="form-label">Tracker Timeout s</label><input type="number" class="form-control" id="peopleTrackerTimeout" min="1" max="120" value="{{ config.people.tracker_timeout_seconds if config.people is defined and config.people.tracker_timeout_seconds is defined else 8 }}"></div>
+                                </div>
+                            </div>
+
+                            <div class="setting-group">
+                                <div class="setting-group-title"><i class="fas fa-clock-rotate-left"></i>History, Datenschutz & Testumgebung</div>
+                                <div class="row g-3">
+                                    <div class="col-md-3"><label class="form-label">Session-Lücke min</label><input type="number" class="form-control" id="peopleSessionGap" min="1" max="240" value="{{ config.people.session_gap_minutes if config.people is defined and config.people.session_gap_minutes is defined else 5 }}"></div>
+                                    <div class="col-md-3"><label class="form-label">Anwesend Timeout min</label><input type="number" class="form-control" id="peoplePresentTimeout" min="1" max="240" value="{{ config.people.present_timeout_minutes if config.people is defined and config.people.present_timeout_minutes is defined else 10 }}"></div>
+                                    <div class="col-md-3"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleSaveAll" {% if config.people is defined and config.people.save_all_detections %}checked{% endif %}><label class="form-check-label" for="peopleSaveAll">Alle Detections speichern</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleTestEnvironment" {% if config.people is not defined or config.people.test_environment_enabled %}checked{% endif %}><label class="form-check-label" for="peopleTestEnvironment">Testumgebung aktiv</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleSaveCrops" {% if config.people is defined and config.people.save_person_crops %}checked{% endif %}><label class="form-check-label" for="peopleSaveCrops">Personenbilder speichern</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleSaveFullFrame" {% if config.people is defined and config.people.save_full_frame %}checked{% endif %}><label class="form-check-label" for="peopleSaveFullFrame">Vollbild speichern</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peoplePrivacyBlur" {% if config.people is defined and config.people.privacy_blur_people %}checked{% endif %}><label class="form-check-label" for="peoplePrivacyBlur">Personen weichzeichnen</label></div></div>
+                                    <div class="col-md-3"><label class="form-label">Export Standard</label>{% set pexport = config.people.export_default_format if config.people is defined and config.people.export_default_format is defined else 'csv' %}<select class="form-select" id="peopleExportDefault"><option value="csv" {% if pexport == 'csv' %}selected{% endif %}>CSV</option><option value="json" {% if pexport == 'json' %}selected{% endif %}>JSON</option></select></div>
+                                </div>
+                                <div class="info-box mt-3"><i class="fas fa-info-circle me-2"></i>Exakte Personenzählung hängt von Kamerawinkel, Zähllinie und Bildrate ab. Mit einer klaren Linie am Eingang/Ausgang ist die Zählung am zuverlässigsten.</div>
+                            </div>
+
+                            <div class="d-flex flex-wrap gap-2 mt-4">
+                                <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Personenanalyse speichern</button>
+                                <button type="button" class="btn btn-outline-warning" onclick="savePeopleSettings(true)"><i class="fas fa-sync me-2"></i>Speichern & Modelle neu laden</button>
+                                <a href="/people" class="btn btn-outline-info"><i class="fas fa-chart-simple me-2"></i>Personenstatistik öffnen</a>
+                                <button type="button" class="btn btn-outline-success" onclick="runPeopleSnapshotTest()"><i class="fas fa-vial me-2"></i>Live-Snapshot testen</button>
+                            </div>
+                            <div id="peopleTestResult" class="mt-3"></div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
             <div class="tab-pane fade" id="about" role="tabpanel">
                 <div class="card">
                     <div class="card-body text-center py-5">
@@ -1810,7 +1907,7 @@
                                 <table class="table table-sm text-start">
                                     <tr>
                                         <td class="text-secondary">Version</td>
-                                        <td class="fw-bold">0.7.2 ProTraffic Plus</td>
+                                        <td class="fw-bold">0.8.0 ProTraffic People</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">YOLO Version</td>
@@ -2227,7 +2324,7 @@
         document.getElementById('historyForm').dispatchEvent(new Event('submit'));
         document.getElementById('storageForm').dispatchEvent(new Event('submit'));
         document.getElementById('generalForm').dispatchEvent(new Event('submit'));
-        ['plateRecognitionForm', 'searchForm', 'trafficForm', 'dashboardForm', 'uiForm', 'privacyForm', 'alertsForm', 'modelsForm', 'aboutForm'].forEach(function(formId) {
+        ['plateRecognitionForm', 'searchForm', 'trafficForm', 'dashboardForm', 'uiForm', 'privacyForm', 'alertsForm', 'peopleForm', 'modelsForm', 'aboutForm'].forEach(function(formId) {
             const form = document.getElementById(formId);
             if (form) form.dispatchEvent(new Event('submit'));
         });
@@ -2260,7 +2357,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.7.2-protraffic-plus-expanded-settings',
+                    version: '0.8.0-protraffic-people-analysis',
                     config: config
                 };
                 
@@ -2753,6 +2850,8 @@
         const payload = {
             vehicle_detector: pvStr('vehicleModel', 'models/yolov8n.pt'),
             license_plate_detector: pvStr('licenseModel', 'models/license_plate_detector.pt'),
+            person_detector: pvStr('personModel', 'models/human_best.pt'),
+            person_model_labels: pvStr('peopleClassNames', 'person,human'),
             device: pvStr('modelDevice', 'auto'),
             model_size_hint: pvStr('modelSizeHint', 'nano'),
             custom_model_directory: pvStr('customModelDirectory', 'models'),
@@ -2786,6 +2885,90 @@
         e.preventDefault();
         saveModelSettings(false);
     });
+
+
+
+    function peopleClassIdList() {
+        return pvStr('peopleClassIds', '0').split(',').map(v => Number(v.trim())).filter(v => Number.isFinite(v));
+    }
+
+    function peopleClassNameList() {
+        return pvStr('peopleClassNames', 'person,human').split(',').map(v => v.trim()).filter(Boolean);
+    }
+
+    function savePeopleSettings(reloadAfterSave = false) {
+        const payload = {
+            enabled: pvBool('peopleEnabled'),
+            history_enabled: pvBool('peopleHistoryEnabled'),
+            show_on_live: pvBool('peopleShowOnLive'),
+            draw_boxes: pvBool('peopleDrawBoxes'),
+            confidence_threshold: pvNum('peopleConfidence', 0.45),
+            model_mode: pvStr('peopleModelMode', 'coco_person'),
+            custom_model_path: pvStr('peopleCustomModelPath', 'models/human_best.pt'),
+            model_path: pvStr('peopleCustomModelPath', 'models/human_best.pt'),
+            class_ids: peopleClassIdList(),
+            class_names: peopleClassNameList(),
+            min_person_width: pvNum('peopleMinWidth', 20),
+            min_person_height: pvNum('peopleMinHeight', 40),
+            max_persons_per_frame: pvNum('peopleMaxPerFrame', 30),
+            tracker_enabled: pvBool('peopleTrackerEnabled'),
+            tracker_max_distance: pvNum('peopleTrackerDistance', 120),
+            tracker_timeout_seconds: pvNum('peopleTrackerTimeout', 8),
+            count_strategy: pvStr('peopleCountStrategy', 'line_crossing'),
+            count_once_per_track: pvBool('peopleCountOnce'),
+            line_crossing_enabled: pvBool('peopleLineEnabled'),
+            virtual_line_position_percent: pvNum('peopleLinePercent', 50),
+            movement_axis: pvStr('peopleMovementAxis', 'y'),
+            crossing_direction: pvStr('peopleCrossingDirection', 'both'),
+            session_gap_minutes: pvNum('peopleSessionGap', 5),
+            present_timeout_minutes: pvNum('peoplePresentTimeout', 10),
+            save_all_detections: pvBool('peopleSaveAll'),
+            save_person_crops: pvBool('peopleSaveCrops'),
+            save_full_frame: pvBool('peopleSaveFullFrame'),
+            privacy_blur_people: pvBool('peoplePrivacyBlur'),
+            test_environment_enabled: pvBool('peopleTestEnvironment'),
+            export_default_format: pvStr('peopleExportDefault', 'csv'),
+            reload: reloadAfterSave
+        };
+        fetch('/api/config/people', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Erfolg', reloadAfterSave ? 'Personenanalyse gespeichert und Modelle werden neu geladen' : 'Personenanalyse gespeichert', 'success');
+                loadModelStatus();
+            } else {
+                showToast('Fehler', result.error || 'Personenanalyse konnte nicht gespeichert werden', 'danger');
+            }
+        })
+        .catch(() => showToast('Fehler', 'Verbindungsfehler', 'danger'));
+    }
+
+    const peopleForm = document.getElementById('peopleForm');
+    if (peopleForm) peopleForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        savePeopleSettings(false);
+    });
+
+    function runPeopleSnapshotTest() {
+        const box = document.getElementById('peopleTestResult');
+        if (box) box.innerHTML = '<div class="alert alert-info"><i class="fas fa-spinner fa-spin me-2"></i>Teste aktuellen Live-Snapshot...</div>';
+        fetch('/api/people/test/snapshot', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (!box) return;
+                if (!data.success) {
+                    box.innerHTML = `<div class="alert alert-warning"><i class="fas fa-triangle-exclamation me-2"></i>${data.error || 'Test nicht möglich'}</div>`;
+                    return;
+                }
+                box.innerHTML = `<div class="alert alert-success"><strong>${data.people?.length || 0}</strong> Personen erkannt, <strong>${data.people_counted || 0}</strong> gezählt. Verarbeitungszeit: ${(data.processing_time || 0).toFixed(2)}s</div>` +
+                    (data.result_image ? `<img class="img-fluid rounded border border-secondary" src="data:image/jpeg;base64,${data.result_image}" alt="Personentest">` : '');
+            })
+            .catch(() => { if (box) box.innerHTML = '<div class="alert alert-danger">Snapshot-Test fehlgeschlagen.</div>'; });
+    }
 
     const aboutForm = document.getElementById('aboutForm');
     if (aboutForm) aboutForm.addEventListener('submit', function(e) {

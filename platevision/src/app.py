@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.7.2 ProTraffic Plus - Expanded Original Settings
+Version 0.8.0 ProTraffic People - Expanded Original Settings + Person Analysis
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -63,6 +63,8 @@ DIRECTORIES = [
     'data/plates_detected',
     'data/vehicles_detected',
     'data/history',
+    'data/people',
+    'data/people/images',
     'models',
     'templates'
 ]
@@ -489,6 +491,44 @@ class ConfigManager:
             'arrival_label': 'gekommen',
             'departure_label': 'gegangen'
         },
+        'people': {
+            'enabled': False,
+            'history_enabled': True,
+            'show_on_live': True,
+            'draw_boxes': True,
+            'confidence_threshold': 0.45,
+            'model_mode': 'coco_person',
+            'model_path': 'models/human_best.pt',
+            'model_choices': {
+                'coco_person': 'Standard YOLOv8 COCO Person-Klasse',
+                'custom_human': 'Eigenes YOLOv8 Human Modell',
+                'custom_path': 'Benutzerdefinierter Modellpfad'
+            },
+            'custom_model_path': 'models/human_best.pt',
+            'class_ids': [0],
+            'class_names': ['person', 'human'],
+            'min_person_width': 20,
+            'min_person_height': 40,
+            'max_persons_per_frame': 30,
+            'tracker_enabled': True,
+            'tracker_max_distance': 120,
+            'tracker_timeout_seconds': 8,
+            'count_strategy': 'line_crossing',
+            'count_once_per_track': True,
+            'line_crossing_enabled': True,
+            'virtual_line_position_percent': 50,
+            'movement_axis': 'y',
+            'crossing_direction': 'both',
+            'session_gap_minutes': 5,
+            'present_timeout_minutes': 10,
+            'save_all_detections': False,
+            'save_person_crops': False,
+            'save_full_frame': False,
+            'privacy_blur_people': False,
+            'test_environment_enabled': True,
+            'export_default_format': 'csv',
+            'note': 'Personenzählung ist ohne klare Zähllinie oder zweite Kamera heuristisch.'
+        },
         'alerts': {
             'watchlist_notifications': True,
             'unknown_plate_notifications': False,
@@ -533,6 +573,9 @@ class ConfigManager:
             'custom_model_directory': 'models',
             'vehicle_model_labels': 'COCO',
             'plate_model_labels': 'license_plate',
+            'person_detector': 'models/human_best.pt',
+            'person_model_labels': 'person,human',
+            'person_model_source': 'COCO class 0 or custom YOLOv8 human model',
             'last_reload_at': None
         },
         'about': {
@@ -1348,6 +1391,187 @@ class WatchlistManager:
 
 
 # ============================================================
+# PERSONEN-HISTORY & PERSONENSTATISTIK
+# ============================================================
+
+class PersonHistoryManager:
+    """Speichert Personen-Zählereignisse und erstellt Tages-/Stundenstatistiken."""
+
+    HISTORY_FILE = 'data/people/history.json'
+
+    def __init__(self):
+        self.history = self.load_history()
+        self.lock = threading.Lock()
+
+    def load_history(self):
+        if os.path.exists(self.HISTORY_FILE):
+            try:
+                with open(self.HISTORY_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Fehler beim Laden der Personen-Historie: {e}")
+        return []
+
+    def save_history(self):
+        try:
+            Path(self.HISTORY_FILE).parent.mkdir(parents=True, exist_ok=True)
+            with open(self.HISTORY_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.history, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern der Personen-Historie: {e}")
+            return False
+
+    def _parse_datetime(self, value):
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        except Exception:
+            return None
+
+    def add_event(self, event, check_duplicate=True):
+        if not (config_manager.get('people', 'history_enabled') is not False):
+            return None
+        with self.lock:
+            item = dict(event or {})
+            item.setdefault('id', str(uuid.uuid4()))
+            item.setdefault('timestamp', datetime.now().isoformat())
+            item.setdefault('source', 'unknown')
+            item.setdefault('event_type', 'person_detected')
+            item.setdefault('direction', 'unknown')
+            item.setdefault('counted', True)
+            item.setdefault('confidence', 0)
+            item.setdefault('track_id', None)
+            self.history.insert(0, item)
+            max_entries = int(config_manager.get('general', 'max_history_entries') or 1000)
+            if len(self.history) > max_entries:
+                self.history = self.history[:max_entries]
+            self.save_history()
+            return item
+
+    def get_all(self, limit=100, offset=0):
+        return self.history[offset:offset + limit]
+
+    def clear_history(self):
+        with self.lock:
+            self.history = []
+            self.save_history()
+
+    def _filters(self, filters=None):
+        filters = filters or {}
+        now = datetime.now()
+        days = int(filters.get('days') or config_manager.get('dashboard', 'default_range_days') or 7)
+        def parse(value):
+            if not value:
+                return None
+            try:
+                dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+                if len(str(value)) <= 10:
+                    dt = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                return dt.replace(tzinfo=None) if getattr(dt, 'tzinfo', None) else dt
+            except Exception:
+                return None
+        date_to = parse(filters.get('date_to')) or now
+        if filters.get('date_to') and len(str(filters.get('date_to'))) <= 10:
+            date_to = date_to.replace(hour=23, minute=59, second=59)
+        date_from = parse(filters.get('date_from'))
+        if not date_from:
+            date_from = date_to.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=max(days - 1, 0))
+        return {
+            'date_from': date_from,
+            'date_to': date_to,
+            'min_confidence': float(filters.get('min_confidence') or config_manager.get('people', 'confidence_threshold') or 0),
+            'counted_only': str(filters.get('counted_only', 'true')).lower() not in ('0', 'false', 'no', 'nein'),
+            'event_type': filters.get('event_type') or '',
+            'direction': filters.get('direction') or ''
+        }
+
+    def search(self, filters=None):
+        f = self._filters(filters)
+        rows = []
+        for item in self.history:
+            ts = self._parse_datetime(item.get('timestamp'))
+            if not ts:
+                continue
+            ts = ts.replace(tzinfo=None) if getattr(ts, 'tzinfo', None) else ts
+            if f['date_from'] and ts < f['date_from']:
+                continue
+            if f['date_to'] and ts > f['date_to']:
+                continue
+            if float(item.get('confidence') or 0) < f['min_confidence']:
+                continue
+            if f['counted_only'] and not item.get('counted', True):
+                continue
+            if f['event_type'] and item.get('event_type') != f['event_type']:
+                continue
+            if f['direction'] and f['direction'] != 'all' and item.get('direction') != f['direction']:
+                continue
+            rows.append(item)
+        return rows
+
+    def get_statistics(self, filters=None):
+        rows = self.search(filters)
+        daily = defaultdict(lambda: {'date': '', 'persons': 0, 'detections': 0, 'line_crossings': 0, 'appearances': 0, 'directions': Counter()})
+        hourly = defaultdict(int)
+        directions = Counter()
+        event_types = Counter()
+        tracks = set()
+        confidences = []
+        for item in rows:
+            ts = self._parse_datetime(item.get('timestamp'))
+            if not ts:
+                continue
+            ts = ts.replace(tzinfo=None) if getattr(ts, 'tzinfo', None) else ts
+            day = ts.date().isoformat()
+            daily[day]['date'] = day
+            daily[day]['detections'] += 1
+            if item.get('counted', True):
+                daily[day]['persons'] += 1
+                hourly[ts.strftime('%Y-%m-%d %H:00')] += 1
+            if item.get('event_type') == 'line_crossing':
+                daily[day]['line_crossings'] += 1
+            if item.get('event_type') == 'appearance':
+                daily[day]['appearances'] += 1
+            direction = item.get('direction') or 'unknown'
+            daily[day]['directions'][direction] += 1
+            directions[direction] += 1
+            event_types[item.get('event_type') or 'unknown'] += 1
+            if item.get('track_id') is not None:
+                tracks.add(str(item.get('track_id')))
+            confidences.append(float(item.get('confidence') or 0))
+        daily_items = []
+        for _, row in sorted(daily.items()):
+            daily_items.append({
+                'date': row['date'],
+                'persons': row['persons'],
+                'detections': row['detections'],
+                'line_crossings': row['line_crossings'],
+                'appearances': row['appearances'],
+                'directions': dict(row['directions'])
+            })
+        today = datetime.now().date().isoformat()
+        today_persons = next((d['persons'] for d in daily_items if d['date'] == today), 0)
+        return {
+            'summary': {
+                'total_persons': sum(d['persons'] for d in daily_items),
+                'today_persons': today_persons,
+                'events': len(rows),
+                'unique_tracks': len(tracks),
+                'average_confidence': round(sum(confidences) / len(confidences), 4) if confidences else 0,
+                'busiest_day': max(daily_items, key=lambda x: x['persons'], default=None),
+                'note': 'Für genaue Durchgangszählung sollte die virtuelle Linie passend zur Kameraposition eingestellt werden.'
+            },
+            'daily': daily_items,
+            'hourly': [{'hour': k, 'count': v} for k, v in sorted(hourly.items())],
+            'directions': dict(directions),
+            'event_types': dict(event_types),
+            'latest': rows[:100],
+            'config': config_manager.get('people') or {}
+        }
+
+
+# ============================================================
 # KENNZEICHEN-DETEKTOR
 # ============================================================
 
@@ -1361,10 +1585,13 @@ class LicensePlateDetector:
         self.config_manager = config_manager
         self.coco_model = None
         self.license_model = None
+        self.human_model = None
         self.ocr_reader = None
         self.models_loaded = False
         self.load_lock = threading.Lock()
         self.recent_plates = {}
+        self.person_tracks = {}
+        self.person_next_track_id = 1
     
     def load_models(self):
         with self.load_lock:
@@ -1388,6 +1615,16 @@ class LicensePlateDetector:
                     logger.info(f"Kennzeichen-Modell geladen: {license_model_path}")
                 else:
                     logger.warning(f"Kennzeichen-Modell nicht gefunden: {license_model_path}")
+
+                self.human_model = None
+                people_cfg = self.config_manager.get('people') or {}
+                human_path = people_cfg.get('custom_model_path') or people_cfg.get('model_path') or self.config_manager.get('models', 'person_detector')
+                if people_cfg.get('enabled') and people_cfg.get('model_mode') in ('custom_human', 'custom_path'):
+                    if human_path and os.path.exists(human_path):
+                        self.human_model = YOLO(human_path)
+                        logger.info(f"Personen-Modell geladen: {human_path}")
+                    else:
+                        logger.warning(f"Personen-Modell nicht gefunden: {human_path}; Fallback auf COCO-Personenklasse")
                 
                 languages = self.config_manager.get('ocr', 'languages') or ['en']
                 gpu_enabled = self.config_manager.get('ocr', 'gpu_enabled') or False
@@ -1696,6 +1933,181 @@ class LicensePlateDetector:
         country_hint = self.config_manager.get('plate_recognition', 'country_hint') or 'auto'
         return PlateUtils.smart_correct(text, country_hint=country_hint)
 
+
+    def _person_config(self):
+        return self.config_manager.get('people') or {}
+
+    def _person_runtime_model(self):
+        cfg = self._person_config()
+        if cfg.get('model_mode') in ('custom_human', 'custom_path') and self.human_model is not None:
+            return self.human_model, False
+        return self.coco_model, True
+
+    def _track_people(self, detections, frame_w, frame_h):
+        cfg = self._person_config()
+        if not cfg.get('tracker_enabled', True):
+            for index, det in enumerate(detections, start=1):
+                det['track_id'] = index
+                det['counted'] = True
+                det['event_type'] = 'person_detected'
+                det['direction'] = 'unknown'
+            return detections
+
+        now = time.time()
+        max_distance = float(cfg.get('tracker_max_distance') or 120)
+        timeout = float(cfg.get('tracker_timeout_seconds') or 8)
+        axis = (cfg.get('movement_axis') or 'y').lower()
+        line_percent = float(cfg.get('virtual_line_position_percent') or 50)
+        line_value = (frame_w if axis == 'x' else frame_h) * line_percent / 100.0
+        crossing_enabled = bool(cfg.get('line_crossing_enabled', True))
+        crossing_direction = cfg.get('crossing_direction') or 'both'
+        count_once = bool(cfg.get('count_once_per_track', True))
+        count_strategy = cfg.get('count_strategy') or 'line_crossing'
+
+        # purge stale tracks
+        self.person_tracks = {tid: tr for tid, tr in self.person_tracks.items() if now - tr.get('last_seen', now) <= timeout}
+
+        used_tracks = set()
+        for det in detections:
+            cx, cy = det['center_x'], det['center_y']
+            best_tid, best_dist = None, None
+            for tid, tr in self.person_tracks.items():
+                if tid in used_tracks:
+                    continue
+                px, py = tr.get('center', (cx, cy))
+                dist = ((cx - px) ** 2 + (cy - py) ** 2) ** 0.5
+                if dist <= max_distance and (best_dist is None or dist < best_dist):
+                    best_tid, best_dist = tid, dist
+
+            new_track = best_tid is None
+            if new_track:
+                best_tid = self.person_next_track_id
+                self.person_next_track_id += 1
+                self.person_tracks[best_tid] = {
+                    'center': (cx, cy), 'previous_center': None, 'first_seen': now,
+                    'last_seen': now, 'counted': False, 'last_side': None
+                }
+            tr = self.person_tracks[best_tid]
+            previous = tr.get('center')
+            tr['previous_center'] = previous
+            tr['center'] = (cx, cy)
+            tr['last_seen'] = now
+            used_tracks.add(best_tid)
+
+            prev_value = previous[0] if previous and axis == 'x' else (previous[1] if previous else None)
+            current_value = cx if axis == 'x' else cy
+            prev_side = None if prev_value is None else ('positive' if prev_value >= line_value else 'negative')
+            current_side = 'positive' if current_value >= line_value else 'negative'
+            direction = 'unknown'
+            event_type = 'person_detected'
+            counted = False
+
+            if new_track and count_strategy in ('first_seen', 'appearance'):
+                event_type = 'appearance'
+                counted = True
+            elif crossing_enabled and prev_side is not None and prev_side != current_side:
+                event_type = 'line_crossing'
+                if axis == 'y':
+                    direction = 'down' if current_value > prev_value else 'up'
+                else:
+                    direction = 'right' if current_value > prev_value else 'left'
+                if crossing_direction == 'both' or direction == crossing_direction:
+                    counted = True
+            elif count_strategy == 'every_detection':
+                counted = True
+
+            if count_once and tr.get('counted') and counted:
+                counted = False
+                event_type = 'already_counted'
+            if counted:
+                tr['counted'] = True
+
+            tr['last_side'] = current_side
+            det.update({
+                'track_id': best_tid,
+                'counted': bool(counted),
+                'event_type': event_type,
+                'direction': direction,
+                'line_value': round(line_value, 2),
+                'tracking_status': 'new' if new_track else 'matched'
+            })
+        return detections
+
+    def _detect_people(self, frame, annotated=None):
+        cfg = self._person_config()
+        if not cfg.get('enabled'):
+            return []
+        model, is_coco = self._person_runtime_model()
+        if model is None:
+            return []
+        frame_h, frame_w = frame.shape[:2]
+        confidence = float(cfg.get('confidence_threshold') or 0.45)
+        max_persons = int(cfg.get('max_persons_per_frame') or 0)
+        min_w = int(cfg.get('min_person_width') or 0)
+        min_h = int(cfg.get('min_person_height') or 0)
+        runtime_kwargs = self._yolo_runtime_kwargs()
+        yolo_kwargs = {'conf': confidence, 'verbose': False}
+        yolo_kwargs.update(runtime_kwargs)
+        if is_coco:
+            yolo_kwargs['classes'] = [0]
+        people = []
+        try:
+            results = model(frame, **yolo_kwargs)[0]
+            names = getattr(model, 'names', {}) or {}
+            allowed_names = {str(x).strip().lower() for x in (cfg.get('class_names') or ['person', 'human'])}
+            allowed_ids = set(int(x) for x in (cfg.get('class_ids') or [0]) if str(x).strip() != '')
+            for raw in results.boxes.data.tolist():
+                x1, y1, x2, y2, score, class_id = raw[:6]
+                class_id = int(class_id)
+                class_name = str(names.get(class_id, 'person' if class_id == 0 else class_id)).lower()
+                if not is_coco and allowed_ids and class_id not in allowed_ids and class_name not in allowed_names:
+                    continue
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                w, h = x2 - x1, y2 - y1
+                if w < min_w or h < min_h:
+                    continue
+                people.append({
+                    'bbox': [x1, y1, x2, y2],
+                    'center_x': round((x1 + x2) / 2, 2),
+                    'center_y': round((y1 + y2) / 2, 2),
+                    'width': int(w),
+                    'height': int(h),
+                    'confidence': float(score),
+                    'class_id': class_id,
+                    'class_name': class_name,
+                    'frame_width': frame_w,
+                    'frame_height': frame_h,
+                    'source_model': 'coco_person' if is_coco else 'custom_human'
+                })
+                if max_persons and len(people) >= max_persons:
+                    break
+        except Exception as e:
+            logger.error(f"Personenerkennung Fehler: {e}")
+            return []
+
+        people = self._track_people(people, frame_w, frame_h)
+        if annotated is not None and cfg.get('draw_boxes', True):
+            axis = (cfg.get('movement_axis') or 'y').lower()
+            line_percent = float(cfg.get('virtual_line_position_percent') or 50)
+            if cfg.get('line_crossing_enabled', True):
+                if axis == 'y':
+                    y = int(frame_h * line_percent / 100.0)
+                    cv2.line(annotated, (0, y), (frame_w, y), (34, 211, 238), 2)
+                    cv2.putText(annotated, 'Personen-Zaehllinie', (10, max(20, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (34, 211, 238), 2)
+                else:
+                    x = int(frame_w * line_percent / 100.0)
+                    cv2.line(annotated, (x, 0), (x, frame_h), (34, 211, 238), 2)
+                    cv2.putText(annotated, 'Personen-Zaehllinie', (min(frame_w - 220, x + 8), 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (34, 211, 238), 2)
+            for person in people:
+                x1, y1, x2, y2 = person['bbox']
+                color = (16, 185, 129) if person.get('counted') else (245, 158, 11)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                label = f"P#{person.get('track_id')} {person.get('confidence', 0):.2f}"
+                if person.get('counted'):
+                    label += ' gezählt'
+                cv2.putText(annotated, label, (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+        return people
+
     def process_frame(self, frame, apply_analysis_area=False):
         """Verarbeitet einen einzelnen Frame"""
         if not self.models_loaded:
@@ -1706,6 +2118,7 @@ class LicensePlateDetector:
                 'annotated_frame': np.zeros((480, 640, 3), dtype=np.uint8),
                 'detections': [],
                 'vehicles': [],
+                'people': [],
                 'processing_time': 0
             }
         
@@ -1713,6 +2126,7 @@ class LicensePlateDetector:
             'annotated_frame': frame.copy(),
             'detections': [],
             'vehicles': [],
+            'people': [],
             'processing_time': 0
         }
         
@@ -1924,6 +2338,7 @@ class LicensePlateDetector:
                         result['detections'].append(detection_info)
                         logger.info(f"Erkannt: {plate_text} | Konfidenz: {ocr_confidence:.2f}")
             
+            result['people'] = self._detect_people(frame, annotated)
             result['annotated_frame'] = annotated
             
         except Exception as e:
@@ -1953,11 +2368,12 @@ class LicensePlateDetector:
 config_manager = ConfigManager()
 history_manager = HistoryManager()
 watchlist_manager = WatchlistManager()
+person_history_manager = PersonHistoryManager()
 detector = LicensePlateDetector(config_manager)
 
 # RTSP Handler importieren
 from rtsp_handler import RTSPHandler
-stream_manager = RTSPHandler(config_manager, history_manager, detector)
+stream_manager = RTSPHandler(config_manager, history_manager, detector, person_history_manager)
 
 def init_models():
     detector.load_models()
@@ -2065,6 +2481,13 @@ def search_page():
 def statistics_page():
     return render_template('statistics.html',
                           page='statistics',
+                          stream_status=stream_manager.get_status(),
+                          config=config_manager.config)
+
+@app.route('/people')
+def people_page():
+    return render_template('people.html',
+                          page='people',
                           stream_status=stream_manager.get_status(),
                           config=config_manager.config)
 
@@ -2266,6 +2689,25 @@ def api_save_storage_config():
         return jsonify({'success': False, 'error': str(e)}), 400
 
 
+
+@app.route('/api/config/people', methods=['POST'])
+def api_save_people_config():
+    try:
+        data = request.get_json(silent=True) or {}
+        config_manager.config.setdefault('people', {})
+        config_manager.config['people'].update(data)
+        # Keep model setting in sync for the model overview.
+        if data.get('custom_model_path'):
+            config_manager.config.setdefault('models', {})['person_detector'] = data.get('custom_model_path')
+        config_manager.save_config()
+        if data.get('reload'):
+            detector.models_loaded = False
+            detector.human_model = None
+            threading.Thread(target=detector.load_models, daemon=True).start()
+        return jsonify({'success': True, 'config': _public_config()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
 @app.route('/api/config/models', methods=['POST'])
 def api_save_models_config():
     try:
@@ -2273,9 +2715,13 @@ def api_save_models_config():
         reload_requested = bool(data.pop('reload', False))
         config_manager.config.setdefault('models', {})
         config_manager.config['models'].update(data)
+        if data.get('person_detector'):
+            config_manager.config.setdefault('people', {})['custom_model_path'] = data.get('person_detector')
+            config_manager.config.setdefault('people', {})['model_path'] = data.get('person_detector')
         config_manager.save_config()
         if reload_requested:
             detector.models_loaded = False
+            detector.human_model = None
             config_manager.config['models']['last_reload_at'] = datetime.now().isoformat()
             config_manager.save_config()
             threading.Thread(target=detector.load_models, daemon=True).start()
@@ -2375,6 +2821,7 @@ def api_dashboard_overview():
         'latest': latest,
         'stream': status,
         'facets': history_manager.get_facets(),
+        'people': person_history_manager.get_statistics({'days': 1}).get('summary', {}),
         'config': {
             'dashboard': config_manager.get('dashboard'),
             'search': config_manager.get('search'),
@@ -2420,7 +2867,7 @@ def api_watchlist_delete(item_id):
 def api_save_advanced_config():
     try:
         data = request.get_json(silent=True) or {}
-        for section in ('general', 'ui', 'privacy', 'plate_recognition', 'search', 'dashboard', 'alerts', 'traffic', 'recognition_profiles'):
+        for section in ('general', 'ui', 'privacy', 'plate_recognition', 'search', 'dashboard', 'alerts', 'traffic', 'people', 'recognition_profiles'):
             if section in data:
                 config_manager.config.setdefault(section, {}).update(data[section])
         config_manager.save_config()
@@ -2672,12 +3119,20 @@ def api_process_image():
                     'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
                 }
                 history_manager.add_entry(entry)
+
+        for person in result.get('people', []):
+            if person.get('counted') or config_manager.get('people', 'save_all_detections'):
+                event = dict(person)
+                event.update({'source': 'image_upload', 'filename': file.filename})
+                person_history_manager.add_event(event)
         
         return jsonify({
             'success': True,
             'result_image': result_image_b64,
             'detections': result['detections'],
             'vehicles': [{k: v for k, v in v.items() if k != 'crop'} for v in result['vehicles']],
+            'people': result.get('people', []),
+            'people_counted': sum(1 for p in result.get('people', []) if p.get('counted')),
             'processing_time': result['processing_time']
         })
         
@@ -2842,6 +3297,9 @@ def api_models_status():
         'loaded': detector.models_loaded,
         'coco_model': detector.coco_model is not None,
         'license_model': detector.license_model is not None,
+        'human_model': detector.human_model is not None,
+        'person_detection_enabled': bool(config_manager.get('people', 'enabled')),
+        'person_model_mode': config_manager.get('people', 'model_mode'),
         'ocr_reader': detector.ocr_reader is not None
     })
 
@@ -2850,6 +3308,7 @@ def api_reload_models():
     detector.models_loaded = False
     detector.coco_model = None
     detector.license_model = None
+    detector.human_model = None
     detector.ocr_reader = None
     threading.Thread(target=detector.load_models, daemon=True).start()
     return jsonify({'success': True, 'message': 'Modelle werden neu geladen...'})
@@ -2863,7 +3322,8 @@ def api_system_info():
         'opencv_version': cv2.__version__,
         'models_loaded': detector.models_loaded,
         'stream_status': stream_manager.get_status(),
-        'history_count': len(history_manager.history)
+        'history_count': len(history_manager.history),
+        'people_history_count': len(person_history_manager.history)
     })
 
 
@@ -3180,16 +3640,17 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.7.2',
-        'edition': 'ProTraffic Plus',
+        'version': '0.8.0',
+        'edition': 'ProTraffic People',
         'features': [
             'RTSP Live Stream', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
             'Statistik', 'Suche', 'Watchlist', 'Mehrsprachige Einstellungen',
-            'Erweiterte Original-Einstellungen'
+            'Erweiterte Original-Einstellungen', 'Personenzählung und Personenanalyse'
         ],
         'config': config_manager.get('about') or {},
         'models_loaded': detector.models_loaded,
-        'history_count': len(history_manager.history)
+        'history_count': len(history_manager.history),
+        'people_history_count': len(person_history_manager.history)
     })
 
 
@@ -3200,25 +3661,25 @@ def api_system_about():
 TRANSLATIONS = {
     'de': {
         'dashboard': 'Dashboard', 'history': 'Historie', 'search': 'Suche & Analyse',
-        'statistics': 'Statistik', 'settings': 'Einstellungen', 'diagnostics': 'Diagnose', 'live': 'Live Stream',
+        'statistics': 'Statistik', 'people': 'Personenanalyse', 'settings': 'Einstellungen', 'diagnostics': 'Diagnose', 'live': 'Live Stream',
         'latest': 'Letzte Erkennung', 'test': 'Test & Upload', 'stream': 'Stream',
         'plates': 'Kennzeichen', 'confidence': 'Konfidenz', 'watchlist': 'Watchlist', 'traffic': 'Verkehr', 'arrived': 'Gekommen', 'departed': 'Gegangen'
     },
     'en': {
         'dashboard': 'Dashboard', 'history': 'History', 'search': 'Search & Analysis',
-        'statistics': 'Statistics', 'settings': 'Settings', 'diagnostics': 'Diagnostics', 'live': 'Live Stream',
+        'statistics': 'Statistics', 'people': 'People analysis', 'settings': 'Settings', 'diagnostics': 'Diagnostics', 'live': 'Live Stream',
         'latest': 'Latest Detection', 'test': 'Test & Upload', 'stream': 'Stream',
         'plates': 'License plates', 'confidence': 'Confidence', 'watchlist': 'Watchlist', 'traffic': 'Traffic', 'arrived': 'Arrived', 'departed': 'Departed'
     },
     'fr': {
         'dashboard': 'Tableau de bord', 'history': 'Historique', 'search': 'Recherche & Analyse',
-        'statistics': 'Statistiques', 'settings': 'Paramètres', 'diagnostics': 'Diagnostic', 'live': 'Flux en direct',
+        'statistics': 'Statistiques', 'people': 'Analyse personnes', 'settings': 'Paramètres', 'diagnostics': 'Diagnostic', 'live': 'Flux en direct',
         'latest': 'Dernière détection', 'test': 'Test & Upload', 'stream': 'Flux',
         'plates': 'Plaques', 'confidence': 'Confiance', 'watchlist': 'Liste', 'traffic': 'Trafic', 'arrived': 'Arrivé', 'departed': 'Parti'
     },
     'it': {
         'dashboard': 'Dashboard', 'history': 'Cronologia', 'search': 'Ricerca & Analisi',
-        'statistics': 'Statistiche', 'settings': 'Impostazioni', 'diagnostics': 'Diagnostica', 'live': 'Live Stream',
+        'statistics': 'Statistiche', 'people': 'Analisi persone', 'settings': 'Impostazioni', 'diagnostics': 'Diagnostica', 'live': 'Live Stream',
         'latest': 'Ultimo rilevamento', 'test': 'Test & Upload', 'stream': 'Stream',
         'plates': 'Targhe', 'confidence': 'Confidenza', 'watchlist': 'Watchlist', 'traffic': 'Traffico', 'arrived': 'Arrivato', 'departed': 'Uscito'
     }
@@ -3619,6 +4080,57 @@ def api_save_traffic_config():
         return jsonify({'success': False, 'error': str(e)}), 400
 
 
+
+@app.route('/api/people/statistics')
+def api_people_statistics():
+    return jsonify(person_history_manager.get_statistics(request.args.to_dict()))
+
+@app.route('/api/people/history')
+def api_people_history():
+    limit = request.args.get('limit', 100, type=int)
+    offset = request.args.get('offset', 0, type=int)
+    return jsonify({'entries': person_history_manager.get_all(limit=limit, offset=offset), 'total': len(person_history_manager.history)})
+
+@app.route('/api/people/history/clear', methods=['POST'])
+def api_people_history_clear():
+    person_history_manager.clear_history()
+    return jsonify({'success': True})
+
+@app.route('/api/people/export')
+def api_people_export():
+    fmt = request.args.get('format', config_manager.get('people', 'export_default_format') or 'csv').lower()
+    rows = person_history_manager.search(request.args.to_dict())
+    filename = f"platevision_people_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    if fmt == 'json':
+        return Response(json.dumps(rows, indent=2, ensure_ascii=False), mimetype='application/json', headers={'Content-Disposition': f'attachment; filename={filename}.json'})
+    fields = ['timestamp', 'event_type', 'counted', 'direction', 'track_id', 'confidence', 'bbox', 'source', 'filename']
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return Response(output.getvalue(), mimetype='text/csv; charset=utf-8', headers={'Content-Disposition': f'attachment; filename={filename}.csv'})
+
+@app.route('/api/people/test/snapshot', methods=['POST'])
+def api_people_test_snapshot():
+    frame = stream_manager.get_raw_frame()
+    if frame is None:
+        return jsonify({'success': False, 'error': 'Kein Live-Frame verfügbar. Bitte Stream starten oder Bild im Testbereich hochladen.'}), 400
+    previous_enabled = config_manager.get('people', 'enabled')
+    config_manager.config.setdefault('people', {})['enabled'] = True
+    try:
+        result = detector.process_frame(frame)
+        _, buffer = cv2.imencode('.jpg', result['annotated_frame'])
+        return jsonify({
+            'success': True,
+            'people': result.get('people', []),
+            'people_counted': sum(1 for p in result.get('people', []) if p.get('counted')),
+            'result_image': base64.b64encode(buffer).decode('utf-8'),
+            'processing_time': result.get('processing_time', 0)
+        })
+    finally:
+        config_manager.config.setdefault('people', {})['enabled'] = previous_enabled
+
 @app.route('/api/system/health')
 def api_system_health():
     checks = []
@@ -3629,10 +4141,12 @@ def api_system_health():
     add('plate_model', os.path.exists(config_manager.get('models', 'license_plate_detector') or ''), config_manager.get('models', 'license_plate_detector') or '')
     add('history_writable', os.access(os.path.dirname(history_manager.HISTORY_FILE), os.W_OK), history_manager.HISTORY_FILE)
     add('watchlist_writable', os.access(os.path.dirname(watchlist_manager.WATCHLIST_FILE), os.W_OK), watchlist_manager.WATCHLIST_FILE)
+    add('people_history_writable', os.access(os.path.dirname(person_history_manager.HISTORY_FILE), os.W_OK), person_history_manager.HISTORY_FILE)
+    add('person_model_path', bool(config_manager.get('people', 'model_mode') == 'coco_person' or os.path.exists(config_manager.get('people', 'custom_model_path') or '')), config_manager.get('people', 'custom_model_path') or 'COCO person class')
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.7.2'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.0'})
 
 
 @app.route('/api/system/audit')
@@ -3729,7 +4243,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.7.2 ProTraffic Plus                                    ║
+    ║     Version 0.8.0 ProTraffic People                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

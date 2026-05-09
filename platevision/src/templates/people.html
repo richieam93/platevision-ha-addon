@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block title %}Personenanalyse - PlateVision{% endblock %}
+
+{% block page_title %}
+<i class="fas fa-person-walking me-2"></i>Personenanalyse
+{% endblock %}
+
+{% block content %}
+<div class="pro-hero mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div>
+            <div class="mini-label">Personenzählung</div>
+            <h2 class="mb-2">Wie viele Personen sind durchgegangen?</h2>
+            <p class="text-secondary mb-0">Tageswerte, Stundenverteilung, Richtung, Ereignis-Historie und Testumgebung für YOLO-Personenerkennung.</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="/settings#peopleSettings" class="btn btn-outline-info"><i class="fas fa-sliders me-2"></i>Einstellungen</a>
+            <button class="btn btn-outline-success" onclick="runSnapshotTest()"><i class="fas fa-vial me-2"></i>Live-Test</button>
+            <a href="/api/people/export?format=csv" class="btn btn-outline-primary"><i class="fas fa-file-csv me-2"></i>CSV</a>
+            <a href="/api/people/export?format=json" class="btn btn-outline-secondary"><i class="fas fa-file-code me-2"></i>JSON</a>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4" id="peopleSummary">
+    <div class="col-md-3"><div class="stat-card"><div class="stat-icon info"><i class="fas fa-person-walking"></i></div><div class="stat-content"><div class="stat-value" id="todayPersons">-</div><div class="stat-label">Heute gezählt</div></div></div></div>
+    <div class="col-md-3"><div class="stat-card"><div class="stat-icon success"><i class="fas fa-users"></i></div><div class="stat-content"><div class="stat-value" id="totalPersons">-</div><div class="stat-label">Zeitraum gesamt</div></div></div></div>
+    <div class="col-md-3"><div class="stat-card"><div class="stat-icon warning"><i class="fas fa-route"></i></div><div class="stat-content"><div class="stat-value" id="lineCrossings">-</div><div class="stat-label">Linienereignisse</div></div></div></div>
+    <div class="col-md-3"><div class="stat-card"><div class="stat-icon primary"><i class="fas fa-bullseye"></i></div><div class="stat-content"><div class="stat-value" id="avgConfidence">-</div><div class="stat-label">Ø Konfidenz</div></div></div></div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-filter me-2"></i>Filter</h5></div>
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-2"><label class="form-label">Tage</label><input type="number" min="1" max="365" class="form-control" id="days" value="7"></div>
+            <div class="col-md-2"><label class="form-label">Von</label><input type="date" class="form-control" id="dateFrom"></div>
+            <div class="col-md-2"><label class="form-label">Bis</label><input type="date" class="form-control" id="dateTo"></div>
+            <div class="col-md-2"><label class="form-label">Richtung</label><select class="form-select" id="direction"><option value="all">Alle</option><option value="down">runter</option><option value="up">hoch</option><option value="right">rechts</option><option value="left">links</option><option value="unknown">unbekannt</option></select></div>
+            <div class="col-md-2"><label class="form-label">Min. Konfidenz</label><input type="number" class="form-control" id="minConfidence" min="0" max="1" step="0.01" value="0"></div>
+            <div class="col-md-2"><button class="btn btn-primary w-100" onclick="loadPeopleStats()"><i class="fas fa-search me-2"></i>Aktualisieren</button></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-7">
+        <div class="card h-100">
+            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-calendar-day me-2"></i>Tagesstatistik</h5></div>
+            <div class="card-body table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>Datum</th><th>Personen</th><th>Erkennungen</th><th>Linien</th><th>Richtungen</th></tr></thead>
+                    <tbody id="dailyRows"><tr><td colspan="5" class="text-secondary">Lade...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card h-100">
+            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-clock me-2"></i>Stundenverteilung</h5></div>
+            <div class="card-body" id="hourlyBars"></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0"><i class="fas fa-clock-rotate-left me-2"></i>Personen-Historie</h5>
+                <button class="btn btn-sm btn-outline-danger" onclick="clearPeopleHistory()"><i class="fas fa-trash me-1"></i>Leeren</button>
+            </div>
+            <div class="card-body table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>Zeit</th><th>Ereignis</th><th>Richtung</th><th>Track</th><th>Konfidenz</th><th>Quelle</th></tr></thead>
+                    <tbody id="historyRows"><tr><td colspan="6" class="text-secondary">Lade...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card mb-4">
+            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-vial me-2"></i>Testumgebung</h5></div>
+            <div class="card-body">
+                <p class="text-secondary">Teste die Personenerkennung mit dem aktuellen Live-Snapshot. Für Upload-Tests kann weiterhin die bestehende Test-Seite verwendet werden.</p>
+                <button class="btn btn-success w-100" onclick="runSnapshotTest()"><i class="fas fa-camera me-2"></i>Snapshot testen</button>
+                <div id="snapshotResult" class="mt-3"></div>
+            </div>
+        </div>
+        <div class="alert alert-info">
+            <i class="fas fa-info-circle me-2"></i>Für genaue Werte sollte die virtuelle Zähllinie im Bild so gesetzt werden, dass jede Person sie genau einmal überquert.
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function queryParams() {
+    const params = new URLSearchParams();
+    const days = document.getElementById('days').value;
+    const dateFrom = document.getElementById('dateFrom').value;
+    const dateTo = document.getElementById('dateTo').value;
+    const direction = document.getElementById('direction').value;
+    const minConfidence = document.getElementById('minConfidence').value;
+    if (days) params.set('days', days);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
+    if (direction && direction !== 'all') params.set('direction', direction);
+    if (minConfidence) params.set('min_confidence', minConfidence);
+    return params;
+}
+function pct(v) { return ((Number(v)||0) * 100).toFixed(1) + '%'; }
+function dirText(d) { return {down:'runter', up:'hoch', right:'rechts', left:'links', unknown:'unbekannt'}[d] || d; }
+function loadPeopleStats() {
+    fetch('/api/people/statistics?' + queryParams().toString()).then(r => r.json()).then(data => {
+        const s = data.summary || {};
+        document.getElementById('todayPersons').textContent = s.today_persons ?? 0;
+        document.getElementById('totalPersons').textContent = s.total_persons ?? 0;
+        document.getElementById('lineCrossings').textContent = (data.event_types && data.event_types.line_crossing) || 0;
+        document.getElementById('avgConfidence').textContent = pct(s.average_confidence || 0);
+        const daily = data.daily || [];
+        document.getElementById('dailyRows').innerHTML = daily.length ? daily.map(row => `
+            <tr><td>${row.date}</td><td><strong>${row.persons}</strong></td><td>${row.detections}</td><td>${row.line_crossings}</td><td>${Object.entries(row.directions || {}).map(([k,v]) => `${dirText(k)}: ${v}`).join('<br>')}</td></tr>
+        `).join('') : '<tr><td colspan="5" class="text-secondary">Keine Personenereignisse im Zeitraum.</td></tr>';
+        const hourly = data.hourly || [];
+        const max = Math.max(...hourly.map(h => h.count), 1);
+        document.getElementById('hourlyBars').innerHTML = hourly.length ? hourly.slice(-48).map(h => `
+            <div class="mb-2"><div class="d-flex justify-content-between"><small>${h.hour}</small><small>${h.count}</small></div><div class="progress progress-thin"><div class="progress-bar" style="width:${(h.count/max)*100}%"></div></div></div>
+        `).join('') : '<p class="text-secondary">Keine Stundenwerte.</p>';
+        const latest = data.latest || [];
+        document.getElementById('historyRows').innerHTML = latest.length ? latest.map(row => `
+            <tr><td>${formatDate(row.timestamp)}</td><td>${row.event_type || '-'}</td><td>${dirText(row.direction || 'unknown')}</td><td>${row.track_id ?? '-'}</td><td>${pct(row.confidence || 0)}</td><td>${row.source || '-'}</td></tr>
+        `).join('') : '<tr><td colspan="6" class="text-secondary">Keine Historie vorhanden.</td></tr>';
+    });
+}
+function clearPeopleHistory() {
+    if (!confirm('Personen-Historie wirklich löschen?')) return;
+    fetch('/api/people/history/clear', {method:'POST'}).then(r=>r.json()).then(() => loadPeopleStats());
+}
+function runSnapshotTest() {
+    const box = document.getElementById('snapshotResult');
+    box.innerHTML = '<div class="alert alert-info"><i class="fas fa-spinner fa-spin me-2"></i>Teste Snapshot...</div>';
+    fetch('/api/people/test/snapshot', {method:'POST'}).then(r=>r.json()).then(data => {
+        if (!data.success) { box.innerHTML = `<div class="alert alert-warning">${data.error || 'Test nicht möglich'}</div>`; return; }
+        box.innerHTML = `<div class="alert alert-success">${data.people?.length || 0} Personen erkannt, ${data.people_counted || 0} gezählt.</div>` +
+            (data.result_image ? `<img class="img-fluid rounded border border-secondary" src="data:image/jpeg;base64,${data.result_image}">` : '');
+        loadPeopleStats();
+    }).catch(() => box.innerHTML = '<div class="alert alert-danger">Test fehlgeschlagen.</div>');
+}
+document.addEventListener('DOMContentLoaded', loadPeopleStats);
+</script>
+{% endblock %}

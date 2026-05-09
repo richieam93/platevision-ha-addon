@@ -13,6 +13,7 @@
         <div class="d-flex gap-2 flex-wrap">
             <a class="btn btn-outline-primary" href="/search"><i class="fas fa-search me-2"></i>Suche öffnen</a>
             <a class="btn btn-outline-success" href="/statistics"><i class="fas fa-road me-2"></i>Statistik</a>
+            <a class="btn btn-outline-info" href="/people"><i class="fas fa-person-walking me-2"></i>Personen</a>
             <a class="btn btn-outline-warning" href="/diagnostics"><i class="fas fa-stethoscope me-2"></i>Diagnose</a>
         </div>
     </div>
@@ -24,6 +25,7 @@
     <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon warning"><i class="fas fa-fingerprint"></i></div><div class="stat-card-value" id="uniquePlates">0</div><div class="stat-card-label">Einzigartige Kennzeichen</div></div></div>
     <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon info"><i class="fas fa-route"></i></div><div class="stat-card-value" id="trafficVisitsToday">0</div><div class="stat-card-label">Durchfahrten heute</div></div></div>
     <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon success"><i class="fas fa-car"></i></div><div class="stat-card-value" id="trafficUniqueToday">0</div><div class="stat-card-label">Autos heute</div></div></div>
+    <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon info"><i class="fas fa-person-walking"></i></div><div class="stat-card-value" id="peopleToday">0</div><div class="stat-card-label">Personen heute</div></div></div>
     <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon primary"><i class="fas fa-bullseye"></i></div><div class="stat-card-value" id="avgConfidence">0%</div><div class="stat-card-label">Ø Konfidenz</div></div></div>
 </div>
 
@@ -74,7 +76,7 @@ function renderLatest(rows){
 }
 function loadDashboard(){
     fetch('/api/dashboard/overview').then(r=>r.json()).then(d=>{
-        const s=d.statistics||{}; totalDetections.textContent=s.total_detections||0; todayDetections.textContent=s.today_detections||0; uniquePlates.textContent=s.unique_plates||0; avgConfidence.textContent=pct(s.average_confidence); trafficVisitsToday.textContent=s.traffic_today?.total_visits||0; trafficUniqueToday.textContent=s.traffic_today?.unique_vehicles||0; watchHits.textContent=s.watchlist_hits||0; renderLatest(d.latest||[]);
+        const s=d.statistics||{}; totalDetections.textContent=s.total_detections||0; todayDetections.textContent=s.today_detections||0; uniquePlates.textContent=s.unique_plates||0; avgConfidence.textContent=pct(s.average_confidence); trafficVisitsToday.textContent=s.traffic_today?.total_visits||0; trafficUniqueToday.textContent=s.traffic_today?.unique_vehicles||0; watchHits.textContent=s.watchlist_hits||0; if (window.peopleToday) peopleToday.textContent=(d.people&&d.people.today_persons)||0; renderLatest(d.latest||[]);
     });
     fetch('/api/system/health').then(r=>r.json()).then(d=>{ healthBox.innerHTML=(d.checks||[]).map(c=>`<div class="d-flex justify-content-between align-items-center border rounded p-2" style="border-color:var(--card-border)!important"><span>${c.name}</span><span class="badge ${c.ok?'bg-success':'bg-warning text-dark'}">${c.ok?'OK':'Prüfen'}</span></div>`).join(''); });
     loadTimeline();

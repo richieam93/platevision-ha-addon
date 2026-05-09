@@ -532,3 +532,15 @@ body.accessibility-mode .form-control,
 body.accessibility-mode .form-select {
     min-height: 44px;
 }
+
+
+/* PlateVision v0.8 Personenanalyse */
+.people-kpi, .analysis-kpi {
+    border: 1px solid rgba(34, 211, 238, 0.22);
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.08), rgba(15, 23, 42, 0.72));
+    border-radius: 18px;
+    padding: 1rem;
+}
+.progress-thin { height: .55rem; background: rgba(148, 163, 184, .18); border-radius: 999px; }
+.progress-thin .progress-bar { background: var(--primary-color); border-radius: 999px; }
+.person-direction-badge { border-radius: 999px; padding: .2rem .55rem; background: rgba(34,211,238,.12); color: var(--secondary-color); font-size: .8rem; }
