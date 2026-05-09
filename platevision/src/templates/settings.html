@@ -1833,20 +1833,48 @@
                                         <select class="form-select" id="peopleModelMode">
                                             <option value="coco_person" {% if pmode == 'coco_person' %}selected{% endif %}>Standard YOLOv8 COCO Person</option>
                                             <option value="custom_human" {% if pmode == 'custom_human' %}selected{% endif %}>Eigenes HumanDetection Modell</option>
+                                            <option value="model_file" {% if pmode == 'model_file' %}selected{% endif %}>Gefundene Modelldatei auswählen</option>
                                             <option value="custom_path" {% if pmode == 'custom_path' %}selected{% endif %}>Benutzerdefinierter Pfad</option>
                                         </select>
                                     </div>
-                                    <div class="col-md-8">
-                                        <label class="form-label">Pfad zum Human-Modell (.pt)</label>
-                                        <input type="text" class="form-control" id="peopleCustomModelPath" value="{{ config.people.custom_model_path if config.people is defined and config.people.custom_model_path is defined else 'models/human_best.pt' }}" placeholder="models/human_best.pt">
-                                        <small class="text-secondary">Für das genannte YOLOv8-HumanDetection Repository kannst du z.B. <code>best.pt</code> als <code>models/human_best.pt</code> ablegen.</small>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Gefundene Modelldateien</label>
+                                        <select class="form-select" id="peopleSelectedModelFile" data-current="{{ config.people.selected_model_file if config.people is defined and config.people.selected_model_file is defined else (config.people.custom_model_path if config.people is defined and config.people.custom_model_path is defined else 'models/human_best.pt') }}">
+                                            <option value="">Modelle werden beim Öffnen gescannt...</option>
+                                        </select>
+                                        <small class="text-secondary">Scannt <code>models/</code> und den Custom-Modellordner nach .pt/.onnx/.engine.</small>
                                     </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Pfad zum Human-Modell</label>
+                                        <input type="text" class="form-control" id="peopleCustomModelPath" value="{{ config.people.custom_model_path if config.people is defined and config.people.custom_model_path is defined else 'models/human_best.pt' }}" placeholder="models/human_best.pt">
+                                        <small class="text-secondary">Lege z.B. <code>best.pt</code> als <code>models/human_best.pt</code> ab oder wähle es links aus.</small>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Modell-Aktionen</label>
+                                        <div class="d-grid gap-2">
+                                            <button type="button" class="btn btn-outline-info btn-sm" onclick="loadPeopleModelOptions()"><i class="fas fa-rotate me-1"></i>Modelle scannen</button>
+                                            <button type="button" class="btn btn-outline-success btn-sm" onclick="selectPeopleModelFromList(true)"><i class="fas fa-check me-1"></i>Auswahl übernehmen & laden</button>
+                                        </div>
+                                    </div>
+                                    <div class="col-12"><div id="peopleModelInventory" class="model-inventory-panel small text-secondary">Noch kein Modellscan ausgeführt.</div></div>
                                     <div class="col-md-4"><label class="form-label">Min. Konfidenz</label><input type="number" class="form-control" id="peopleConfidence" min="0.05" max="0.95" step="0.01" value="{{ config.people.confidence_threshold if config.people is defined and config.people.confidence_threshold is defined else 0.45 }}"></div>
                                     <div class="col-md-4"><label class="form-label">Min. Breite px</label><input type="number" class="form-control" id="peopleMinWidth" min="1" max="1000" value="{{ config.people.min_person_width if config.people is defined and config.people.min_person_width is defined else 20 }}"></div>
                                     <div class="col-md-4"><label class="form-label">Min. Höhe px</label><input type="number" class="form-control" id="peopleMinHeight" min="1" max="1000" value="{{ config.people.min_person_height if config.people is defined and config.people.min_person_height is defined else 40 }}"></div>
                                     <div class="col-md-4"><label class="form-label">Max. Personen pro Frame</label><input type="number" class="form-control" id="peopleMaxPerFrame" min="0" max="200" value="{{ config.people.max_persons_per_frame if config.people is defined and config.people.max_persons_per_frame is defined else 30 }}"></div>
                                     <div class="col-md-4"><label class="form-label">Class IDs</label><input type="text" class="form-control" id="peopleClassIds" value="{{ (config.people.class_ids|join(',')) if config.people is defined and config.people.class_ids is defined else '0' }}"></div>
                                     <div class="col-md-4"><label class="form-label">Class Names</label><input type="text" class="form-control" id="peopleClassNames" value="{{ (config.people.class_names|join(',')) if config.people is defined and config.people.class_names is defined else 'person,human' }}"></div>
+                                    <div class="col-md-3"><label class="form-label">YOLO Bildgröße</label><input type="number" class="form-control" id="peopleImageSize" min="320" max="1920" step="32" value="{{ config.people.image_size if config.people is defined and config.people.image_size is defined else 640 }}"></div>
+                                    <div class="col-md-3"><label class="form-label">NMS IoU</label><input type="number" class="form-control" id="peopleIou" min="0.05" max="0.95" step="0.01" value="{{ config.people.nms_iou_threshold if config.people is defined and config.people.nms_iou_threshold is defined else 0.45 }}"></div>
+                                    <div class="col-md-3"><label class="form-label">Min. Fläche %</label><input type="number" class="form-control" id="peopleMinArea" min="0" max="100" step="0.01" value="{{ config.people.min_area_percent if config.people is defined and config.people.min_area_percent is defined else 0.05 }}"></div>
+                                    <div class="col-md-3"><label class="form-label">Max. Fläche %</label><input type="number" class="form-control" id="peopleMaxArea" min="0" max="100" step="0.1" value="{{ config.people.max_area_percent if config.people is defined and config.people.max_area_percent is defined else 85 }}"></div>
+                                    <div class="col-md-3"><label class="form-label">Min. Seitenverhältnis</label><input type="number" class="form-control" id="peopleMinAspect" min="0.05" max="10" step="0.01" value="{{ config.people.min_aspect_ratio if config.people is defined and config.people.min_aspect_ratio is defined else 0.2 }}"></div>
+                                    <div class="col-md-3"><label class="form-label">Max. Seitenverhältnis</label><input type="number" class="form-control" id="peopleMaxAspect" min="0.05" max="10" step="0.01" value="{{ config.people.max_aspect_ratio if config.people is defined and config.people.max_aspect_ratio is defined else 2.5 }}"></div>
+                                    <div class="col-md-3"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleZoneEnabled" {% if config.people is defined and config.people.zone_enabled %}checked{% endif %}><label class="form-check-label" for="peopleZoneEnabled">Personen-Zone aktiv</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleModelAutoScan" {% if config.people is not defined or config.people.model_auto_scan %}checked{% endif %}><label class="form-check-label" for="peopleModelAutoScan">Auto-Scan</label></div></div>
+                                    <div class="col-md-3"><label class="form-label">Zone X %</label><input type="number" class="form-control" id="peopleZoneX" min="0" max="100" value="{{ config.people.zone.x if config.people is defined and config.people.zone is defined else 0 }}"></div>
+                                    <div class="col-md-3"><label class="form-label">Zone Y %</label><input type="number" class="form-control" id="peopleZoneY" min="0" max="100" value="{{ config.people.zone.y if config.people is defined and config.people.zone is defined else 0 }}"></div>
+                                    <div class="col-md-3"><label class="form-label">Zone Breite %</label><input type="number" class="form-control" id="peopleZoneW" min="1" max="100" value="{{ config.people.zone.width if config.people is defined and config.people.zone is defined else 100 }}"></div>
+                                    <div class="col-md-3"><label class="form-label">Zone Höhe %</label><input type="number" class="form-control" id="peopleZoneH" min="1" max="100" value="{{ config.people.zone.height if config.people is defined and config.people.zone is defined else 100 }}"></div>
                                 </div>
                             </div>
 
@@ -1863,6 +1891,9 @@
                                     <div class="col-md-4"><label class="form-label">Linienposition %</label><input type="number" class="form-control" id="peopleLinePercent" min="1" max="99" value="{{ config.people.virtual_line_position_percent if config.people is defined and config.people.virtual_line_position_percent is defined else 50 }}"></div>
                                     <div class="col-md-4"><label class="form-label">Tracker Distanz px</label><input type="number" class="form-control" id="peopleTrackerDistance" min="10" max="1000" value="{{ config.people.tracker_max_distance if config.people is defined and config.people.tracker_max_distance is defined else 120 }}"></div>
                                     <div class="col-md-4"><label class="form-label">Tracker Timeout s</label><input type="number" class="form-control" id="peopleTrackerTimeout" min="1" max="120" value="{{ config.people.tracker_timeout_seconds if config.people is defined and config.people.tracker_timeout_seconds is defined else 8 }}"></div>
+                                    <div class="col-md-4"><label class="form-label">Min. Track-Alter Frames</label><input type="number" class="form-control" id="peopleMinTrackAge" min="1" max="30" value="{{ config.people.min_track_age_frames if config.people is defined and config.people.min_track_age_frames is defined else 1 }}"><small class="text-secondary">Verhindert Zählung von Einzel-Fehlerkennungen.</small></div>
+                                    <div class="col-md-4"><label class="form-label">Zähl-Debounce s</label><input type="number" class="form-control" id="peopleDebounce" min="0" max="120" value="{{ config.people.count_debounce_seconds if config.people is defined and config.people.count_debounce_seconds is defined else 2 }}"></div>
+                                    <div class="col-md-4"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peoplePresenceEnabled" {% if config.people is not defined or config.people.presence_enabled %}checked{% endif %}><label class="form-check-label" for="peoplePresenceEnabled">Anwesenheit schätzen</label></div></div>
                                 </div>
                             </div>
 
@@ -1877,6 +1908,10 @@
                                     <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleSaveFullFrame" {% if config.people is defined and config.people.save_full_frame %}checked{% endif %}><label class="form-check-label" for="peopleSaveFullFrame">Vollbild speichern</label></div></div>
                                     <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peoplePrivacyBlur" {% if config.people is defined and config.people.privacy_blur_people %}checked{% endif %}><label class="form-check-label" for="peoplePrivacyBlur">Personen weichzeichnen</label></div></div>
                                     <div class="col-md-3"><label class="form-label">Export Standard</label>{% set pexport = config.people.export_default_format if config.people is defined and config.people.export_default_format is defined else 'csv' %}<select class="form-select" id="peopleExportDefault"><option value="csv" {% if pexport == 'csv' %}selected{% endif %}>CSV</option><option value="json" {% if pexport == 'json' %}selected{% endif %}>JSON</option></select></div>
+                                    <div class="col-md-3"><label class="form-label">Aufbewahrung Tage</label><input type="number" class="form-control" id="peopleRetentionDays" min="0" max="3650" value="{{ config.people.retention_days if config.people is defined and config.people.retention_days is defined else 90 }}"></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleAutoCleanup" {% if config.people is defined and config.people.auto_cleanup_enabled %}checked{% endif %}><label class="form-check-label" for="peopleAutoCleanup">Auto-Cleanup</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleSimulationEnabled" {% if config.people is not defined or config.people.simulation_enabled %}checked{% endif %}><label class="form-check-label" for="peopleSimulationEnabled">Simulation erlauben</label></div></div>
+                                    <div class="col-md-3"><label class="form-label">Alarm Schwelle / h</label><input type="number" class="form-control" id="peopleAlertThreshold" min="0" max="10000" value="{{ config.people.alert_threshold_per_hour if config.people is defined and config.people.alert_threshold_per_hour is defined else 0 }}"></div>
                                 </div>
                                 <div class="info-box mt-3"><i class="fas fa-info-circle me-2"></i>Exakte Personenzählung hängt von Kamerawinkel, Zähllinie und Bildrate ab. Mit einer klaren Linie am Eingang/Ausgang ist die Zählung am zuverlässigsten.</div>
                             </div>
@@ -1907,7 +1942,7 @@
                                 <table class="table table-sm text-start">
                                     <tr>
                                         <td class="text-secondary">Version</td>
-                                        <td class="fw-bold">0.8.0 ProTraffic People</td>
+                                        <td class="fw-bold">0.8.1 ProTraffic People Pro</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">YOLO Version</td>
@@ -2357,7 +2392,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.8.0-protraffic-people-analysis',
+                    version: '0.8.1-protraffic-people-pro',
                     config: config
                 };
                 
@@ -2888,6 +2923,56 @@
 
 
 
+
+    async function loadPeopleModelOptions() {
+        const select = document.getElementById('peopleSelectedModelFile');
+        const panel = document.getElementById('peopleModelInventory');
+        if (!select) return;
+        const current = select.dataset.current || select.value || document.getElementById('peopleCustomModelPath')?.value || '';
+        select.innerHTML = '<option value="">Scanne Modelle...</option>';
+        try {
+            const response = await fetch('/api/models/people/options');
+            const data = await response.json();
+            const models = data.models || [];
+            if (!models.length) {
+                select.innerHTML = '<option value="">Keine Modelldateien gefunden</option>';
+                if (panel) panel.innerHTML = '<span class="text-warning">Keine .pt/.onnx/.engine Dateien im Modellordner gefunden. Lege z.B. human_best.pt in models/ ab.</span>';
+                return;
+            }
+            select.innerHTML = models.map(m => `<option value="${m.path}" ${m.path === current ? 'selected' : ''}>${m.name} · ${m.kind_guess} · ${m.size_mb} MB</option>`).join('');
+            const chosen = select.value || current;
+            if (chosen) document.getElementById('peopleCustomModelPath').value = chosen;
+            if (panel) {
+                const rec = (data.recommended || []).length;
+                panel.innerHTML = `<strong>${models.length}</strong> Modelle gefunden, davon <strong>${rec}</strong> als Personenmodell empfohlen. Status: COCO ${data.status?.coco_model_loaded ? 'geladen' : 'nicht geladen'}, Human ${data.status?.human_model_loaded ? 'geladen' : 'nicht geladen'}.`;
+            }
+        } catch (e) {
+            select.innerHTML = '<option value="">Scan fehlgeschlagen</option>';
+            if (panel) panel.innerHTML = '<span class="text-danger">Modellscan fehlgeschlagen.</span>';
+        }
+    }
+
+    function selectPeopleModelFromList(reload) {
+        const path = pvStr('peopleSelectedModelFile', '');
+        if (!path) { showToast('Hinweis', 'Bitte zuerst ein Modell auswählen oder einen Pfad eintragen.', 'warning'); return; }
+        document.getElementById('peopleCustomModelPath').value = path;
+        document.getElementById('peopleModelMode').value = 'model_file';
+        fetch('/api/models/people/select', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({path, model_mode: 'model_file', reload: reload !== false})
+        }).then(r => r.json()).then(result => {
+            if (result.success) showToast('Erfolg', 'Personenmodell ausgewählt' + (reload !== false ? ' und wird geladen' : ''), 'success');
+            else showToast('Fehler', result.error || 'Modell konnte nicht ausgewählt werden', 'danger');
+        });
+    }
+
+    const peopleModelSelect = document.getElementById('peopleSelectedModelFile');
+    if (peopleModelSelect) {
+        peopleModelSelect.addEventListener('change', function() {
+            if (this.value) document.getElementById('peopleCustomModelPath').value = this.value;
+        });
+    }
+
     function peopleClassIdList() {
         return pvStr('peopleClassIds', '0').split(',').map(v => Number(v.trim())).filter(v => Number.isFinite(v));
     }
@@ -2904,16 +2989,28 @@
             draw_boxes: pvBool('peopleDrawBoxes'),
             confidence_threshold: pvNum('peopleConfidence', 0.45),
             model_mode: pvStr('peopleModelMode', 'coco_person'),
+            selected_model_file: (pvStr('peopleSelectedModelFile') || pvStr('peopleCustomModelPath', 'models/human_best.pt')),
             custom_model_path: pvStr('peopleCustomModelPath', 'models/human_best.pt'),
-            model_path: pvStr('peopleCustomModelPath', 'models/human_best.pt'),
+            model_path: (pvStr('peopleSelectedModelFile') || pvStr('peopleCustomModelPath', 'models/human_best.pt')),
+            model_auto_scan: pvBool('peopleModelAutoScan'),
             class_ids: peopleClassIdList(),
             class_names: peopleClassNameList(),
             min_person_width: pvNum('peopleMinWidth', 20),
             min_person_height: pvNum('peopleMinHeight', 40),
             max_persons_per_frame: pvNum('peopleMaxPerFrame', 30),
+            image_size: pvNum('peopleImageSize', 640),
+            nms_iou_threshold: pvNum('peopleIou', 0.45),
+            min_area_percent: pvNum('peopleMinArea', 0.05),
+            max_area_percent: pvNum('peopleMaxArea', 85),
+            min_aspect_ratio: pvNum('peopleMinAspect', 0.2),
+            max_aspect_ratio: pvNum('peopleMaxAspect', 2.5),
+            zone_enabled: pvBool('peopleZoneEnabled'),
+            zone: { x: pvNum('peopleZoneX', 0), y: pvNum('peopleZoneY', 0), width: pvNum('peopleZoneW', 100), height: pvNum('peopleZoneH', 100), unit: 'percent' },
             tracker_enabled: pvBool('peopleTrackerEnabled'),
             tracker_max_distance: pvNum('peopleTrackerDistance', 120),
             tracker_timeout_seconds: pvNum('peopleTrackerTimeout', 8),
+            min_track_age_frames: pvNum('peopleMinTrackAge', 1),
+            count_debounce_seconds: pvNum('peopleDebounce', 2),
             count_strategy: pvStr('peopleCountStrategy', 'line_crossing'),
             count_once_per_track: pvBool('peopleCountOnce'),
             line_crossing_enabled: pvBool('peopleLineEnabled'),
@@ -2922,11 +3019,16 @@
             crossing_direction: pvStr('peopleCrossingDirection', 'both'),
             session_gap_minutes: pvNum('peopleSessionGap', 5),
             present_timeout_minutes: pvNum('peoplePresentTimeout', 10),
+            presence_enabled: pvBool('peoplePresenceEnabled'),
             save_all_detections: pvBool('peopleSaveAll'),
             save_person_crops: pvBool('peopleSaveCrops'),
             save_full_frame: pvBool('peopleSaveFullFrame'),
             privacy_blur_people: pvBool('peoplePrivacyBlur'),
             test_environment_enabled: pvBool('peopleTestEnvironment'),
+            simulation_enabled: pvBool('peopleSimulationEnabled'),
+            retention_days: pvNum('peopleRetentionDays', 90),
+            auto_cleanup_enabled: pvBool('peopleAutoCleanup'),
+            alert_threshold_per_hour: pvNum('peopleAlertThreshold', 0),
             export_default_format: pvStr('peopleExportDefault', 'csv'),
             reload: reloadAfterSave
         };
@@ -2952,6 +3054,9 @@
         e.preventDefault();
         savePeopleSettings(false);
     });
+    if (document.getElementById('peopleSelectedModelFile') && pvBool('peopleModelAutoScan')) {
+        loadPeopleModelOptions();
+    }
 
     function runPeopleSnapshotTest() {
         const box = document.getElementById('peopleTestResult');

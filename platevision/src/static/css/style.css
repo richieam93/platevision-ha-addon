@@ -544,3 +544,27 @@ body.accessibility-mode .form-select {
 .progress-thin { height: .55rem; background: rgba(148, 163, 184, .18); border-radius: 999px; }
 .progress-thin .progress-bar { background: var(--primary-color); border-radius: 999px; }
 .person-direction-badge { border-radius: 999px; padding: .2rem .55rem; background: rgba(34,211,238,.12); color: var(--secondary-color); font-size: .8rem; }
+
+
+/* v0.8.1 People Pro additions */
+.model-inventory-panel {
+    border: 1px solid rgba(148, 163, 184, .25);
+    border-radius: 12px;
+    padding: .75rem 1rem;
+    background: rgba(15, 23, 42, .35);
+}
+.people-zone-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: .75rem;
+}
+.presence-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    padding: .2rem .55rem;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, .25);
+    background: rgba(99, 102, 241, .12);
+    font-size: .82rem;
+}

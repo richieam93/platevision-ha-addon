@@ -17,6 +17,8 @@
         <div class="d-flex flex-wrap gap-2">
             <a href="/settings#peopleSettings" class="btn btn-outline-info"><i class="fas fa-sliders me-2"></i>Einstellungen</a>
             <button class="btn btn-outline-success" onclick="runSnapshotTest()"><i class="fas fa-vial me-2"></i>Live-Test</button>
+            <button class="btn btn-outline-warning" onclick="simulatePeople()"><i class="fas fa-flask me-2"></i>Simulation</button>
+            <button class="btn btn-outline-danger" onclick="cleanupPeopleHistory()"><i class="fas fa-broom me-2"></i>Cleanup</button>
             <a href="/api/people/export?format=csv" class="btn btn-outline-primary"><i class="fas fa-file-csv me-2"></i>CSV</a>
             <a href="/api/people/export?format=json" class="btn btn-outline-secondary"><i class="fas fa-file-code me-2"></i>JSON</a>
         </div>
@@ -28,6 +30,21 @@
     <div class="col-md-3"><div class="stat-card"><div class="stat-icon success"><i class="fas fa-users"></i></div><div class="stat-content"><div class="stat-value" id="totalPersons">-</div><div class="stat-label">Zeitraum gesamt</div></div></div></div>
     <div class="col-md-3"><div class="stat-card"><div class="stat-icon warning"><i class="fas fa-route"></i></div><div class="stat-content"><div class="stat-value" id="lineCrossings">-</div><div class="stat-label">Linienereignisse</div></div></div></div>
     <div class="col-md-3"><div class="stat-card"><div class="stat-icon primary"><i class="fas fa-bullseye"></i></div><div class="stat-content"><div class="stat-value" id="avgConfidence">-</div><div class="stat-label">Ø Konfidenz</div></div></div></div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-user-clock me-2"></i>Aktuell geschätzte Anwesenheit</h5></div>
+            <div class="card-body" id="presencePanel"><p class="text-secondary mb-0">Lade Anwesenheit...</p></div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-brain me-2"></i>Personenmodell & Systemstatus</h5></div>
+            <div class="card-body" id="peopleModelPanel"><p class="text-secondary mb-0">Lade Modellinformationen...</p></div>
+        </div>
+    </div>
 </div>
 
 <div class="card mb-4">
@@ -73,8 +90,8 @@
             </div>
             <div class="card-body table-responsive">
                 <table class="table table-hover align-middle">
-                    <thead><tr><th>Zeit</th><th>Ereignis</th><th>Richtung</th><th>Track</th><th>Konfidenz</th><th>Quelle</th></tr></thead>
-                    <tbody id="historyRows"><tr><td colspan="6" class="text-secondary">Lade...</td></tr></tbody>
+                    <thead><tr><th>Zeit</th><th>Ereignis</th><th>Richtung</th><th>Track</th><th>Konfidenz</th><th>Fläche</th><th>Quelle</th></tr></thead>
+                    <tbody id="historyRows"><tr><td colspan="7" class="text-secondary">Lade...</td></tr></tbody>
                 </table>
             </div>
         </div>
@@ -131,14 +148,48 @@ function loadPeopleStats() {
         `).join('') : '<p class="text-secondary">Keine Stundenwerte.</p>';
         const latest = data.latest || [];
         document.getElementById('historyRows').innerHTML = latest.length ? latest.map(row => `
-            <tr><td>${formatDate(row.timestamp)}</td><td>${row.event_type || '-'}</td><td>${dirText(row.direction || 'unknown')}</td><td>${row.track_id ?? '-'}</td><td>${pct(row.confidence || 0)}</td><td>${row.source || '-'}</td></tr>
-        `).join('') : '<tr><td colspan="6" class="text-secondary">Keine Historie vorhanden.</td></tr>';
+            <tr><td>${formatDate(row.timestamp)}</td><td>${row.event_type || '-'}</td><td>${dirText(row.direction || 'unknown')}</td><td>${row.track_id ?? '-'}</td><td>${pct(row.confidence || 0)}</td><td>${(row.area_percent ?? '-')}</td><td>${row.source || '-'}</td></tr>
+        `).join('') : '<tr><td colspan="7" class="text-secondary">Keine Historie vorhanden.</td></tr>';
     });
 }
 function clearPeopleHistory() {
     if (!confirm('Personen-Historie wirklich löschen?')) return;
     fetch('/api/people/history/clear', {method:'POST'}).then(r=>r.json()).then(() => loadPeopleStats());
 }
+function loadPeoplePresence() {
+    fetch('/api/people/presence').then(r => r.json()).then(data => {
+        const panel = document.getElementById('presencePanel');
+        const active = data.active || [];
+        panel.innerHTML = `<div class="d-flex justify-content-between align-items-center mb-2"><span>Aktive Tracks im Timeout-Fenster</span><strong class="fs-3">${data.active_count || 0}</strong></div><small class="text-secondary">Timeout: ${data.timeout_minutes || 0} Minuten</small>` +
+            (active.length ? `<div class="mt-3 small">${active.slice(0,5).map(a => `Track ${a.track_id ?? '-'} · ${dirText(a.direction || 'unknown')} · ${formatDate(a.timestamp)}`).join('<br>')}</div>` : '<p class="text-secondary mt-3 mb-0">Keine aktuell aktiven Personen-Tracks.</p>');
+    });
+}
+function loadPeopleModels() {
+    fetch('/api/models/people/options').then(r => r.json()).then(data => {
+        const current = data.current || {};
+        const models = data.models || [];
+        document.getElementById('peopleModelPanel').innerHTML = `
+            <div class="row g-2">
+                <div class="col-6"><div class="mini-label">Modus</div><strong>${current.model_mode || 'coco_person'}</strong></div>
+                <div class="col-6"><div class="mini-label">Human geladen</div><strong class="${data.status?.human_model_loaded ? 'text-success' : 'text-warning'}">${data.status?.human_model_loaded ? 'Ja' : 'Nein/Fallback'}</strong></div>
+                <div class="col-12"><div class="mini-label">Ausgewähltes Modell</div><code>${current.selected_model_file || current.custom_model_path || 'COCO Person-Klasse'}</code></div>
+                <div class="col-12"><div class="mini-label">Gefundene Modelldateien</div><strong>${models.length}</strong></div>
+            </div>`;
+    });
+}
+function simulatePeople() {
+    fetch('/api/people/test/simulate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count: 8})})
+        .then(r=>r.json()).then(data => {
+            if (!data.success) { alert(data.error || 'Simulation nicht möglich'); return; }
+            loadPeopleStats(); loadPeoplePresence();
+        });
+}
+function cleanupPeopleHistory() {
+    if (!confirm('Personen-Historie nach Aufbewahrungszeit bereinigen?')) return;
+    fetch('/api/people/cleanup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})})
+        .then(r=>r.json()).then(data => { alert(`${data.removed || 0} Einträge entfernt, ${data.remaining || 0} bleiben.`); loadPeopleStats(); loadPeoplePresence(); });
+}
+
 function runSnapshotTest() {
     const box = document.getElementById('snapshotResult');
     box.innerHTML = '<div class="alert alert-info"><i class="fas fa-spinner fa-spin me-2"></i>Teste Snapshot...</div>';
@@ -146,9 +197,9 @@ function runSnapshotTest() {
         if (!data.success) { box.innerHTML = `<div class="alert alert-warning">${data.error || 'Test nicht möglich'}</div>`; return; }
         box.innerHTML = `<div class="alert alert-success">${data.people?.length || 0} Personen erkannt, ${data.people_counted || 0} gezählt.</div>` +
             (data.result_image ? `<img class="img-fluid rounded border border-secondary" src="data:image/jpeg;base64,${data.result_image}">` : '');
-        loadPeopleStats();
+        loadPeopleStats(); loadPeoplePresence(); loadPeopleModels();
     }).catch(() => box.innerHTML = '<div class="alert alert-danger">Test fehlgeschlagen.</div>');
 }
-document.addEventListener('DOMContentLoaded', loadPeopleStats);
+document.addEventListener('DOMContentLoaded', function() { loadPeopleStats(); loadPeoplePresence(); loadPeopleModels(); });
 </script>
 {% endblock %}

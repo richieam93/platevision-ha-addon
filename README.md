@@ -1,4 +1,4 @@
-# PlateVision v0.8.0 ProTraffic People
+# PlateVision v0.8.1 ProTraffic People
 
 # PlateVision – Home Assistant Add-on
 
@@ -383,10 +383,18 @@ Alle Original-Bereiche bleiben erhalten und wurden erweitert:
 Neue APIs: `/api/config/storage`, `/api/config/models`, `/api/config/about`, `/api/system/about`.
 
 
-## v0.8.0 ProTraffic People
+## v0.8.1 ProTraffic People
 
 - Neue Personenanalyse mit eigenem Menüpunkt `/people`.
 - Aktivierbare Personenerkennung mit YOLOv8 COCO-Personenklasse oder eigenem HumanDetection-Modell.
 - Eigene Personen-Historie, Tagesstatistik, Stundenverteilung, Richtung und Export.
 - Virtuelle Zähllinie, Tracking, Zählstrategie und Testumgebung über die Einstellungen.
 - Bestehende Original-Einstellungen bleiben erhalten und werden nur erweitert.
+
+
+## v0.8.1 People Pro
+
+- Personenmodell-Auswahl direkt in den Einstellungen mit Modellscan für `models/`.
+- Neue Endpunkte für Modellliste, Modellauswahl, Config-Validierung, Personen-Anwesenheit, Cleanup und Simulation.
+- Erweiterte Personenerkennung mit Bildgröße, IoU, Flächen-/Seitenverhältnisfilter, optionaler Personen-Zone, Track-Alter und Debounce.
+- Config-Merge bewahrt unbekannte/alte Custom-Keys, damit Updates keine Einstellungen verstecken.
