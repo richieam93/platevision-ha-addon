@@ -1,7 +1,7 @@
-name: "PlateVision ProTraffic People Road ROI Pro"
+name: "PlateVision ProTraffic People Unified ROI"
 slug: platevision
-description: PlateVision ProTraffic People Personen-Kalibrierung, Fotoanalyse, Modell-Upload, Kennzeichen-Erkennung, Personenanalyse, Statistik, Suche, Dashboard, RTSP und erweiterte Original-Einstellungen
-version: "0.8.6"
+description: PlateVision ProTraffic People mit einheitlichem Straßen-ROI, Personenanalyse, Modell-Upload, Kennzeichen-Erkennung, Statistik, Suche, Dashboard, RTSP und erweiterten Original-Einstellungen
+version: "0.8.7"
 arch:
   - amd64
 startup: services

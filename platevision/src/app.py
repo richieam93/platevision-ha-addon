@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.6 ProTraffic Road ROI Calibration
+Version 0.8.7 ProTraffic Unified ROI Calibration
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -332,7 +332,7 @@ class ConfigManager:
             },
             'analysis_area': {
                 'enabled': False,
-                'mode': 'rectangle',
+                'mode': 'polygon',
                 'mask_outside': True,
                 'area': {
                     'x': 0,
@@ -665,12 +665,90 @@ class ConfigManager:
             try:
                 with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
                     saved_config = json.load(f)
-                return self._merge_configs(self.DEFAULT_CONFIG, saved_config)
+                merged = self._merge_configs(self.DEFAULT_CONFIG, saved_config)
+                return self._normalize_analysis_area(merged)
             except Exception as e:
                 logger.error(f"Fehler beim Laden der Konfiguration: {e}")
-                return self.DEFAULT_CONFIG.copy()
-        return self.DEFAULT_CONFIG.copy()
+                return self._normalize_analysis_area(json.loads(json.dumps(self.DEFAULT_CONFIG)))
+        return self._normalize_analysis_area(json.loads(json.dumps(self.DEFAULT_CONFIG)))
     
+    def _normalize_analysis_area(self, config):
+        """Keep one canonical RTSP analysis area: the road polygon.
+
+        Older versions stored both a rectangle (`area`) and a polygon. That caused
+        two visible overlays in the RTSP settings. This normalizer keeps the old
+        rectangle values only as a derived bounding box for compatibility, while
+        the polygon is the single source of truth used by the UI and processing.
+        """
+        try:
+            rtsp = config.setdefault('rtsp', {})
+            resolution = rtsp.get('resolution') or {}
+            frame_w = int(resolution.get('width') or 1280)
+            frame_h = int(resolution.get('height') or 720)
+            frame_w = max(1, frame_w)
+            frame_h = max(1, frame_h)
+            area_cfg = rtsp.setdefault('analysis_area', {})
+
+            def clamp_int(value, minimum, maximum):
+                try:
+                    return max(minimum, min(int(round(float(value))), maximum))
+                except Exception:
+                    return minimum
+
+            raw_polygon = area_cfg.get('polygon') or []
+            polygon = []
+            if isinstance(raw_polygon, list):
+                for point in raw_polygon:
+                    if isinstance(point, dict):
+                        px = point.get('x', 0)
+                        py = point.get('y', 0)
+                    elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                        px, py = point[0], point[1]
+                    else:
+                        continue
+                    polygon.append({
+                        'x': clamp_int(px, 0, frame_w - 1),
+                        'y': clamp_int(py, 0, frame_h - 1)
+                    })
+
+            if len(polygon) < 3:
+                old_area = area_cfg.get('area') or {}
+                try:
+                    x = clamp_int(old_area.get('x', 0), 0, frame_w - 1)
+                    y = clamp_int(old_area.get('y', 0), 0, frame_h - 1)
+                    width = clamp_int(old_area.get('width', frame_w), 1, frame_w - x)
+                    height = clamp_int(old_area.get('height', frame_h), 1, frame_h - y)
+                    polygon = [
+                        {'x': x, 'y': y},
+                        {'x': min(frame_w - 1, x + width), 'y': y},
+                        {'x': min(frame_w - 1, x + width), 'y': min(frame_h - 1, y + height)},
+                        {'x': x, 'y': min(frame_h - 1, y + height)},
+                    ]
+                except Exception:
+                    polygon = [
+                        {'x': int(frame_w * 0.18), 'y': int(frame_h * 0.26)},
+                        {'x': int(frame_w * 0.72), 'y': int(frame_h * 0.25)},
+                        {'x': int(frame_w * 0.78), 'y': frame_h - 1},
+                        {'x': int(frame_w * 0.10), 'y': frame_h - 1},
+                    ]
+
+            xs = [p['x'] for p in polygon]
+            ys = [p['y'] for p in polygon]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            area_cfg['mode'] = 'polygon'
+            area_cfg['mask_outside'] = True
+            area_cfg['polygon'] = polygon
+            area_cfg['area'] = {
+                'x': int(min_x),
+                'y': int(min_y),
+                'width': int(max(1, max_x - min_x)),
+                'height': int(max(1, max_y - min_y))
+            }
+        except Exception as e:
+            logger.warning(f"Analysebereich konnte nicht normalisiert werden: {e}")
+        return config
+
     def _merge_configs(self, default, saved):
         """Merge defaults with saved config without dropping older or custom keys.
 
@@ -695,6 +773,7 @@ class ConfigManager:
     
     def save_config(self):
         try:
+            self.config = self._normalize_analysis_area(self.config)
             with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
             return True
@@ -3041,8 +3120,16 @@ def stream_feed():
 
 @app.route('/api/stream/snapshot')
 def api_stream_snapshot():
-    """Einzelnes Snapshot vom Stream oder ein kalibrierbares Fallback-Bild."""
-    frame = stream_manager.get_current_frame()
+    """Rohes Einzel-Snapshot vom Stream oder ein kalibrierbares Fallback-Bild.
+
+    Wichtig: Für die RTSP-Kalibrierung wird bewusst das rohe Frame verwendet.
+    Dadurch wird nicht zusätzlich der bereits im Livebild eingezeichnete
+    Analysebereich angezeigt. Im Editor gibt es nur noch eine sichtbare Zone:
+    das Browser-Overlay, das später 1:1 gespeichert und angewendet wird.
+    """
+    frame = stream_manager.get_raw_frame()
+    if frame is None:
+        frame = stream_manager.get_current_frame()
     if frame is not None:
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
         return Response(buffer.tobytes(), mimetype='image/jpeg')
@@ -3133,6 +3220,7 @@ def api_save_rtsp_config():
             del data['analysis_area']
         
         config_manager.config['rtsp'].update(data)
+        config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
         config_manager.save_config()
         
         return jsonify({'success': True})
@@ -4719,10 +4807,10 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.5',
-        'edition': 'ProTraffic People',
+        'version': '0.8.7',
+        'edition': 'ProTraffic People Unified ROI',
         'features': [
-            'RTSP Live Stream', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
+            'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
             'Statistik', 'Suche', 'Watchlist', 'Mehrsprachige Einstellungen',
             'Erweiterte Original-Einstellungen', 'Personenzählung und Personenanalyse'
         ],
@@ -5453,7 +5541,7 @@ def api_system_health():
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.5'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.7'})
 
 
 @app.route('/api/system/audit')
@@ -5550,7 +5638,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.5 ProTraffic People Image History                                    ║
+    ║     Version 0.8.7 ProTraffic Unified Road ROI                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

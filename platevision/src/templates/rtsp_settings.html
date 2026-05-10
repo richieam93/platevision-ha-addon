@@ -208,7 +208,7 @@
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0">
                     <i class="fas fa-crop-alt"></i>
-                    Analyse-Bereich festlegen
+                    Straßenbereich festlegen
                 </h5>
                 <span id="areaStatusBadge" class="badge bg-secondary">Deaktiviert</span>
             </div>
@@ -221,35 +221,35 @@
                         </label>
                     </div>
                     <small class="text-secondary d-block mt-1">
-                        Nur Fahrzeuge, Kennzeichen und Personen innerhalb des markierten Straßenbereichs werden analysiert.
+                        Nur Fahrzeuge, Kennzeichen und Personen innerhalb dieses einen gespeicherten Straßenbereichs werden analysiert.
                     </small>
                 </div>
                 
                 <div id="areaSelectionControls" style="display: none;">
                     <div class="alert alert-info small mb-3">
                         <i class="fas fa-info-circle me-2"></i>
-                        <strong>Anleitung:</strong> Für eine Straße ist der neue <strong>Polygon-Modus</strong> am besten.
-                        Ziehe die farbigen Punkte genau auf die Straßenränder. Die Erkennung wird danach nur noch in diesem Bereich ausgeführt.
+                        <strong>Anleitung:</strong> Es gibt jetzt nur noch <strong>einen verbindlichen Straßenbereich</strong>. Ziehe die nummerierten Punkte mit der Maus direkt auf die Straßenränder. Doppelklick fügt einen Punkt hinzu, Rechtsklick entfernt den nächsten Punkt.
                     </div>
 
                     <div class="card bg-dark mb-3">
                         <div class="card-header py-2 d-flex justify-content-between align-items-center">
-                            <strong><i class="fas fa-draw-polygon me-2 text-info"></i>Bereichsmodus & Straßen-Presets</strong>
-                            <span class="badge bg-info text-dark" id="areaModeBadge">Rechteck</span>
+                            <strong><i class="fas fa-draw-polygon me-2 text-info"></i>Einheitlicher Straßenbereich & Presets</strong>
+                            <span class="badge bg-info text-dark" id="areaModeBadge">Ein Bereich / Straße</span>
                         </div>
                         <div class="card-body py-3">
                             <div class="row g-3 align-items-end">
                                 <div class="col-md-4">
                                     <label class="form-label small">Analyseform</label>
-                                    <select class="form-select form-select-sm" id="areaMode">
-                                        <option value="rectangle">Rechteck / Ausschnitt</option>
-                                        <option value="polygon">Straße frei einzeichnen (Polygon)</option>
-                                    </select>
+                                    <input type="hidden" id="areaMode" value="polygon">
+                                    <div class="form-control form-control-sm bg-dark text-info border-info d-flex align-items-center justify-content-between">
+                                        <span><i class="fas fa-draw-polygon me-1"></i>Straßenbereich / Polygon</span>
+                                        <span class="badge bg-info text-dark">ein Bereich</span>
+                                    </div>
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-check form-switch mt-3">
-                                        <input class="form-check-input" type="checkbox" id="maskOutsideArea" checked>
-                                        <label class="form-check-label small" for="maskOutsideArea">Außerhalb ausblenden / nicht analysieren</label>
+                                        <input class="form-check-input" type="checkbox" id="maskOutsideArea" checked disabled>
+                                        <label class="form-check-label small" for="maskOutsideArea">Außerhalb wird nicht analysiert</label>
                                     </div>
                                 </div>
                                 <div class="col-md-4 text-md-end">
@@ -260,7 +260,7 @@
                                 </div>
                             </div>
                             <div class="small text-secondary mt-2">
-                                Tipp: Wenn das Bild links/rechts schwarze Ränder hat, wird die Zeichenfläche jetzt automatisch nur über dem echten Bild ausgerichtet. Dadurch stimmen die Koordinaten sauber mit dem RTSP-Stream überein.
+                                Tipp: Die Vorschau nutzt jetzt das rohe RTSP-Bild ohne alten Backend-Overlay. Dadurch gibt es nur noch eine sichtbare Zone: diesen Straßenbereich.
                             </div>
                         </div>
                     </div>
@@ -309,12 +309,12 @@
                         </div>
                         <div class="card-body py-3">
                             <div id="polygonPointsEditor" class="row g-2"></div>
-                            <small class="text-secondary d-block mt-2">Du kannst die Punkte direkt im Bild ziehen oder hier die Pixelwerte fein einstellen.</small>
+                            <small class="text-secondary d-block mt-2">Du kannst die nummerierten Punkte direkt im Bild mit der Maus ziehen. Doppelklick im Bild fügt einen Punkt ein, Rechtsklick entfernt den nächsten Punkt. Die Werte hier sind zur Feineinstellung.</small>
                         </div>
                     </div>
 
-                    <!-- Koordinaten-Eingabe -->
-                    <div class="card bg-dark mb-3" id="rectangleEditorCard">
+                    <!-- Legacy-Koordinaten-Eingabe: bleibt im DOM für Kompatibilität, wird aber in v0.8.7 nicht mehr angezeigt. -->
+                    <div class="card bg-dark mb-3" id="rectangleEditorCard" style="display:none;">
                         <div class="card-header py-2">
                             <strong>Bereichs-Koordinaten (in Stream-Pixeln)</strong>
                         </div>
@@ -633,7 +633,7 @@ let activePointIndex = -1;
 let startX = 0;
 let startY = 0;
 let currentArea = { x: 0, y: 0, width: 1280, height: 720 };
-let areaMode = 'rectangle';
+let areaMode = 'polygon';
 let maskOutsideArea = true;
 let polygonPoints = [];
 let isAreaEnabled = false;
@@ -717,8 +717,8 @@ function loadConfiguration() {
             // Analysis Area
             const areaConfig = rtspConfig.analysis_area || {};
             isAreaEnabled = areaConfig.enabled || false;
-            areaMode = areaConfig.mode || 'rectangle';
-            maskOutsideArea = areaConfig.mask_outside !== false;
+            areaMode = 'polygon';
+            maskOutsideArea = true;
             
             document.getElementById('enableAreaSelection').checked = isAreaEnabled;
             document.getElementById('areaMode').value = areaMode;
@@ -774,12 +774,11 @@ function setupEventListeners() {
         }
     });
     
-    // Bereichsmodus
+    // Es gibt nur noch einen Bereich: Straßen-Polygon.
     document.getElementById('areaMode').addEventListener('change', function() {
-        areaMode = this.value || 'rectangle';
-        if (areaMode === 'polygon' && polygonPoints.length < 3) {
-            polygonPoints = defaultRoadPolygon();
-        }
+        areaMode = 'polygon';
+        this.value = 'polygon';
+        if (polygonPoints.length < 3) polygonPoints = defaultRoadPolygon();
         updateAreaUI();
         renderPolygonEditor();
         updateAreaInfo();
@@ -805,9 +804,11 @@ function setupEventListeners() {
     // Canvas Events
     const canvas = document.getElementById('selectionCanvas');
     canvas.addEventListener('mousedown', startInteraction);
-    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mousemove', handleCanvasPointerMove);
     canvas.addEventListener('mouseup', endDrawing);
     canvas.addEventListener('mouseleave', endDrawing);
+    canvas.addEventListener('dblclick', addPointAtEvent);
+    canvas.addEventListener('contextmenu', removePointAtEvent);
     
     // Touch Events für Mobile
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
@@ -820,6 +821,7 @@ function setupEventListeners() {
         document.getElementById('noStreamPlaceholder').style.display = 'none';
         this.style.display = 'block';
         
+        syncStreamSizeFromImage(this);
         updateCanvasSize();
         drawSelection();
     });
@@ -1020,6 +1022,27 @@ function loadPreviewImage() {
     img.src = '/api/stream/snapshot?' + Date.now();
 }
 
+function syncStreamSizeFromImage(img) {
+    if (!img || !img.naturalWidth || !img.naturalHeight) return;
+    const oldWidth = streamWidth || img.naturalWidth;
+    const oldHeight = streamHeight || img.naturalHeight;
+    if (img.naturalWidth !== streamWidth || img.naturalHeight !== streamHeight) {
+        streamWidth = img.naturalWidth;
+        streamHeight = img.naturalHeight;
+        document.getElementById('streamWidth').value = streamWidth;
+        document.getElementById('streamHeight').value = streamHeight;
+        if (polygonPoints.length) {
+            polygonPoints = polygonPoints.map(pt => ({
+                x: clamp(Math.round(pt.x * streamWidth / oldWidth), 0, streamWidth - 1),
+                y: clamp(Math.round(pt.y * streamHeight / oldHeight), 0, streamHeight - 1)
+            }));
+            renderPolygonEditor();
+            updateAreaInfo();
+        }
+        updateResolutionPreset();
+    }
+}
+
 function updateCanvasSize() {
     const canvas = document.getElementById('selectionCanvas');
     const container = document.getElementById('previewContainer');
@@ -1092,7 +1115,10 @@ function getCanvasCoordinates(e) {
 function getNearestPolygonPoint(coords) {
     let nearest = -1;
     let nearestDist = Infinity;
-    const hitRadius = Math.max(22, Math.round(streamWidth * 0.018));
+    const canvas = document.getElementById('selectionCanvas');
+    const rect = canvas.getBoundingClientRect();
+    const streamPerCssPixel = streamWidth / Math.max(1, rect.width);
+    const hitRadius = Math.max(28 * streamPerCssPixel, Math.round(streamWidth * 0.014));
     polygonPoints.forEach((pt, idx) => {
         const dist = Math.hypot(pt.x - coords.x, pt.y - coords.y);
         if (dist < nearestDist) {
@@ -1106,22 +1132,48 @@ function getNearestPolygonPoint(coords) {
 function startInteraction(e) {
     if (!isAreaEnabled) return;
     e.preventDefault();
+    areaMode = 'polygon';
     const coords = getCanvasCoordinates(e);
     startX = coords.x;
     startY = coords.y;
-    isDrawing = true;
 
-    if (areaMode === 'polygon') {
-        const nearest = getNearestPolygonPoint(coords);
-        if (nearest >= 0) {
-            dragMode = 'polygon-point';
-            activePointIndex = nearest;
-        } else {
-            dragMode = 'polygon-pan';
-            activePointIndex = -1;
-        }
+    const nearest = getNearestPolygonPoint(coords);
+    if (nearest >= 0) {
+        isDrawing = true;
+        dragMode = 'polygon-point';
+        activePointIndex = nearest;
+        drawSelection();
+        return;
+    }
+
+    if (isPointInPolygon(coords, polygonPoints)) {
+        isDrawing = true;
+        dragMode = 'polygon-pan';
+        activePointIndex = -1;
+        drawSelection();
+        return;
+    }
+
+    isDrawing = false;
+    dragMode = null;
+    activePointIndex = -1;
+}
+
+function handleCanvasPointerMove(e) {
+    if (isDrawing) {
+        handleMouseMove(e);
+        return;
+    }
+    if (!isAreaEnabled) return;
+    const coords = getCanvasCoordinates(e);
+    const nearest = getNearestPolygonPoint(coords);
+    const canvas = document.getElementById('selectionCanvas');
+    if (nearest >= 0) {
+        canvas.style.cursor = 'grab';
+    } else if (isPointInPolygon(coords, polygonPoints)) {
+        canvas.style.cursor = 'move';
     } else {
-        dragMode = 'rectangle-draw';
+        canvas.style.cursor = 'crosshair';
     }
 }
 
@@ -1130,26 +1182,22 @@ function handleMouseMove(e) {
     e.preventDefault();
     const coords = getCanvasCoordinates(e);
 
-    if (areaMode === 'polygon') {
-        if (dragMode === 'polygon-point' && activePointIndex >= 0) {
-            polygonPoints[activePointIndex] = { x: coords.x, y: coords.y };
-            renderPolygonEditor();
-        } else if (dragMode === 'polygon-pan') {
-            const dx = coords.x - startX;
-            const dy = coords.y - startY;
-            polygonPoints = polygonPoints.map(pt => ({
-                x: clamp(pt.x + dx, 0, streamWidth - 1),
-                y: clamp(pt.y + dy, 0, streamHeight - 1)
-            }));
-            startX = coords.x;
-            startY = coords.y;
-            renderPolygonEditor();
-        }
-        updateAreaInfo();
-        drawSelection();
-    } else {
-        updateSelectionFromDrag(coords.x, coords.y);
+    if (dragMode === 'polygon-point' && activePointIndex >= 0) {
+        polygonPoints[activePointIndex] = { x: coords.x, y: coords.y };
+        renderPolygonEditor();
+    } else if (dragMode === 'polygon-pan') {
+        const dx = coords.x - startX;
+        const dy = coords.y - startY;
+        polygonPoints = polygonPoints.map(pt => ({
+            x: clamp(pt.x + dx, 0, streamWidth - 1),
+            y: clamp(pt.y + dy, 0, streamHeight - 1)
+        }));
+        startX = coords.x;
+        startY = coords.y;
+        renderPolygonEditor();
     }
+    updateAreaInfo();
+    drawSelection();
 }
 
 function handleTouchStart(e) {
@@ -1249,16 +1297,16 @@ function drawPolygonSelection(ctx, canvas) {
     ctx.beginPath();
     polygonPoints.forEach((pt, idx) => idx === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y));
     ctx.closePath();
-    ctx.fillStyle = 'rgba(34, 211, 238, 0.12)';
+    ctx.fillStyle = 'rgba(250, 204, 21, 0.14)';
     ctx.fill();
-    ctx.strokeStyle = '#22d3ee';
+    ctx.strokeStyle = '#facc15';
     ctx.lineWidth = 4;
     ctx.stroke();
 
     polygonPoints.forEach((pt, idx) => {
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, idx === activePointIndex ? 12 : 9, 0, Math.PI * 2);
-        ctx.fillStyle = idx === activePointIndex ? '#facc15' : '#22d3ee';
+        ctx.fillStyle = idx === activePointIndex ? '#facc15' : '#38bdf8';
         ctx.fill();
         ctx.strokeStyle = '#0f172a';
         ctx.lineWidth = 3;
@@ -1281,6 +1329,77 @@ function drawOverlayLabel(ctx, x, y, text) {
     ctx.fillRect(x - 5, y - 22, textWidth + 16, 30);
     ctx.fillStyle = '#e2e8f0';
     ctx.fillText(text, x + 3, y);
+}
+
+function isPointInPolygon(point, polygon) {
+    if (!polygon || polygon.length < 3) return false;
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        const xi = polygon[i].x, yi = polygon[i].y;
+        const xj = polygon[j].x, yj = polygon[j].y;
+        const intersect = ((yi > point.y) !== (yj > point.y)) &&
+            (point.x < (xj - xi) * (point.y - yi) / ((yj - yi) || 0.00001) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+function distancePointToSegment(point, a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    if (dx === 0 && dy === 0) return Math.hypot(point.x - a.x, point.y - a.y);
+    const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / (dx * dx + dy * dy)));
+    const px = a.x + t * dx;
+    const py = a.y + t * dy;
+    return Math.hypot(point.x - px, point.y - py);
+}
+
+function insertPointAtNearestSegment(coords) {
+    if (polygonPoints.length < 2) {
+        polygonPoints.push(coords);
+        return;
+    }
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    for (let i = 0; i < polygonPoints.length; i++) {
+        const a = polygonPoints[i];
+        const b = polygonPoints[(i + 1) % polygonPoints.length];
+        const dist = distancePointToSegment(coords, a, b);
+        if (dist < bestDistance) {
+            bestDistance = dist;
+            bestIndex = i + 1;
+        }
+    }
+    polygonPoints.splice(bestIndex, 0, coords);
+}
+
+function addPointAtEvent(e) {
+    if (!isAreaEnabled) return;
+    e.preventDefault();
+    const coords = getCanvasCoordinates(e);
+    insertPointAtNearestSegment(coords);
+    activePointIndex = polygonPoints.findIndex(p => p.x === coords.x && p.y === coords.y);
+    renderPolygonEditor();
+    updateAreaInfo();
+    drawSelection();
+}
+
+function removePointAtEvent(e) {
+    if (!isAreaEnabled) return;
+    e.preventDefault();
+    if (polygonPoints.length <= 3) {
+        showToast('Hinweis', 'Ein Straßenbereich benötigt mindestens 3 Punkte.', 'warning');
+        return;
+    }
+    const coords = getCanvasCoordinates(e);
+    const nearest = getNearestPolygonPoint(coords);
+    if (nearest >= 0) {
+        polygonPoints.splice(nearest, 1);
+        activePointIndex = -1;
+        renderPolygonEditor();
+        updateAreaInfo();
+        drawSelection();
+    }
 }
 
 function getPolygonBoundingBox() {
@@ -1319,7 +1438,7 @@ function updateAreaUI() {
 
     if (isAreaEnabled) {
         controls.style.display = 'block';
-        badge.textContent = areaMode === 'polygon' ? 'Straßenbereich aktiv' : 'Aktiv';
+        badge.textContent = 'Straßenbereich aktiv';
         badge.className = 'badge bg-success';
     } else {
         controls.style.display = 'none';
@@ -1327,11 +1446,11 @@ function updateAreaUI() {
         badge.className = 'badge bg-secondary';
     }
 
-    if (rectangleCard) rectangleCard.style.display = areaMode === 'polygon' ? 'none' : 'block';
-    if (polygonCard) polygonCard.style.display = areaMode === 'polygon' ? 'block' : 'none';
+    if (rectangleCard) rectangleCard.style.display = 'none';
+    if (polygonCard) polygonCard.style.display = 'block';
     if (modeBadge) {
-        modeBadge.textContent = areaMode === 'polygon' ? 'Polygon / Straße' : 'Rechteck';
-        modeBadge.className = areaMode === 'polygon' ? 'badge bg-info text-dark' : 'badge bg-secondary';
+        modeBadge.textContent = 'Ein Bereich / Straße';
+        modeBadge.className = 'badge bg-info text-dark';
     }
 }
 
@@ -1551,16 +1670,19 @@ function saveRtspSettings() {
 }
 
 function saveAreaSettings() {
+    areaMode = 'polygon';
+    if (polygonPoints.length < 3) polygonPoints = defaultRoadPolygon();
+    const bbox = getPolygonBoundingBox();
     const data = {
         analysis_area: {
             enabled: isAreaEnabled,
-            mode: areaMode,
-            mask_outside: maskOutsideArea,
+            mode: 'polygon',
+            mask_outside: true,
             area: {
-                x: Math.round(currentArea.x),
-                y: Math.round(currentArea.y),
-                width: Math.round(currentArea.width),
-                height: Math.round(currentArea.height)
+                x: Math.round(bbox.x),
+                y: Math.round(bbox.y),
+                width: Math.round(Math.max(1, bbox.width)),
+                height: Math.round(Math.max(1, bbox.height))
             },
             polygon: polygonPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }))
         }
@@ -1574,7 +1696,7 @@ function saveAreaSettings() {
     .then(response => response.json())
     .then(result => {
         if (result.success) {
-            showToast('Erfolg', 'Analysebereich gespeichert', 'success');
+            showToast('Erfolg', 'Einheitlicher Straßenbereich gespeichert und wird für die Analyse verwendet', 'success');
         } else {
             showToast('Fehler', result.error || 'Speichern fehlgeschlagen', 'danger');
         }

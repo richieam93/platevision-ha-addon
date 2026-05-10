@@ -228,73 +228,85 @@ class RTSPHandler:
     def _get_analysis_area(self, frame_height, frame_width):
         """
         Holt und validiert den Analysebereich.
-        Unterstützt weiterhin Rechtecke und zusätzlich Polygon-/Straßenbereiche.
+
+        Ab v0.8.7 gibt es nur noch eine verbindliche Analyse-Zone: das
+        Straßen-Polygon. Ältere Rechteck-Konfigurationen werden automatisch in
+        ein Polygon umgewandelt. Das Rechteck in area_info ist nur noch die
+        Bounding-Box des Polygons und dient zum effizienten Zuschneiden.
         """
         cfg = self.config_manager.get('rtsp', 'analysis_area') or {}
         if not cfg.get('enabled'):
             return {
                 'enabled': False,
-                'mode': 'rectangle',
+                'mode': 'polygon',
                 'x': 0, 'y': 0, 'width': frame_width, 'height': frame_height,
                 'polygon': [], 'crop_polygon': [], 'mask_outside': False
             }
 
-        mode = (cfg.get('mode') or 'rectangle').lower()
-        mask_outside = cfg.get('mask_outside') is not False
+        mask_outside = True
 
-        if mode == 'polygon':
-            raw_points = cfg.get('polygon') or []
-            points = []
+        def clamp_int(value, minimum, maximum):
+            try:
+                return max(minimum, min(int(round(float(value))), maximum))
+            except Exception:
+                return minimum
+
+        points = []
+        raw_points = cfg.get('polygon') or []
+        if isinstance(raw_points, list):
             for point in raw_points:
                 try:
-                    px = int(round(float(point.get('x', 0))))
-                    py = int(round(float(point.get('y', 0))))
+                    if isinstance(point, dict):
+                        px, py = point.get('x', 0), point.get('y', 0)
+                    elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                        px, py = point[0], point[1]
+                    else:
+                        continue
                     points.append([
-                        max(0, min(px, frame_width - 1)),
-                        max(0, min(py, frame_height - 1))
+                        clamp_int(px, 0, frame_width - 1),
+                        clamp_int(py, 0, frame_height - 1)
                     ])
                 except Exception:
                     continue
 
-            if len(points) >= 3:
-                xs = [pt[0] for pt in points]
-                ys = [pt[1] for pt in points]
-                x = max(0, min(xs))
-                y = max(0, min(ys))
-                x2 = min(frame_width, max(xs) + 1)
-                y2 = min(frame_height, max(ys) + 1)
-                width = max(10, x2 - x)
-                height = max(10, y2 - y)
-                crop_polygon = [[pt[0] - x, pt[1] - y] for pt in points]
-                logger.debug(f"Analysis Polygon: bbox={x},{y},{width},{height}, points={points}")
-                return {
-                    'enabled': True,
-                    'mode': 'polygon',
-                    'x': x, 'y': y, 'width': width, 'height': height,
-                    'polygon': points,
-                    'crop_polygon': crop_polygon,
-                    'mask_outside': mask_outside
-                }
+        # Legacy-Fallback: alte Rechteckwerte in Polygon umwandeln.
+        if len(points) < 3:
+            area = cfg.get('area') or {}
+            x = clamp_int(area.get('x', 0), 0, frame_width - 1)
+            y = clamp_int(area.get('y', 0), 0, frame_height - 1)
+            width = clamp_int(area.get('width', frame_width), 1, frame_width - x)
+            height = clamp_int(area.get('height', frame_height), 1, frame_height - y)
+            points = [
+                [x, y],
+                [min(frame_width - 1, x + width), y],
+                [min(frame_width - 1, x + width), min(frame_height - 1, y + height)],
+                [x, min(frame_height - 1, y + height)]
+            ]
 
-        area = cfg.get('area') or {}
-        try:
-            x = int(float(area.get('x', 0)))
-            y = int(float(area.get('y', 0)))
-            width = int(float(area.get('width', frame_width)))
-            height = int(float(area.get('height', frame_height)))
-        except Exception:
-            x, y, width, height = 0, 0, frame_width, frame_height
+        if len(points) >= 3:
+            xs = [pt[0] for pt in points]
+            ys = [pt[1] for pt in points]
+            x = max(0, min(xs))
+            y = max(0, min(ys))
+            x2 = min(frame_width, max(xs) + 1)
+            y2 = min(frame_height, max(ys) + 1)
+            width = max(10, x2 - x)
+            height = max(10, y2 - y)
+            crop_polygon = [[pt[0] - x, pt[1] - y] for pt in points]
+            logger.debug(f"Unified Analysis ROI: bbox={x},{y},{width},{height}, points={points}")
+            return {
+                'enabled': True,
+                'mode': 'polygon',
+                'x': x, 'y': y, 'width': width, 'height': height,
+                'polygon': points,
+                'crop_polygon': crop_polygon,
+                'mask_outside': mask_outside
+            }
 
-        x = max(0, min(x, frame_width - 10))
-        y = max(0, min(y, frame_height - 10))
-        width = max(10, min(width, frame_width - x))
-        height = max(10, min(height, frame_height - y))
-
-        logger.debug(f"Analysis Area: x={x}, y={y}, w={width}, h={height} (Frame: {frame_width}x{frame_height})")
         return {
-            'enabled': True,
-            'mode': 'rectangle',
-            'x': x, 'y': y, 'width': width, 'height': height,
+            'enabled': False,
+            'mode': 'polygon',
+            'x': 0, 'y': 0, 'width': frame_width, 'height': frame_height,
             'polygon': [], 'crop_polygon': [], 'mask_outside': False
         }
 
@@ -315,23 +327,31 @@ class RTSPHandler:
         return process_frame, ax, ay
 
     def _draw_analysis_area(self, frame, area_info):
-        """Zeichnet Rechteck oder Polygon auf das Livebild."""
+        """Zeichnet die eine verbindliche Straßen-Analyse-Zone auf das Livebild."""
         if not area_info.get('enabled'):
             return
         color = (0, 255, 255)
-        if area_info.get('mode') == 'polygon' and len(area_info.get('polygon') or []) >= 3:
-            pts = np.array(area_info['polygon'], dtype=np.int32)
+        pts_raw = area_info.get('polygon') or []
+        if len(pts_raw) >= 3:
+            pts = np.array(pts_raw, dtype=np.int32)
             overlay = frame.copy()
-            cv2.fillPoly(overlay, [pts], (0, 255, 255))
+            cv2.fillPoly(overlay, [pts], color)
             cv2.addWeighted(overlay, 0.14, frame, 0.86, 0, frame)
             cv2.polylines(frame, [pts], True, color, 3)
-            label_x = int(min(pt[0] for pt in area_info['polygon'])) + 5
-            label_y = max(25, int(min(pt[1] for pt in area_info['polygon'])) + 25)
+            for idx, pt in enumerate(pts_raw, start=1):
+                px, py = int(pt[0]), int(pt[1])
+                cv2.circle(frame, (px, py), 7, (255, 255, 255), -1)
+                cv2.circle(frame, (px, py), 7, color, 2)
+                cv2.putText(frame, str(idx), (px + 8, py - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
+            label_x = int(min(pt[0] for pt in pts_raw)) + 5
+            label_y = max(25, int(min(pt[1] for pt in pts_raw)) + 25)
             cv2.putText(frame, "Analysebereich Strasse", (label_x, label_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
         else:
             ax = area_info['x']; ay = area_info['y']; aw = area_info['width']; ah = area_info['height']
-            cv2.rectangle(frame, (ax, ay), (ax + aw, ay + ah), color, 2)
+            fallback_pts = np.array([[ax, ay], [ax + aw, ay], [ax + aw, ay + ah], [ax, ay + ah]], dtype=np.int32)
+            cv2.polylines(frame, [fallback_pts], True, color, 2)
             cv2.putText(frame, "Analysebereich", (ax + 5, ay + 25),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
@@ -498,7 +518,7 @@ class RTSPHandler:
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                         
                         if area_enabled:
-                            area_text = f"Area: {area_info.get('mode','rectangle')} {area_info.get('x')},{area_info.get('y')} {area_info.get('width')}x{area_info.get('height')}"
+                            area_text = f"ROI: Strasse {area_info.get('x')},{area_info.get('y')} {area_info.get('width')}x{area_info.get('height')}"
                             cv2.putText(annotated, area_text, (10, 60),
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
                         

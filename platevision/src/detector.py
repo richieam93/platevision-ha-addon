@@ -261,42 +261,55 @@ class LicensePlateDetector:
         
         h, w = image.shape[:2]
         
-        # Area selection logic
+        # Unified ROI selection logic: one canonical road polygon.
         area_config = self.config.get('rtsp', {}).get('analysis_area', {})
         area_enabled = area_config.get('enabled', False)
-        area_data = area_config.get('area', {})
-        
-        if area_enabled and area_data:
-            # Extract area coordinates
-            x = area_data.get('x', 0)
-            y = area_data.get('y', 0)
-            width = area_data.get('width', w)
-            height = area_data.get('height', h)
-            
-            # Ensure area is within image bounds
-            x = max(0, min(x, w - 1))
-            y = max(0, min(y, h - 1))
-            width = max(1, min(width, w - x))
-            height = max(1, min(height, h - y))
-            
-            # Create mask for area selection
-            mask = np.zeros((h, w), dtype=np.uint8)
-            mask[y:y+height, x:x+width] = 255
-            
-            # Apply mask to create area-only image for detection
-            area_image = cv2.bitwise_and(image, image, mask=mask)
-            
-            # Store area info for debugging/visualization
-            results['analysis_area'] = {
-                'x': x, 'y': y, 'width': width, 'height': height
-            }
-        else:
-            # Use full image
-            area_image = image
-            results['analysis_area'] = None
-        
+        polygon = area_config.get('polygon') or []
+        area_image = image
+        detection_image = image
+        results['analysis_area'] = None
+
+        if area_enabled:
+            points = []
+            for point in polygon:
+                try:
+                    if isinstance(point, dict):
+                        px, py = point.get('x', 0), point.get('y', 0)
+                    else:
+                        px, py = point[0], point[1]
+                    points.append([
+                        max(0, min(int(round(float(px))), w - 1)),
+                        max(0, min(int(round(float(py))), h - 1))
+                    ])
+                except Exception:
+                    continue
+
+            if len(points) < 3:
+                area_data = area_config.get('area', {})
+                x = max(0, min(int(area_data.get('x', 0)), w - 1))
+                y = max(0, min(int(area_data.get('y', 0)), h - 1))
+                width = max(1, min(int(area_data.get('width', w)), w - x))
+                height = max(1, min(int(area_data.get('height', h)), h - y))
+                points = [[x, y], [min(w - 1, x + width), y], [min(w - 1, x + width), min(h - 1, y + height)], [x, min(h - 1, y + height)]]
+
+            if len(points) >= 3:
+                mask = np.zeros((h, w), dtype=np.uint8)
+                pts = np.array(points, dtype=np.int32)
+                cv2.fillPoly(mask, [pts], 255)
+                area_image = cv2.bitwise_and(image, image, mask=mask)
+                detection_image = area_image
+                xs = [pt[0] for pt in points]
+                ys = [pt[1] for pt in points]
+                results['analysis_area'] = {
+                    'mode': 'polygon',
+                    'polygon': [{'x': int(px), 'y': int(py)} for px, py in points],
+                    'x': int(min(xs)),
+                    'y': int(min(ys)),
+                    'width': int(max(xs) - min(xs)),
+                    'height': int(max(ys) - min(ys))
+                }
+
         # Fahrzeugerkennung
-        detection_image = area_image if area_enabled and area_data else image
         car_detections = self.coco_model(detection_image, conf=self.confidence_threshold)[0]
         
         cars_found = []
