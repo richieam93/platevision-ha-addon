@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.8 ProTraffic ROI Mouse Calibration
+Version 0.8.9 ProTraffic ROI Geometry Sync
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -334,6 +334,8 @@ class ConfigManager:
                 'enabled': False,
                 'mode': 'polygon',
                 'mask_outside': True,
+                'coordinate_width': 1280,
+                'coordinate_height': 720,
                 'area': {
                     'x': 0,
                     'y': 0,
@@ -675,19 +677,28 @@ class ConfigManager:
     def _normalize_analysis_area(self, config):
         """Keep one canonical RTSP analysis area: the road polygon.
 
-        Older versions stored both a rectangle (`area`) and a polygon. That caused
-        two visible overlays in the RTSP settings. This normalizer keeps the old
-        rectangle values only as a derived bounding box for compatibility, while
-        the polygon is the single source of truth used by the UI and processing.
+        The ROI is stored in one coordinate system. Older versions only had
+        rtsp.resolution, which could differ from the real RTSP frame. That made
+        the same polygon look different in /live and /rtsp-settings. Newer
+        configs therefore store coordinate_width / coordinate_height directly on
+        the analysis_area. Processing scales from that saved coordinate system to
+        the current camera frame when needed.
         """
         try:
             rtsp = config.setdefault('rtsp', {})
             resolution = rtsp.get('resolution') or {}
-            frame_w = int(resolution.get('width') or 1280)
-            frame_h = int(resolution.get('height') or 720)
+            area_cfg = rtsp.setdefault('analysis_area', {})
+
+            def to_int(value, fallback):
+                try:
+                    return int(round(float(value)))
+                except Exception:
+                    return fallback
+
+            frame_w = to_int(area_cfg.get('coordinate_width'), 0) or to_int(resolution.get('width'), 1280)
+            frame_h = to_int(area_cfg.get('coordinate_height'), 0) or to_int(resolution.get('height'), 720)
             frame_w = max(1, frame_w)
             frame_h = max(1, frame_h)
-            area_cfg = rtsp.setdefault('analysis_area', {})
 
             def clamp_int(value, minimum, maximum):
                 try:
@@ -738,6 +749,8 @@ class ConfigManager:
             min_y, max_y = min(ys), max(ys)
             area_cfg['mode'] = 'polygon'
             area_cfg['mask_outside'] = True
+            area_cfg['coordinate_width'] = frame_w
+            area_cfg['coordinate_height'] = frame_h
             area_cfg['polygon'] = polygon
             area_cfg['area'] = {
                 'x': int(min_x),
@@ -3096,11 +3109,122 @@ def api_stream_resolution():
     """Gibt die aktuelle Stream-Auflösung zurück"""
     return jsonify(stream_manager.get_stream_resolution())
 
+
+def _frame_dimensions(frame):
+    if frame is None:
+        return None
+    try:
+        h, w = frame.shape[:2]
+        return {'width': int(w), 'height': int(h)}
+    except Exception:
+        return None
+
+
+def _current_stream_geometry():
+    """One geometry source for settings, live view and processing."""
+    raw = stream_manager.get_raw_frame()
+    annotated = stream_manager.get_current_frame()
+    configured = config_manager.get('rtsp', 'resolution') or {}
+    active = _frame_dimensions(raw) or _frame_dimensions(annotated)
+    if active is None:
+        active = {
+            'width': int(configured.get('width') or 1280),
+            'height': int(configured.get('height') or 720)
+        }
+    area = config_manager.get('rtsp', 'analysis_area') or {}
+    coordinate = {
+        'width': int(area.get('coordinate_width') or active.get('width') or configured.get('width') or 1280),
+        'height': int(area.get('coordinate_height') or active.get('height') or configured.get('height') or 720)
+    }
+    return {
+        'success': True,
+        'active': active,
+        'raw': _frame_dimensions(raw),
+        'annotated': _frame_dimensions(annotated),
+        'configured': {
+            'width': int(configured.get('width') or active.get('width') or 1280),
+            'height': int(configured.get('height') or active.get('height') or 720)
+        },
+        'analysis_area_coordinate': coordinate,
+        'connected': stream_manager.is_connected(),
+        'status': stream_manager.get_status()
+    }
+
+
+@app.route('/api/stream/geometry')
+def api_stream_geometry():
+    """Returns the exact frame geometry used by RTSP settings and live output."""
+    return jsonify(_current_stream_geometry())
+
+
+@app.route('/api/rtsp/analysis-area', methods=['GET', 'POST'])
+def api_rtsp_analysis_area():
+    """Canonical endpoint for the one road ROI used everywhere."""
+    if request.method == 'GET':
+        area = config_manager.get('rtsp', 'analysis_area') or {}
+        return jsonify({'success': True, 'analysis_area': area, 'geometry': _current_stream_geometry()})
+
+    try:
+        payload = request.get_json(force=True) or {}
+        area = payload.get('analysis_area') or payload
+        if not isinstance(area, dict):
+            return jsonify({'success': False, 'error': 'analysis_area muss ein Objekt sein.'}), 400
+
+        geometry = _current_stream_geometry().get('active') or {}
+        coord_w = int(area.get('coordinate_width') or geometry.get('width') or config_manager.get('rtsp', 'resolution', 'width') or 1280)
+        coord_h = int(area.get('coordinate_height') or geometry.get('height') or config_manager.get('rtsp', 'resolution', 'height') or 720)
+        coord_w = max(1, coord_w)
+        coord_h = max(1, coord_h)
+
+        clean_points = []
+        for point in area.get('polygon') or []:
+            if isinstance(point, dict):
+                px, py = point.get('x'), point.get('y')
+            elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                px, py = point[0], point[1]
+            else:
+                continue
+            try:
+                clean_points.append({
+                    'x': max(0, min(int(round(float(px))), coord_w - 1)),
+                    'y': max(0, min(int(round(float(py))), coord_h - 1)),
+                })
+            except Exception:
+                continue
+
+        if len(clean_points) < 3:
+            return jsonify({'success': False, 'error': 'Mindestens 3 Polygonpunkte erforderlich.'}), 400
+
+        xs = [p['x'] for p in clean_points]
+        ys = [p['y'] for p in clean_points]
+        normalized = {
+            'enabled': bool(area.get('enabled', True)),
+            'mode': 'polygon',
+            'mask_outside': True,
+            'coordinate_width': coord_w,
+            'coordinate_height': coord_h,
+            'polygon': clean_points,
+            'area': {
+                'x': int(min(xs)),
+                'y': int(min(ys)),
+                'width': int(max(1, max(xs) - min(xs))),
+                'height': int(max(1, max(ys) - min(ys))),
+            }
+        }
+        config_manager.config.setdefault('rtsp', {})['analysis_area'] = normalized
+        config_manager.config['rtsp']['resolution'] = {'width': coord_w, 'height': coord_h}
+        config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
+        config_manager.save_config()
+        return jsonify({'success': True, 'analysis_area': config_manager.config['rtsp']['analysis_area'], 'geometry': _current_stream_geometry()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
 @app.route('/api/stream/feed')
 def stream_feed():
+    raw_mode = str(request.args.get('raw', '')).lower() in ('1', 'true', 'yes')
     def generate():
         while True:
-            frame = stream_manager.get_current_frame()
+            frame = stream_manager.get_raw_frame() if raw_mode else stream_manager.get_current_frame()
             if frame is not None:
                 _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 frame_bytes = buffer.tobytes()
@@ -3131,8 +3255,13 @@ def api_stream_snapshot():
     if frame is None:
         frame = stream_manager.get_current_frame()
     if frame is not None:
+        h, w = frame.shape[:2]
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        return Response(buffer.tobytes(), mimetype='image/jpeg')
+        resp = Response(buffer.tobytes(), mimetype='image/jpeg')
+        resp.headers['Cache-Control'] = 'no-store, max-age=0'
+        resp.headers['X-Frame-Width'] = str(w)
+        resp.headers['X-Frame-Height'] = str(h)
+        return resp
 
     # Fallback in konfigurierter Stream-Auflösung, damit ROI-Linie/Polygon trotzdem sauber passt.
     try:
@@ -3210,13 +3339,19 @@ def api_save_rtsp_config():
     try:
         data = request.json
         
-        # Deep merge für analysis_area
+        # Deep merge für analysis_area. coordinate_width/height keep ROI geometry stable
+        # even when the camera aspect ratio is not the old 16:9 default.
         if 'analysis_area' in data:
             if 'analysis_area' not in config_manager.config['rtsp']:
                 config_manager.config['rtsp']['analysis_area'] = {}
-            
-            for key, value in data['analysis_area'].items():
+            area_payload = data['analysis_area'] or {}
+            for key, value in area_payload.items():
                 config_manager.config['rtsp']['analysis_area'][key] = value
+            if area_payload.get('coordinate_width') and area_payload.get('coordinate_height'):
+                data.setdefault('resolution', {
+                    'width': int(area_payload.get('coordinate_width')),
+                    'height': int(area_payload.get('coordinate_height'))
+                })
             del data['analysis_area']
         
         config_manager.config['rtsp'].update(data)
@@ -4807,7 +4942,7 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.8',
+        'version': '0.8.9',
         'edition': 'ProTraffic People ROI Mouse Fix',
         'features': [
             'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
@@ -5541,7 +5676,7 @@ def api_system_health():
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.8'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.9'})
 
 
 @app.route('/api/system/audit')
@@ -5638,7 +5773,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.8 ProTraffic ROI Mouse Fix                                    ║
+    ║     Version 0.8.9 ProTraffic ROI Geometry Sync                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

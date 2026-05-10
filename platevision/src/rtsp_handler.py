@@ -2,7 +2,7 @@
 """
 RTSP Stream Handler
 Verwaltet RTSP Videostreams im Hintergrund
-Version 2.1 - Mit korrekter Analysis Area Unterstützung
+Version 2.2 - Einheitliche ROI-Geometrie für Live und Einstellungen
 """
 
 import cv2
@@ -227,12 +227,12 @@ class RTSPHandler:
     
     def _get_analysis_area(self, frame_height, frame_width):
         """
-        Holt und validiert den Analysebereich.
+        Holt und validiert den einen Analysebereich.
 
-        Ab v0.8.7 gibt es nur noch eine verbindliche Analyse-Zone: das
-        Straßen-Polygon. Ältere Rechteck-Konfigurationen werden automatisch in
-        ein Polygon umgewandelt. Das Rechteck in area_info ist nur noch die
-        Bounding-Box des Polygons und dient zum effizienten Zuschneiden.
+        Die gespeicherten Polygonpunkte können aus einer anderen, gespeicherten
+        Koordinatenbasis stammen (coordinate_width/height). Hier werden sie auf
+        die aktuelle Framegröße skaliert. Dadurch sehen /live und
+        /rtsp-settings gleich aus und die Analyse nutzt denselben Bereich.
         """
         cfg = self.config_manager.get('rtsp', 'analysis_area') or {}
         if not cfg.get('enabled'):
@@ -240,10 +240,22 @@ class RTSPHandler:
                 'enabled': False,
                 'mode': 'polygon',
                 'x': 0, 'y': 0, 'width': frame_width, 'height': frame_height,
-                'polygon': [], 'crop_polygon': [], 'mask_outside': False
+                'polygon': [], 'crop_polygon': [], 'mask_outside': False,
+                'coordinate_width': frame_width, 'coordinate_height': frame_height
             }
 
         mask_outside = True
+
+        def safe_int(value, fallback):
+            try:
+                return int(round(float(value)))
+            except Exception:
+                return fallback
+
+        coord_w = max(1, safe_int(cfg.get('coordinate_width'), frame_width))
+        coord_h = max(1, safe_int(cfg.get('coordinate_height'), frame_height))
+        scale_x = frame_width / coord_w
+        scale_y = frame_height / coord_h
 
         def clamp_int(value, minimum, maximum):
             try:
@@ -262,9 +274,11 @@ class RTSPHandler:
                         px, py = point[0], point[1]
                     else:
                         continue
+                    sx = float(px) * scale_x
+                    sy = float(py) * scale_y
                     points.append([
-                        clamp_int(px, 0, frame_width - 1),
-                        clamp_int(py, 0, frame_height - 1)
+                        clamp_int(sx, 0, frame_width - 1),
+                        clamp_int(sy, 0, frame_height - 1)
                     ])
                 except Exception:
                     continue
@@ -272,10 +286,10 @@ class RTSPHandler:
         # Legacy-Fallback: alte Rechteckwerte in Polygon umwandeln.
         if len(points) < 3:
             area = cfg.get('area') or {}
-            x = clamp_int(area.get('x', 0), 0, frame_width - 1)
-            y = clamp_int(area.get('y', 0), 0, frame_height - 1)
-            width = clamp_int(area.get('width', frame_width), 1, frame_width - x)
-            height = clamp_int(area.get('height', frame_height), 1, frame_height - y)
+            x = clamp_int(float(area.get('x', 0)) * scale_x, 0, frame_width - 1)
+            y = clamp_int(float(area.get('y', 0)) * scale_y, 0, frame_height - 1)
+            width = clamp_int(float(area.get('width', frame_width)) * scale_x, 1, frame_width - x)
+            height = clamp_int(float(area.get('height', frame_height)) * scale_y, 1, frame_height - y)
             points = [
                 [x, y],
                 [min(frame_width - 1, x + width), y],
@@ -293,21 +307,24 @@ class RTSPHandler:
             width = max(10, x2 - x)
             height = max(10, y2 - y)
             crop_polygon = [[pt[0] - x, pt[1] - y] for pt in points]
-            logger.debug(f"Unified Analysis ROI: bbox={x},{y},{width},{height}, points={points}")
+            logger.debug(f"Unified Analysis ROI: frame={frame_width}x{frame_height}, basis={coord_w}x{coord_h}, bbox={x},{y},{width},{height}, points={points}")
             return {
                 'enabled': True,
                 'mode': 'polygon',
                 'x': x, 'y': y, 'width': width, 'height': height,
                 'polygon': points,
                 'crop_polygon': crop_polygon,
-                'mask_outside': mask_outside
+                'mask_outside': mask_outside,
+                'coordinate_width': coord_w,
+                'coordinate_height': coord_h
             }
 
         return {
             'enabled': False,
             'mode': 'polygon',
             'x': 0, 'y': 0, 'width': frame_width, 'height': frame_height,
-            'polygon': [], 'crop_polygon': [], 'mask_outside': False
+            'polygon': [], 'crop_polygon': [], 'mask_outside': False,
+            'coordinate_width': frame_width, 'coordinate_height': frame_height
         }
 
     def _apply_analysis_mask(self, frame, area_info):

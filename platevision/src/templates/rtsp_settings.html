@@ -260,7 +260,7 @@
                                 </div>
                             </div>
                             <div class="small text-secondary mt-2">
-                                Tipp: Die Vorschau nutzt jetzt das rohe RTSP-Bild ohne alten Backend-Overlay. Dadurch gibt es nur noch eine sichtbare Zone: diesen Straßenbereich.
+                                Tipp: Livebild und Einstellungsseite verwenden jetzt dieselbe Stream-Geometrie. Nach dem Speichern wird genau dieser Straßenbereich im Livebild und in der Analyse verwendet.
                             </div>
                         </div>
                     </div>
@@ -269,7 +269,7 @@
                     <div class="mb-3">
                         <label class="form-label">Stream Vorschau</label>
                         <div id="previewContainer" class="position-relative border rounded overflow-hidden" 
-                             style="background: #1a1a2e; aspect-ratio: 16/9; max-height: 500px;">
+                             style="background: #1a1a2e; aspect-ratio: 16/9; max-height: 650px; min-height: 300px;">
                             
                             <!-- Stream Image -->
                             <img id="previewImage" src="" alt="Stream Vorschau" 
@@ -296,6 +296,7 @@
                             <span id="streamResolutionInfo">Stream: Unbekannt</span>
                             <span id="displayResolutionInfo">Anzeige: Unbekannt</span>
                         </div>
+                        <div class="small text-info mt-1" id="geometrySyncInfo">Geometrie wird geladen...</div>
                     </div>
                     
                     <!-- Polygon-Punkte -->
@@ -667,94 +668,112 @@ document.addEventListener('DOMContentLoaded', function() {
     initCanvas();
 });
 
-function loadConfiguration() {
-    fetch('/api/config')
-        .then(response => response.json())
-        .then(config => {
-            const rtspConfig = config.rtsp || {};
-            
-            // RTSP URL
-            if (rtspConfig.url) {
-                document.getElementById('rtspUrl').value = rtspConfig.url;
-            }
-            
-            // Reconnect Delay
-            if (rtspConfig.reconnect_delay) {
-                document.getElementById('reconnectDelay').value = rtspConfig.reconnect_delay;
-            }
-            
-            // Buffer Size
-            if (rtspConfig.buffer_size) {
-                document.getElementById('bufferSize').value = rtspConfig.buffer_size;
-            }
-            
-            // Resolution
-            if (rtspConfig.resolution) {
-                streamWidth = rtspConfig.resolution.width || 1280;
-                streamHeight = rtspConfig.resolution.height || 720;
-                
-                document.getElementById('streamWidth').value = streamWidth;
-                document.getElementById('streamHeight').value = streamHeight;
-                
-                updateResolutionPreset();
-                updateCurrentResolutionDisplay();
-            }
-            
-            // Erweiterte Optionen
-            if (rtspConfig.connection_timeout) {
-                document.getElementById('connectionTimeout').value = rtspConfig.connection_timeout;
-            }
-            if (rtspConfig.max_reconnects !== undefined) {
-                document.getElementById('maxReconnects').value = rtspConfig.max_reconnects;
-            }
-            if (rtspConfig.tcp_transport) {
-                document.getElementById('tcpTransport').checked = rtspConfig.tcp_transport;
-            }
-            if (rtspConfig.hw_acceleration) {
-                document.getElementById('hwAcceleration').checked = rtspConfig.hw_acceleration;
-            }
-            
-            // Analysis Area
-            const areaConfig = rtspConfig.analysis_area || {};
-            isAreaEnabled = areaConfig.enabled || false;
-            areaMode = 'polygon';
-            maskOutsideArea = true;
-            
-            document.getElementById('enableAreaSelection').checked = isAreaEnabled;
-            document.getElementById('areaMode').value = areaMode;
-            document.getElementById('maskOutsideArea').checked = maskOutsideArea;
-            
-            if (areaConfig.area) {
-                currentArea = {
-                    x: parseInt(areaConfig.area.x) || 0,
-                    y: parseInt(areaConfig.area.y) || 0,
-                    width: parseInt(areaConfig.area.width) || streamWidth,
-                    height: parseInt(areaConfig.area.height) || streamHeight
-                };
-            } else {
-                currentArea = { x: 0, y: 0, width: streamWidth, height: streamHeight };
-            }
-            
-            if (Array.isArray(areaConfig.polygon) && areaConfig.polygon.length >= 3) {
-                polygonPoints = areaConfig.polygon.map(p => ({
-                    x: clamp(parseInt(p.x) || 0, 0, streamWidth - 1),
-                    y: clamp(parseInt(p.y) || 0, 0, streamHeight - 1)
-                }));
-            } else {
-                polygonPoints = defaultRoadPolygon();
-            }
-            
-            updateAreaUI();
-            updateAreaInputs();
-            renderPolygonEditor();
-            updateAreaInfo();
-        })
-        .catch(error => {
-            console.error('Fehler beim Laden der Konfiguration:', error);
-        });
-    
-    // Stream-Status holen
+async function loadConfiguration() {
+    try {
+        const [configResponse, geometryResponse] = await Promise.all([
+            fetch('/api/config'),
+            fetch('/api/stream/geometry').catch(() => null)
+        ]);
+        const config = await configResponse.json();
+        const geometry = geometryResponse ? await geometryResponse.json() : null;
+        const rtspConfig = config.rtsp || {};
+        const activeGeometry = geometry && geometry.active ? geometry.active : null;
+
+        // Wichtig: Die aktive Stream-Geometrie ist die Basis. Falls kein Stream da ist,
+        // verwenden wir die gespeicherte Konfiguration.
+        if (activeGeometry && activeGeometry.width && activeGeometry.height) {
+            streamWidth = parseInt(activeGeometry.width) || streamWidth;
+            streamHeight = parseInt(activeGeometry.height) || streamHeight;
+        } else if (rtspConfig.resolution) {
+            streamWidth = rtspConfig.resolution.width || 1280;
+            streamHeight = rtspConfig.resolution.height || 720;
+        }
+
+        if (rtspConfig.url) {
+            document.getElementById('rtspUrl').value = rtspConfig.url;
+        }
+        if (rtspConfig.reconnect_delay) {
+            document.getElementById('reconnectDelay').value = rtspConfig.reconnect_delay;
+        }
+        if (rtspConfig.buffer_size) {
+            document.getElementById('bufferSize').value = rtspConfig.buffer_size;
+        }
+
+        document.getElementById('streamWidth').value = streamWidth;
+        document.getElementById('streamHeight').value = streamHeight;
+        updateResolutionPreset();
+        updateCurrentResolutionDisplay();
+        applyPreviewAspectRatio();
+
+        if (rtspConfig.connection_timeout) {
+            document.getElementById('connectionTimeout').value = rtspConfig.connection_timeout;
+        }
+        if (rtspConfig.max_reconnects !== undefined) {
+            document.getElementById('maxReconnects').value = rtspConfig.max_reconnects;
+        }
+        if (rtspConfig.tcp_transport) {
+            document.getElementById('tcpTransport').checked = rtspConfig.tcp_transport;
+        }
+        if (rtspConfig.hw_acceleration) {
+            document.getElementById('hwAcceleration').checked = rtspConfig.hw_acceleration;
+        }
+
+        const areaConfig = rtspConfig.analysis_area || {};
+        isAreaEnabled = areaConfig.enabled || false;
+        areaMode = 'polygon';
+        maskOutsideArea = true;
+
+        document.getElementById('enableAreaSelection').checked = isAreaEnabled;
+        document.getElementById('areaMode').value = areaMode;
+        document.getElementById('maskOutsideArea').checked = maskOutsideArea;
+
+        const basisWidth = parseInt(areaConfig.coordinate_width || rtspConfig.resolution?.width || streamWidth) || streamWidth;
+        const basisHeight = parseInt(areaConfig.coordinate_height || rtspConfig.resolution?.height || streamHeight) || streamHeight;
+        const scaleX = streamWidth / Math.max(1, basisWidth);
+        const scaleY = streamHeight / Math.max(1, basisHeight);
+
+        if (areaConfig.area) {
+            currentArea = {
+                x: clamp(Math.round((parseInt(areaConfig.area.x) || 0) * scaleX), 0, streamWidth - 1),
+                y: clamp(Math.round((parseInt(areaConfig.area.y) || 0) * scaleY), 0, streamHeight - 1),
+                width: Math.max(1, Math.round((parseInt(areaConfig.area.width) || streamWidth) * scaleX)),
+                height: Math.max(1, Math.round((parseInt(areaConfig.area.height) || streamHeight) * scaleY))
+            };
+        } else {
+            currentArea = { x: 0, y: 0, width: streamWidth, height: streamHeight };
+        }
+
+        if (Array.isArray(areaConfig.polygon) && areaConfig.polygon.length >= 3) {
+            polygonPoints = areaConfig.polygon.map(p => ({
+                x: clamp(Math.round((parseInt(p.x) || 0) * scaleX), 0, streamWidth - 1),
+                y: clamp(Math.round((parseInt(p.y) || 0) * scaleY), 0, streamHeight - 1)
+            }));
+        } else {
+            polygonPoints = defaultRoadPolygon();
+        }
+
+        updateAreaUI();
+        updateAreaInputs();
+        renderPolygonEditor();
+        updateAreaInfo();
+        updateCanvasSize();
+        drawSelection();
+        updateGeometrySyncInfo(geometry, basisWidth, basisHeight);
+    } catch (error) {
+        console.error('Fehler beim Laden der Konfiguration:', error);
+    }
+
     updateStreamStatus();
+}
+
+function updateGeometrySyncInfo(geometry, basisWidth, basisHeight) {
+    const el = document.getElementById('geometrySyncInfo');
+    if (!el) return;
+    const active = geometry && geometry.active ? geometry.active : { width: streamWidth, height: streamHeight };
+    const connected = geometry && geometry.connected;
+    el.innerHTML = `<i class="fas fa-link me-1"></i>Live-/Einstellungs-Geometrie: ${active.width} × ${active.height} px` +
+        ` · ROI-Basis: ${basisWidth} × ${basisHeight} px` +
+        (connected ? ' · RTSP live' : ' · Fallback/gespeichert');
 }
 
 function setupEventListeners() {
@@ -946,14 +965,31 @@ function updateStreamStatus() {
         .then(status => {
             updateStreamStatusUI(status);
             
-            // Auflösung aktualisieren wenn verbunden
+            // Auflösung aktualisieren wenn verbunden. Die echte Stream-Geometrie
+            // ist wichtiger als eine alte gespeicherte 16:9-Konfiguration.
             if (status.connected && status.resolution) {
-                const serverWidth = status.resolution.width;
-                const serverHeight = status.resolution.height;
-                
-                // Anzeige aktualisieren (tatsächliche Stream-Auflösung)
-                document.getElementById('currentResolution').textContent = 
-                    `${serverWidth} × ${serverHeight}`;
+                const serverWidth = parseInt(status.resolution.width) || streamWidth;
+                const serverHeight = parseInt(status.resolution.height) || streamHeight;
+                if ((serverWidth !== streamWidth || serverHeight !== streamHeight) && !isDrawing) {
+                    const oldWidth = streamWidth;
+                    const oldHeight = streamHeight;
+                    streamWidth = serverWidth;
+                    streamHeight = serverHeight;
+                    document.getElementById('streamWidth').value = streamWidth;
+                    document.getElementById('streamHeight').value = streamHeight;
+                    if (polygonPoints.length && oldWidth && oldHeight) {
+                        polygonPoints = polygonPoints.map(pt => ({
+                            x: clamp(Math.round(pt.x * streamWidth / oldWidth), 0, streamWidth - 1),
+                            y: clamp(Math.round(pt.y * streamHeight / oldHeight), 0, streamHeight - 1)
+                        }));
+                        renderPolygonEditor();
+                        updateAreaInfo();
+                    }
+                    updateResolutionPreset();
+                    updateCanvasSize();
+                    drawSelection();
+                }
+                document.getElementById('currentResolution').textContent = `${serverWidth} × ${serverHeight}`;
             }
         })
         .catch(error => {
@@ -1068,6 +1104,9 @@ function syncStreamSizeFromImage(img) {
         streamHeight = img.naturalHeight;
         document.getElementById('streamWidth').value = streamWidth;
         document.getElementById('streamHeight').value = streamHeight;
+        // Wenn die Vorschau eine andere echte Größe liefert, skalieren wir die
+        // aktuellen Editor-Punkte auf dieselbe Bildbasis, damit Live und Settings
+        // identisch bleiben.
         if (polygonPoints.length) {
             polygonPoints = polygonPoints.map(pt => ({
                 x: clamp(Math.round(pt.x * streamWidth / oldWidth), 0, streamWidth - 1),
@@ -1078,9 +1117,17 @@ function syncStreamSizeFromImage(img) {
         }
         updateResolutionPreset();
     }
+    applyPreviewAspectRatio();
+}
+
+function applyPreviewAspectRatio() {
+    const container = document.getElementById('previewContainer');
+    if (!container || !streamWidth || !streamHeight) return;
+    container.style.aspectRatio = `${streamWidth} / ${streamHeight}`;
 }
 
 function updateCanvasSize() {
+    applyPreviewAspectRatio();
     const canvas = document.getElementById('selectionCanvas');
     const container = document.getElementById('previewContainer');
     const containerRect = container.getBoundingClientRect();
@@ -1747,22 +1794,23 @@ function saveAreaSettings() {
     areaMode = 'polygon';
     if (polygonPoints.length < 3) polygonPoints = defaultRoadPolygon();
     const bbox = getPolygonBoundingBox();
-    const data = {
-        analysis_area: {
-            enabled: isAreaEnabled,
-            mode: 'polygon',
-            mask_outside: true,
-            area: {
-                x: Math.round(bbox.x),
-                y: Math.round(bbox.y),
-                width: Math.round(Math.max(1, bbox.width)),
-                height: Math.round(Math.max(1, bbox.height))
-            },
-            polygon: polygonPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }))
-        }
+    const analysisArea = {
+        enabled: isAreaEnabled,
+        mode: 'polygon',
+        mask_outside: true,
+        coordinate_width: streamWidth,
+        coordinate_height: streamHeight,
+        area: {
+            x: Math.round(bbox.x),
+            y: Math.round(bbox.y),
+            width: Math.round(Math.max(1, bbox.width)),
+            height: Math.round(Math.max(1, bbox.height))
+        },
+        polygon: polygonPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }))
     };
+    const data = { analysis_area: analysisArea };
     
-    fetch('/api/config/rtsp', {
+    fetch('/api/rtsp/analysis-area', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
@@ -1770,7 +1818,8 @@ function saveAreaSettings() {
     .then(response => response.json())
     .then(result => {
         if (result.success) {
-            showToast('Erfolg', 'Einheitlicher Straßenbereich gespeichert und wird für die Analyse verwendet', 'success');
+            showToast('Erfolg', 'Straßenbereich gespeichert. Livebild und Analyse verwenden jetzt dieselbe Zone.', 'success');
+            updateGeometrySyncInfo(result.geometry, streamWidth, streamHeight);
         } else {
             showToast('Fehler', result.error || 'Speichern fehlgeschlagen', 'danger');
         }
