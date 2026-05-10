@@ -227,35 +227,114 @@ class RTSPHandler:
     
     def _get_analysis_area(self, frame_height, frame_width):
         """
-        Holt und validiert den Analysebereich
-        
-        Returns:
-            Tuple (enabled, x, y, width, height)
+        Holt und validiert den Analysebereich.
+        Unterstützt weiterhin Rechtecke und zusätzlich Polygon-/Straßenbereiche.
         """
-        area_enabled = self.config_manager.get('rtsp', 'analysis_area', 'enabled')
-        if not area_enabled:
-            return False, 0, 0, frame_width, frame_height
-        
-        area = self.config_manager.get('rtsp', 'analysis_area', 'area')
-        if not area:
-            return False, 0, 0, frame_width, frame_height
-        
-        # Koordinaten aus Config (können Float sein)
-        x = int(float(area.get('x', 0)))
-        y = int(float(area.get('y', 0)))
-        width = int(float(area.get('width', frame_width)))
-        height = int(float(area.get('height', frame_height)))
-        
-        # Grenzen prüfen und korrigieren
+        cfg = self.config_manager.get('rtsp', 'analysis_area') or {}
+        if not cfg.get('enabled'):
+            return {
+                'enabled': False,
+                'mode': 'rectangle',
+                'x': 0, 'y': 0, 'width': frame_width, 'height': frame_height,
+                'polygon': [], 'crop_polygon': [], 'mask_outside': False
+            }
+
+        mode = (cfg.get('mode') or 'rectangle').lower()
+        mask_outside = cfg.get('mask_outside') is not False
+
+        if mode == 'polygon':
+            raw_points = cfg.get('polygon') or []
+            points = []
+            for point in raw_points:
+                try:
+                    px = int(round(float(point.get('x', 0))))
+                    py = int(round(float(point.get('y', 0))))
+                    points.append([
+                        max(0, min(px, frame_width - 1)),
+                        max(0, min(py, frame_height - 1))
+                    ])
+                except Exception:
+                    continue
+
+            if len(points) >= 3:
+                xs = [pt[0] for pt in points]
+                ys = [pt[1] for pt in points]
+                x = max(0, min(xs))
+                y = max(0, min(ys))
+                x2 = min(frame_width, max(xs) + 1)
+                y2 = min(frame_height, max(ys) + 1)
+                width = max(10, x2 - x)
+                height = max(10, y2 - y)
+                crop_polygon = [[pt[0] - x, pt[1] - y] for pt in points]
+                logger.debug(f"Analysis Polygon: bbox={x},{y},{width},{height}, points={points}")
+                return {
+                    'enabled': True,
+                    'mode': 'polygon',
+                    'x': x, 'y': y, 'width': width, 'height': height,
+                    'polygon': points,
+                    'crop_polygon': crop_polygon,
+                    'mask_outside': mask_outside
+                }
+
+        area = cfg.get('area') or {}
+        try:
+            x = int(float(area.get('x', 0)))
+            y = int(float(area.get('y', 0)))
+            width = int(float(area.get('width', frame_width)))
+            height = int(float(area.get('height', frame_height)))
+        except Exception:
+            x, y, width, height = 0, 0, frame_width, frame_height
+
         x = max(0, min(x, frame_width - 10))
         y = max(0, min(y, frame_height - 10))
         width = max(10, min(width, frame_width - x))
         height = max(10, min(height, frame_height - y))
-        
+
         logger.debug(f"Analysis Area: x={x}, y={y}, w={width}, h={height} (Frame: {frame_width}x{frame_height})")
-        
-        return True, x, y, width, height
-    
+        return {
+            'enabled': True,
+            'mode': 'rectangle',
+            'x': x, 'y': y, 'width': width, 'height': height,
+            'polygon': [], 'crop_polygon': [], 'mask_outside': False
+        }
+
+    def _apply_analysis_mask(self, frame, area_info):
+        """Schneidet den Analysebereich aus und maskiert Polygonbereiche außerhalb der Straße."""
+        if not area_info.get('enabled'):
+            return frame, 0, 0
+
+        ax = area_info['x']; ay = area_info['y']; aw = area_info['width']; ah = area_info['height']
+        process_frame = frame[ay:ay + ah, ax:ax + aw].copy()
+
+        if area_info.get('mode') == 'polygon' and area_info.get('mask_outside') and len(area_info.get('crop_polygon') or []) >= 3:
+            mask = np.zeros(process_frame.shape[:2], dtype=np.uint8)
+            pts = np.array(area_info['crop_polygon'], dtype=np.int32)
+            cv2.fillPoly(mask, [pts], 255)
+            process_frame = cv2.bitwise_and(process_frame, process_frame, mask=mask)
+
+        return process_frame, ax, ay
+
+    def _draw_analysis_area(self, frame, area_info):
+        """Zeichnet Rechteck oder Polygon auf das Livebild."""
+        if not area_info.get('enabled'):
+            return
+        color = (0, 255, 255)
+        if area_info.get('mode') == 'polygon' and len(area_info.get('polygon') or []) >= 3:
+            pts = np.array(area_info['polygon'], dtype=np.int32)
+            overlay = frame.copy()
+            cv2.fillPoly(overlay, [pts], (0, 255, 255))
+            cv2.addWeighted(overlay, 0.14, frame, 0.86, 0, frame)
+            cv2.polylines(frame, [pts], True, color, 3)
+            label_x = int(min(pt[0] for pt in area_info['polygon'])) + 5
+            label_y = max(25, int(min(pt[1] for pt in area_info['polygon'])) + 25)
+            cv2.putText(frame, "Analysebereich Strasse", (label_x, label_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        else:
+            ax = area_info['x']; ay = area_info['y']; aw = area_info['width']; ah = area_info['height']
+            cv2.rectangle(frame, (ax, ay), (ax + aw, ay + ah), color, 2)
+            cv2.putText(frame, "Analysebereich", (ax + 5, ay + 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
     def _capture_loop(self):
         """Capture-Schleife für RTSP Stream"""
         reconnect_delay = self.config_manager.get('rtsp', 'reconnect_delay') or 5
@@ -333,29 +412,19 @@ class RTSPHandler:
                         continue
                     
                     try:
-                        # Analysis Area holen
-                        area_enabled, ax, ay, aw, ah = self._get_analysis_area(frame_h, frame_w)
+                        # Analysis Area holen und ggf. auf Straße/Polygon maskieren
+                        area_info = self._get_analysis_area(frame_h, frame_w)
+                        area_enabled = area_info.get('enabled', False)
+                        process_frame, offset_x, offset_y = self._apply_analysis_mask(frame, area_info)
                         
-                        # Frame für Verarbeitung vorbereiten
-                        if area_enabled:
-                            # Bereich ausschneiden
-                            process_frame = frame[ay:ay+ah, ax:ax+aw].copy()
-                            offset_x, offset_y = ax, ay
-                        else:
-                            process_frame = frame
-                            offset_x, offset_y = 0, 0
-                        
-                        # Erkennung auf (zugeschnittenem) Frame
+                        # Erkennung auf (zugeschnittenem/maskiertem) Frame
                         results = self.detector.process_frame(process_frame, apply_analysis_area=False)
                         
                         # Annotiertes Frame erstellen
                         annotated = frame.copy()
                         
                         # Analysis Area einzeichnen
-                        if area_enabled:
-                            cv2.rectangle(annotated, (ax, ay), (ax + aw, ay + ah), (0, 255, 255), 2)
-                            cv2.putText(annotated, "Analysebereich", (ax + 5, ay + 25),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                        self._draw_analysis_area(annotated, area_info)
                         
                         # Fahrzeuge mit Offset einzeichnen
                         for vehicle in results.get('vehicles', []):
@@ -429,7 +498,7 @@ class RTSPHandler:
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                         
                         if area_enabled:
-                            area_text = f"Area: {ax},{ay} {aw}x{ah}"
+                            area_text = f"Area: {area_info.get('mode','rectangle')} {area_info.get('x')},{area_info.get('y')} {area_info.get('width')}x{area_info.get('height')}"
                             cv2.putText(annotated, area_text, (10, 60),
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
                         

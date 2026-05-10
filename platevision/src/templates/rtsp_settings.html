@@ -221,15 +221,48 @@
                         </label>
                     </div>
                     <small class="text-secondary d-block mt-1">
-                        Nur Fahrzeuge und Kennzeichen innerhalb des markierten Bereichs werden erkannt.
+                        Nur Fahrzeuge, Kennzeichen und Personen innerhalb des markierten Straßenbereichs werden analysiert.
                     </small>
                 </div>
                 
                 <div id="areaSelectionControls" style="display: none;">
                     <div class="alert alert-info small mb-3">
                         <i class="fas fa-info-circle me-2"></i>
-                        <strong>Anleitung:</strong> Klicken und ziehen Sie im Vorschaubild, um den Analysebereich zu definieren.
-                        Die Koordinaten werden automatisch auf die tatsächliche Stream-Auflösung skaliert.
+                        <strong>Anleitung:</strong> Für eine Straße ist der neue <strong>Polygon-Modus</strong> am besten.
+                        Ziehe die farbigen Punkte genau auf die Straßenränder. Die Erkennung wird danach nur noch in diesem Bereich ausgeführt.
+                    </div>
+
+                    <div class="card bg-dark mb-3">
+                        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                            <strong><i class="fas fa-draw-polygon me-2 text-info"></i>Bereichsmodus & Straßen-Presets</strong>
+                            <span class="badge bg-info text-dark" id="areaModeBadge">Rechteck</span>
+                        </div>
+                        <div class="card-body py-3">
+                            <div class="row g-3 align-items-end">
+                                <div class="col-md-4">
+                                    <label class="form-label small">Analyseform</label>
+                                    <select class="form-select form-select-sm" id="areaMode">
+                                        <option value="rectangle">Rechteck / Ausschnitt</option>
+                                        <option value="polygon">Straße frei einzeichnen (Polygon)</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check form-switch mt-3">
+                                        <input class="form-check-input" type="checkbox" id="maskOutsideArea" checked>
+                                        <label class="form-check-label small" for="maskOutsideArea">Außerhalb ausblenden / nicht analysieren</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 text-md-end">
+                                    <button type="button" class="btn btn-sm btn-outline-info" onclick="setRoadPreset('driveway')">
+                                        <i class="fas fa-road me-1"></i>Straßen-Preset
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setRoadPreset('wide')">Breit</button>
+                                </div>
+                            </div>
+                            <div class="small text-secondary mt-2">
+                                Tipp: Wenn das Bild links/rechts schwarze Ränder hat, wird die Zeichenfläche jetzt automatisch nur über dem echten Bild ausgerichtet. Dadurch stimmen die Koordinaten sauber mit dem RTSP-Stream überein.
+                            </div>
+                        </div>
                     </div>
                     
                     <!-- Preview Container -->
@@ -265,8 +298,23 @@
                         </div>
                     </div>
                     
+                    <!-- Polygon-Punkte -->
+                    <div class="card bg-dark mb-3" id="polygonEditorCard" style="display: none;">
+                        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                            <strong>Polygon-Punkte der Straße</strong>
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-success" onclick="addPolygonPoint()"><i class="fas fa-plus"></i> Punkt</button>
+                                <button type="button" class="btn btn-outline-danger" onclick="removePolygonPoint()"><i class="fas fa-minus"></i> Punkt</button>
+                            </div>
+                        </div>
+                        <div class="card-body py-3">
+                            <div id="polygonPointsEditor" class="row g-2"></div>
+                            <small class="text-secondary d-block mt-2">Du kannst die Punkte direkt im Bild ziehen oder hier die Pixelwerte fein einstellen.</small>
+                        </div>
+                    </div>
+
                     <!-- Koordinaten-Eingabe -->
-                    <div class="card bg-dark mb-3">
+                    <div class="card bg-dark mb-3" id="rectangleEditorCard">
                         <div class="card-header py-2">
                             <strong>Bereichs-Koordinaten (in Stream-Pixeln)</strong>
                         </div>
@@ -314,6 +362,9 @@
                         </button>
                         <button type="button" class="btn btn-outline-info" onclick="setLowerHalf()">
                             <i class="fas fa-arrow-down me-2"></i>Untere Hälfte
+                        </button>
+                        <button type="button" class="btn btn-outline-light" onclick="setRoadPreset('driveway')">
+                            <i class="fas fa-road me-2"></i>Straße einpassen
                         </button>
                         <button type="button" class="btn btn-success" onclick="saveAreaSettings()">
                             <i class="fas fa-save me-2"></i>Bereich speichern
@@ -577,9 +628,14 @@ let streamHeight = 720;
 let displayWidth = 0;
 let displayHeight = 0;
 let isDrawing = false;
+let dragMode = null;
+let activePointIndex = -1;
 let startX = 0;
 let startY = 0;
 let currentArea = { x: 0, y: 0, width: 1280, height: 720 };
+let areaMode = 'rectangle';
+let maskOutsideArea = true;
+let polygonPoints = [];
 let isAreaEnabled = false;
 let previewLoaded = false;
 let statusInterval = null;
@@ -661,8 +717,12 @@ function loadConfiguration() {
             // Analysis Area
             const areaConfig = rtspConfig.analysis_area || {};
             isAreaEnabled = areaConfig.enabled || false;
+            areaMode = areaConfig.mode || 'rectangle';
+            maskOutsideArea = areaConfig.mask_outside !== false;
             
             document.getElementById('enableAreaSelection').checked = isAreaEnabled;
+            document.getElementById('areaMode').value = areaMode;
+            document.getElementById('maskOutsideArea').checked = maskOutsideArea;
             
             if (areaConfig.area) {
                 currentArea = {
@@ -675,8 +735,18 @@ function loadConfiguration() {
                 currentArea = { x: 0, y: 0, width: streamWidth, height: streamHeight };
             }
             
+            if (Array.isArray(areaConfig.polygon) && areaConfig.polygon.length >= 3) {
+                polygonPoints = areaConfig.polygon.map(p => ({
+                    x: clamp(parseInt(p.x) || 0, 0, streamWidth - 1),
+                    y: clamp(parseInt(p.y) || 0, 0, streamHeight - 1)
+                }));
+            } else {
+                polygonPoints = defaultRoadPolygon();
+            }
+            
             updateAreaUI();
             updateAreaInputs();
+            renderPolygonEditor();
             updateAreaInfo();
         })
         .catch(error => {
@@ -704,6 +774,22 @@ function setupEventListeners() {
         }
     });
     
+    // Bereichsmodus
+    document.getElementById('areaMode').addEventListener('change', function() {
+        areaMode = this.value || 'rectangle';
+        if (areaMode === 'polygon' && polygonPoints.length < 3) {
+            polygonPoints = defaultRoadPolygon();
+        }
+        updateAreaUI();
+        renderPolygonEditor();
+        updateAreaInfo();
+        drawSelection();
+    });
+
+    document.getElementById('maskOutsideArea').addEventListener('change', function() {
+        maskOutsideArea = this.checked;
+    });
+
     // Area Input Felder
     ['areaX', 'areaY', 'areaWidth', 'areaHeight'].forEach(id => {
         document.getElementById(id).addEventListener('input', function() {
@@ -718,7 +804,7 @@ function setupEventListeners() {
     
     // Canvas Events
     const canvas = document.getElementById('selectionCanvas');
-    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousedown', startInteraction);
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mouseup', endDrawing);
     canvas.addEventListener('mouseleave', endDrawing);
@@ -754,11 +840,7 @@ function setupEventListeners() {
 }
 
 function initCanvas() {
-    const canvas = document.getElementById('selectionCanvas');
-    const container = document.getElementById('previewContainer');
-    
-    canvas.width = container.clientWidth;
-    canvas.height = container.clientHeight;
+    updateCanvasSize();
 }
 
 // ============================================
@@ -773,8 +855,17 @@ function applyResolutionPreset() {
         document.getElementById('streamWidth').value = width;
         document.getElementById('streamHeight').value = height;
         
+        const oldWidth = streamWidth || width;
+        const oldHeight = streamHeight || height;
         streamWidth = width;
         streamHeight = height;
+        if (polygonPoints.length) {
+            polygonPoints = polygonPoints.map(pt => ({
+                x: clamp(Math.round(pt.x * streamWidth / oldWidth), 0, streamWidth - 1),
+                y: clamp(Math.round(pt.y * streamHeight / oldHeight), 0, streamHeight - 1)
+            }));
+            renderPolygonEditor();
+        }
         
         // Area an neue Auflösung anpassen
         if (currentArea.x + currentArea.width > streamWidth) {
@@ -932,18 +1023,21 @@ function loadPreviewImage() {
 function updateCanvasSize() {
     const canvas = document.getElementById('selectionCanvas');
     const container = document.getElementById('previewContainer');
-    
     const containerRect = container.getBoundingClientRect();
-    
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    
+
+    const scale = Math.min(containerRect.width / streamWidth, containerRect.height / streamHeight);
+    displayWidth = Math.round(streamWidth * scale);
+    displayHeight = Math.round(streamHeight * scale);
+    const left = Math.round((containerRect.width - displayWidth) / 2);
+    const top = Math.round((containerRect.height - displayHeight) / 2);
+
+    canvas.style.left = left + 'px';
+    canvas.style.top = top + 'px';
+    canvas.style.width = displayWidth + 'px';
+    canvas.style.height = displayHeight + 'px';
     canvas.width = streamWidth;
     canvas.height = streamHeight;
-    
-    displayWidth = containerRect.width;
-    displayHeight = containerRect.height;
-    
+
     updateResolutionInfo();
 }
 
@@ -961,61 +1055,113 @@ function updateResolutionInfo() {
 // ZEICHENFUNKTIONEN
 // ============================================
 
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function defaultRoadPolygon() {
+    return [
+        { x: Math.round(streamWidth * 0.18), y: Math.round(streamHeight * 0.26) },
+        { x: Math.round(streamWidth * 0.72), y: Math.round(streamHeight * 0.25) },
+        { x: Math.round(streamWidth * 0.78), y: Math.round(streamHeight * 0.98) },
+        { x: Math.round(streamWidth * 0.10), y: Math.round(streamHeight * 0.98) }
+    ];
+}
+
 function getCanvasCoordinates(e) {
     const canvas = document.getElementById('selectionCanvas');
     const rect = canvas.getBoundingClientRect();
-    
-    const scaleX = streamWidth / rect.width;
-    const scaleY = streamHeight / rect.height;
-    
+    const scaleX = streamWidth / Math.max(1, rect.width);
+    const scaleY = streamHeight / Math.max(1, rect.height);
     let clientX, clientY;
-    
-    if (e.touches) {
+
+    if (e.touches && e.touches.length) {
         clientX = e.touches[0].clientX;
         clientY = e.touches[0].clientY;
     } else {
         clientX = e.clientX;
         clientY = e.clientY;
     }
-    
+
     return {
-        x: Math.round((clientX - rect.left) * scaleX),
-        y: Math.round((clientY - rect.top) * scaleY)
+        x: clamp(Math.round((clientX - rect.left) * scaleX), 0, streamWidth - 1),
+        y: clamp(Math.round((clientY - rect.top) * scaleY), 0, streamHeight - 1)
     };
 }
 
-function startDrawing(e) {
+function getNearestPolygonPoint(coords) {
+    let nearest = -1;
+    let nearestDist = Infinity;
+    const hitRadius = Math.max(22, Math.round(streamWidth * 0.018));
+    polygonPoints.forEach((pt, idx) => {
+        const dist = Math.hypot(pt.x - coords.x, pt.y - coords.y);
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = idx;
+        }
+    });
+    return nearestDist <= hitRadius ? nearest : -1;
+}
+
+function startInteraction(e) {
     if (!isAreaEnabled) return;
-    
     e.preventDefault();
-    isDrawing = true;
-    
     const coords = getCanvasCoordinates(e);
     startX = coords.x;
     startY = coords.y;
+    isDrawing = true;
+
+    if (areaMode === 'polygon') {
+        const nearest = getNearestPolygonPoint(coords);
+        if (nearest >= 0) {
+            dragMode = 'polygon-point';
+            activePointIndex = nearest;
+        } else {
+            dragMode = 'polygon-pan';
+            activePointIndex = -1;
+        }
+    } else {
+        dragMode = 'rectangle-draw';
+    }
 }
 
 function handleMouseMove(e) {
     if (!isDrawing || !isAreaEnabled) return;
-    
     e.preventDefault();
-    
     const coords = getCanvasCoordinates(e);
-    updateSelectionFromDrag(coords.x, coords.y);
+
+    if (areaMode === 'polygon') {
+        if (dragMode === 'polygon-point' && activePointIndex >= 0) {
+            polygonPoints[activePointIndex] = { x: coords.x, y: coords.y };
+            renderPolygonEditor();
+        } else if (dragMode === 'polygon-pan') {
+            const dx = coords.x - startX;
+            const dy = coords.y - startY;
+            polygonPoints = polygonPoints.map(pt => ({
+                x: clamp(pt.x + dx, 0, streamWidth - 1),
+                y: clamp(pt.y + dy, 0, streamHeight - 1)
+            }));
+            startX = coords.x;
+            startY = coords.y;
+            renderPolygonEditor();
+        }
+        updateAreaInfo();
+        drawSelection();
+    } else {
+        updateSelectionFromDrag(coords.x, coords.y);
+    }
 }
 
 function handleTouchStart(e) {
     if (!isAreaEnabled) return;
     e.preventDefault();
-    startDrawing(e);
+    startInteraction(e);
 }
 
 function handleTouchMove(e) {
     if (!isDrawing || !isAreaEnabled) return;
     e.preventDefault();
-    
-    const coords = getCanvasCoordinates(e);
-    updateSelectionFromDrag(coords.x, coords.y);
+    handleMouseMove(e);
 }
 
 function updateSelectionFromDrag(currentX, currentY) {
@@ -1023,73 +1169,138 @@ function updateSelectionFromDrag(currentX, currentY) {
     let y = Math.min(startY, currentY);
     let width = Math.abs(currentX - startX);
     let height = Math.abs(currentY - startY);
-    
+
     width = Math.max(width, 50);
     height = Math.max(height, 50);
-    
+
     x = Math.max(0, Math.min(x, streamWidth - width));
     y = Math.max(0, Math.min(y, streamHeight - height));
     width = Math.min(width, streamWidth - x);
     height = Math.min(height, streamHeight - y);
-    
+
     currentArea = { x, y, width, height };
-    
+
     updateAreaInputs();
     updateAreaInfo();
     drawSelection();
 }
 
 function endDrawing() {
-    if (isDrawing) {
-        isDrawing = false;
-    }
+    isDrawing = false;
+    dragMode = null;
+    activePointIndex = -1;
 }
 
 function drawSelection() {
     const canvas = document.getElementById('selectionCanvas');
     const ctx = canvas.getContext('2d');
-    
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
     if (!isAreaEnabled) return;
-    
+
+    if (areaMode === 'polygon') {
+        drawPolygonSelection(ctx, canvas);
+    } else {
+        drawRectangleSelection(ctx, canvas);
+    }
+}
+
+function drawRectangleSelection(ctx, canvas) {
     const { x, y, width, height } = currentArea;
-    
-    // Overlay außerhalb
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
     ctx.fillRect(0, 0, canvas.width, y);
     ctx.fillRect(0, y + height, canvas.width, canvas.height - y - height);
     ctx.fillRect(0, y, x, height);
     ctx.fillRect(x + width, y, canvas.width - x - width, height);
-    
-    // Rahmen
-    ctx.strokeStyle = '#00ff00';
-    ctx.lineWidth = 3;
+
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 4;
     ctx.strokeRect(x, y, width, height);
-    
-    // Eckpunkte
-    const cornerSize = 15;
-    ctx.fillStyle = '#00ff00';
-    
-    ctx.fillRect(x - 2, y - 2, cornerSize, 4);
-    ctx.fillRect(x - 2, y - 2, 4, cornerSize);
-    ctx.fillRect(x + width - cornerSize + 2, y - 2, cornerSize, 4);
-    ctx.fillRect(x + width - 2, y - 2, 4, cornerSize);
-    ctx.fillRect(x - 2, y + height - 2, cornerSize, 4);
-    ctx.fillRect(x - 2, y + height - cornerSize + 2, 4, cornerSize);
-    ctx.fillRect(x + width - cornerSize + 2, y + height - 2, cornerSize, 4);
-    ctx.fillRect(x + width - 2, y + height - cornerSize + 2, 4, cornerSize);
-    
-    // Info-Text
+
+    const cornerSize = 18;
+    ctx.fillStyle = '#22c55e';
+    ctx.fillRect(x - 2, y - 2, cornerSize, 5);
+    ctx.fillRect(x - 2, y - 2, 5, cornerSize);
+    ctx.fillRect(x + width - cornerSize + 2, y - 2, cornerSize, 5);
+    ctx.fillRect(x + width - 2, y - 2, 5, cornerSize);
+    ctx.fillRect(x - 2, y + height - 2, cornerSize, 5);
+    ctx.fillRect(x - 2, y + height - cornerSize + 2, 5, cornerSize);
+    ctx.fillRect(x + width - cornerSize + 2, y + height - 2, cornerSize, 5);
+    ctx.fillRect(x + width - 2, y + height - cornerSize + 2, 5, cornerSize);
+
+    drawOverlayLabel(ctx, x + 10, y + 30, `${width} × ${height} px`);
+}
+
+function drawPolygonSelection(ctx, canvas) {
+    if (polygonPoints.length < 3) return;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.64)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath();
+    polygonPoints.forEach((pt, idx) => idx === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y));
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    ctx.beginPath();
+    polygonPoints.forEach((pt, idx) => idx === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(34, 211, 238, 0.12)';
+    ctx.fill();
+    ctx.strokeStyle = '#22d3ee';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    polygonPoints.forEach((pt, idx) => {
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, idx === activePointIndex ? 12 : 9, 0, Math.PI * 2);
+        ctx.fillStyle = idx === activePointIndex ? '#facc15' : '#22d3ee';
+        ctx.fill();
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 12px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(idx + 1), pt.x, pt.y);
+    });
+
+    const bbox = getPolygonBoundingBox();
+    drawOverlayLabel(ctx, bbox.x + 10, bbox.y + 30, `Straßenbereich: ${Math.round(polygonArea())} px²`);
+}
+
+function drawOverlayLabel(ctx, x, y, text) {
     ctx.font = 'bold 16px Arial';
-    const text = `${width} × ${height} px`;
     const textWidth = ctx.measureText(text).width;
-    
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(x + 5, y + 5, textWidth + 10, 24);
-    
-    ctx.fillStyle = '#00ff00';
-    ctx.fillText(text, x + 10, y + 22);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.fillRect(x - 5, y - 22, textWidth + 16, 30);
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillText(text, x + 3, y);
+}
+
+function getPolygonBoundingBox() {
+    if (polygonPoints.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+    const xs = polygonPoints.map(p => p.x);
+    const ys = polygonPoints.map(p => p.y);
+    const minX = Math.min(...xs); const maxX = Math.max(...xs);
+    const minY = Math.min(...ys); const maxY = Math.max(...ys);
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function polygonArea() {
+    if (polygonPoints.length < 3) return 0;
+    let sum = 0;
+    for (let i = 0; i < polygonPoints.length; i++) {
+        const a = polygonPoints[i];
+        const b = polygonPoints[(i + 1) % polygonPoints.length];
+        sum += (a.x * b.y) - (b.x * a.y);
+    }
+    return Math.abs(sum / 2);
 }
 
 // ============================================
@@ -1099,15 +1310,28 @@ function drawSelection() {
 function updateAreaUI() {
     const controls = document.getElementById('areaSelectionControls');
     const badge = document.getElementById('areaStatusBadge');
-    
+    const rectangleCard = document.getElementById('rectangleEditorCard');
+    const polygonCard = document.getElementById('polygonEditorCard');
+    const modeBadge = document.getElementById('areaModeBadge');
+
+    document.getElementById('areaMode').value = areaMode;
+    document.getElementById('maskOutsideArea').checked = maskOutsideArea;
+
     if (isAreaEnabled) {
         controls.style.display = 'block';
-        badge.textContent = 'Aktiv';
+        badge.textContent = areaMode === 'polygon' ? 'Straßenbereich aktiv' : 'Aktiv';
         badge.className = 'badge bg-success';
     } else {
         controls.style.display = 'none';
         badge.textContent = 'Deaktiviert';
         badge.className = 'badge bg-secondary';
+    }
+
+    if (rectangleCard) rectangleCard.style.display = areaMode === 'polygon' ? 'none' : 'block';
+    if (polygonCard) polygonCard.style.display = areaMode === 'polygon' ? 'block' : 'none';
+    if (modeBadge) {
+        modeBadge.textContent = areaMode === 'polygon' ? 'Polygon / Straße' : 'Rechteck';
+        modeBadge.className = areaMode === 'polygon' ? 'badge bg-info text-dark' : 'badge bg-secondary';
     }
 }
 
@@ -1123,31 +1347,98 @@ function updateAreaFromInputs() {
     currentArea.y = parseInt(document.getElementById('areaY').value) || 0;
     currentArea.width = parseInt(document.getElementById('areaWidth').value) || 100;
     currentArea.height = parseInt(document.getElementById('areaHeight').value) || 100;
-    
+
     currentArea.x = Math.max(0, Math.min(currentArea.x, streamWidth - 50));
     currentArea.y = Math.max(0, Math.min(currentArea.y, streamHeight - 50));
     currentArea.width = Math.max(50, Math.min(currentArea.width, streamWidth - currentArea.x));
     currentArea.height = Math.max(50, Math.min(currentArea.height, streamHeight - currentArea.y));
-    
+
     updateAreaInfo();
     drawSelection();
 }
 
+function renderPolygonEditor() {
+    const editor = document.getElementById('polygonPointsEditor');
+    if (!editor) return;
+    editor.innerHTML = '';
+    polygonPoints.forEach((pt, idx) => {
+        const col = document.createElement('div');
+        col.className = 'col-12 col-md-6';
+        col.innerHTML = `
+            <div class="input-group input-group-sm">
+                <span class="input-group-text">P${idx + 1}</span>
+                <input type="number" class="form-control" min="0" max="${streamWidth}" value="${Math.round(pt.x)}" onchange="updatePolygonPoint(${idx}, 'x', this.value)">
+                <span class="input-group-text">x</span>
+                <input type="number" class="form-control" min="0" max="${streamHeight}" value="${Math.round(pt.y)}" onchange="updatePolygonPoint(${idx}, 'y', this.value)">
+                <span class="input-group-text">y</span>
+            </div>`;
+        editor.appendChild(col);
+    });
+}
+
+function updatePolygonPoint(index, axis, value) {
+    if (!polygonPoints[index]) return;
+    const max = axis === 'x' ? streamWidth - 1 : streamHeight - 1;
+    polygonPoints[index][axis] = clamp(parseInt(value) || 0, 0, max);
+    updateAreaInfo();
+    drawSelection();
+}
+
+function addPolygonPoint() {
+    if (polygonPoints.length === 0) polygonPoints = defaultRoadPolygon();
+    const bbox = getPolygonBoundingBox();
+    polygonPoints.push({
+        x: clamp(Math.round(bbox.x + bbox.width / 2), 0, streamWidth - 1),
+        y: clamp(Math.round(bbox.y + bbox.height / 2), 0, streamHeight - 1)
+    });
+    renderPolygonEditor();
+    updateAreaInfo();
+    drawSelection();
+}
+
+function removePolygonPoint() {
+    if (polygonPoints.length > 3) {
+        polygonPoints.pop();
+        renderPolygonEditor();
+        updateAreaInfo();
+        drawSelection();
+    } else {
+        showToast('Hinweis', 'Ein Polygon benötigt mindestens 3 Punkte.', 'warning');
+    }
+}
+
 function updateAreaInfo() {
-    const { x, y, width, height } = currentArea;
-    const pixels = width * height;
+    let x, y, width, height, pixels;
+    if (areaMode === 'polygon' && polygonPoints.length >= 3) {
+        const bbox = getPolygonBoundingBox();
+        x = bbox.x; y = bbox.y; width = bbox.width; height = bbox.height;
+        pixels = Math.round(polygonArea());
+    } else {
+        ({ x, y, width, height } = currentArea);
+        pixels = width * height;
+    }
     const totalPixels = streamWidth * streamHeight;
     const percent = totalPixels > 0 ? Math.round((pixels / totalPixels) * 100) : 0;
-    
-    document.getElementById('infoPosition').textContent = `${x}, ${y}`;
-    document.getElementById('infoSize').textContent = `${width} × ${height}`;
+
+    document.getElementById('infoPosition').textContent = `${Math.round(x)}, ${Math.round(y)}`;
+    document.getElementById('infoSize').textContent = `${Math.round(width)} × ${Math.round(height)}`;
     document.getElementById('infoPixels').textContent = pixels.toLocaleString() + ' px';
     document.getElementById('infoPercent').textContent = percent + '%';
 }
 
 function resetAreaToFull() {
-    currentArea = { x: 0, y: 0, width: streamWidth, height: streamHeight };
-    updateAreaInputs();
+    if (areaMode === 'polygon') {
+        polygonPoints = [
+            { x: 0, y: 0 },
+            { x: streamWidth - 1, y: 0 },
+            { x: streamWidth - 1, y: streamHeight - 1 },
+            { x: 0, y: streamHeight - 1 }
+        ];
+        renderPolygonEditor();
+    } else {
+        currentArea = { x: 0, y: 0, width: streamWidth, height: streamHeight };
+        updateAreaInputs();
+    }
     updateAreaInfo();
     drawSelection();
 }
@@ -1161,6 +1452,15 @@ function centerArea() {
         width: width,
         height: height
     };
+    if (areaMode === 'polygon') {
+        polygonPoints = [
+            { x: currentArea.x, y: currentArea.y },
+            { x: currentArea.x + currentArea.width, y: currentArea.y },
+            { x: currentArea.x + currentArea.width, y: currentArea.y + currentArea.height },
+            { x: currentArea.x, y: currentArea.y + currentArea.height }
+        ];
+        renderPolygonEditor();
+    }
     updateAreaInputs();
     updateAreaInfo();
     drawSelection();
@@ -1173,7 +1473,34 @@ function setLowerHalf() {
         width: streamWidth,
         height: Math.round(streamHeight / 2)
     };
+    if (areaMode === 'polygon') {
+        polygonPoints = [
+            { x: 0, y: currentArea.y },
+            { x: streamWidth - 1, y: currentArea.y },
+            { x: streamWidth - 1, y: streamHeight - 1 },
+            { x: 0, y: streamHeight - 1 }
+        ];
+        renderPolygonEditor();
+    }
     updateAreaInputs();
+    updateAreaInfo();
+    drawSelection();
+}
+
+function setRoadPreset(type) {
+    areaMode = 'polygon';
+    if (type === 'wide') {
+        polygonPoints = [
+            { x: Math.round(streamWidth * 0.12), y: Math.round(streamHeight * 0.18) },
+            { x: Math.round(streamWidth * 0.82), y: Math.round(streamHeight * 0.18) },
+            { x: Math.round(streamWidth * 0.95), y: Math.round(streamHeight * 0.98) },
+            { x: Math.round(streamWidth * 0.03), y: Math.round(streamHeight * 0.98) }
+        ];
+    } else {
+        polygonPoints = defaultRoadPolygon();
+    }
+    updateAreaUI();
+    renderPolygonEditor();
     updateAreaInfo();
     drawSelection();
 }
@@ -1227,12 +1554,15 @@ function saveAreaSettings() {
     const data = {
         analysis_area: {
             enabled: isAreaEnabled,
+            mode: areaMode,
+            mask_outside: maskOutsideArea,
             area: {
                 x: Math.round(currentArea.x),
                 y: Math.round(currentArea.y),
                 width: Math.round(currentArea.width),
                 height: Math.round(currentArea.height)
-            }
+            },
+            polygon: polygonPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }))
         }
     };
     

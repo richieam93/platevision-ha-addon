@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.5 ProTraffic People Image History & Recount Guard
+Version 0.8.6 ProTraffic Road ROI Calibration
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -332,12 +332,20 @@ class ConfigManager:
             },
             'analysis_area': {
                 'enabled': False,
+                'mode': 'rectangle',
+                'mask_outside': True,
                 'area': {
                     'x': 0,
                     'y': 0,
                     'width': 1280,
                     'height': 720
-                }
+                },
+                'polygon': [
+                    {'x': 230, 'y': 150},
+                    {'x': 900, 'y': 150},
+                    {'x': 960, 'y': 720},
+                    {'x': 120, 'y': 720}
+                ]
             }
         },
         'detection': {
@@ -3033,16 +3041,47 @@ def stream_feed():
 
 @app.route('/api/stream/snapshot')
 def api_stream_snapshot():
-    """Einzelnes Snapshot vom Stream"""
+    """Einzelnes Snapshot vom Stream oder ein kalibrierbares Fallback-Bild."""
     frame = stream_manager.get_current_frame()
     if frame is not None:
         _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
         return Response(buffer.tobytes(), mimetype='image/jpeg')
-    
-    # Placeholder
-    placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-    cv2.putText(placeholder, "Kein Stream", (200, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-    _, buffer = cv2.imencode('.jpg', placeholder)
+
+    # Fallback in konfigurierter Stream-Auflösung, damit ROI-Linie/Polygon trotzdem sauber passt.
+    try:
+        res = config_manager.get('rtsp', 'resolution') or {}
+        width = int(res.get('width') or 1280)
+        height = int(res.get('height') or 720)
+    except Exception:
+        width, height = 1280, 720
+    width = max(320, min(width, 3840))
+    height = max(240, min(height, 2160))
+
+    placeholder = np.zeros((height, width, 3), dtype=np.uint8)
+    placeholder[:] = (24, 31, 46)
+    grid_color = (55, 65, 81)
+    for gx in range(0, width, max(80, width // 16)):
+        cv2.line(placeholder, (gx, 0), (gx, height), grid_color, 1)
+    for gy in range(0, height, max(60, height // 12)):
+        cv2.line(placeholder, (0, gy), (width, gy), grid_color, 1)
+
+    road = np.array([
+        [int(width * 0.28), int(height * 0.20)],
+        [int(width * 0.70), int(height * 0.20)],
+        [int(width * 0.92), height],
+        [int(width * 0.08), height],
+    ], dtype=np.int32)
+    overlay = placeholder.copy()
+    cv2.fillPoly(overlay, [road], (54, 63, 80))
+    placeholder = cv2.addWeighted(overlay, 0.55, placeholder, 0.45, 0)
+    cv2.polylines(placeholder, [road], True, (148, 163, 184), 2)
+
+    cv2.putText(placeholder, "RTSP nicht erreichbar - Kalibrierungsbild", (max(20, width // 18), max(50, height // 12)),
+                cv2.FONT_HERSHEY_SIMPLEX, max(0.7, width / 1900), (226, 232, 240), 2)
+    cv2.putText(placeholder, "Analysebereich/Strasse kann trotzdem eingezeichnet werden", (max(20, width // 18), max(90, height // 12 + 42)),
+                cv2.FONT_HERSHEY_SIMPLEX, max(0.55, width / 2500), (34, 211, 238), 2)
+
+    _, buffer = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 90])
     return Response(buffer.tobytes(), mimetype='image/jpeg')
 
 
