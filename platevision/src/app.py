@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.9 ProTraffic ROI Geometry Sync
+Version 0.8.10 ProTraffic People ROI/Line Sync
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -513,7 +513,7 @@ class ConfigManager:
             'history_enabled': True,
             'show_on_live': True,
             'draw_boxes': True,
-            'confidence_threshold': 0.45,
+            'confidence_threshold': 0.55,
             'model_mode': 'coco_person',
             'model_path': 'models/best.pt',
             'selected_model_file': 'models/best.pt',
@@ -534,9 +534,14 @@ class ConfigManager:
             'image_size': 640,
             'nms_iou_threshold': 0.45,
             'min_area_percent': 0.05,
-            'max_area_percent': 85.0,
-            'min_aspect_ratio': 0.2,
-            'max_aspect_ratio': 2.5,
+            'max_area_percent': 45.0,
+            'roi_filter_enabled': True,
+            'roi_filter_mode': 'foot_and_center',
+            'line_relative_to_roi': True,
+            'reject_partial_outside_roi': True,
+            'min_roi_overlap_percent': 25,
+            'min_aspect_ratio': 0.25,
+            'max_aspect_ratio': 1.2,
             'zone_enabled': False,
             'zone': {'x': 0, 'y': 0, 'width': 100, 'height': 100, 'unit': 'percent'},
             'tracker_enabled': True,
@@ -2530,7 +2535,7 @@ class LicensePlateDetector:
             })
         return detections
 
-    def _detect_people(self, frame, annotated=None):
+    def _detect_people(self, frame, annotated=None, runtime_roi_polygon=None):
         cfg = self._person_config()
         if not cfg.get('enabled'):
             return []
@@ -2538,6 +2543,39 @@ class LicensePlateDetector:
         if model is None:
             return []
         frame_h, frame_w = frame.shape[:2]
+
+        roi_contour = None
+        if runtime_roi_polygon and cfg.get('roi_filter_enabled') is not False:
+            try:
+                roi_pts = []
+                for pt in runtime_roi_polygon:
+                    if isinstance(pt, dict):
+                        roi_pts.append([float(pt.get('x', 0)), float(pt.get('y', 0))])
+                    else:
+                        roi_pts.append([float(pt[0]), float(pt[1])])
+                if len(roi_pts) >= 3:
+                    roi_contour = np.array(roi_pts, dtype=np.float32)
+            except Exception:
+                roi_contour = None
+
+        def person_bbox_allowed_by_runtime_roi(x1, y1, x2, y2):
+            if roi_contour is None:
+                return True
+            mode = str(cfg.get('roi_filter_mode') or 'foot_and_center').lower()
+            cx = (x1 + x2) / 2.0
+            cy = (y1 + y2) / 2.0
+            foot_x = cx
+            foot_y = y2
+            center_ok = cv2.pointPolygonTest(roi_contour, (float(cx), float(cy)), False) >= 0
+            foot_ok = cv2.pointPolygonTest(roi_contour, (float(foot_x), float(foot_y)), False) >= 0
+            if mode == 'center':
+                return center_ok
+            if mode == 'foot':
+                return foot_ok
+            if mode == 'center_or_foot':
+                return center_ok or foot_ok
+            return center_ok and foot_ok
+
         confidence = float(cfg.get('confidence_threshold') or 0.45)
         max_persons = int(cfg.get('max_persons_per_frame') or 0)
         min_w = int(cfg.get('min_person_width') or 0)
@@ -2593,6 +2631,8 @@ class LicensePlateDetector:
                     zone_match = (zx <= cx_val <= zx + zw and zy <= cy_val <= zy + zh)
                 if not zone_match:
                     continue
+                if not person_bbox_allowed_by_runtime_roi(x1, y1, x2, y2):
+                    continue
                 people.append({
                     'bbox': [x1, y1, x2, y2],
                     'center_x': round(cx_val, 2),
@@ -2638,7 +2678,7 @@ class LicensePlateDetector:
                 cv2.putText(annotated, label, (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
         return people
 
-    def process_frame(self, frame, apply_analysis_area=False):
+    def process_frame(self, frame, apply_analysis_area=False, runtime_roi_polygon=None):
         """Verarbeitet einen einzelnen Frame"""
         if not self.models_loaded:
             self.load_models()
@@ -2868,7 +2908,7 @@ class LicensePlateDetector:
                         result['detections'].append(detection_info)
                         logger.info(f"Erkannt: {plate_text} | Konfidenz: {ocr_confidence:.2f}")
             
-            result['people'] = self._detect_people(frame, annotated)
+            result['people'] = self._detect_people(frame, annotated, runtime_roi_polygon=runtime_roi_polygon)
             result['annotated_frame'] = annotated
             
         except Exception as e:
@@ -4232,6 +4272,13 @@ def _people_cfg_from_preview_args(args):
         cfg['count_strategy'] = str(args.get('count_strategy') or 'line_crossing')
     if 'confidence' in args:
         cfg['confidence_threshold'] = max(0, min(1, as_float(args.get('confidence'), 0.45)))
+    if 'roi_filter_enabled' in args:
+        cfg['roi_filter_enabled'] = as_bool(args.get('roi_filter_enabled'), True)
+    if 'roi_filter_mode' in args:
+        mode = str(args.get('roi_filter_mode') or 'foot_and_center')
+        cfg['roi_filter_mode'] = mode if mode in ('foot_and_center', 'foot', 'center', 'center_or_foot') else 'foot_and_center'
+    if 'line_relative_to_roi' in args:
+        cfg['line_relative_to_roi'] = as_bool(args.get('line_relative_to_roi'), True)
     if 'zone_enabled' in args:
         cfg['zone_enabled'] = as_bool(args.get('zone_enabled'))
     zone = {}
@@ -4273,6 +4320,83 @@ def _create_people_preview_fallback(width=1280, height=720, message=None):
     return frame
 
 
+
+def _scaled_road_roi_for_frame(width, height):
+    """Return the unified RTSP road ROI scaled to the given frame size."""
+    try:
+        cfg = config_manager.get('rtsp', 'analysis_area') or {}
+        if not cfg.get('enabled'):
+            return {'enabled': False, 'polygon': [], 'x': 0, 'y': 0, 'width': int(width), 'height': int(height)}
+
+        def safe_int(value, fallback):
+            try:
+                return int(round(float(value)))
+            except Exception:
+                return fallback
+
+        coord_w = max(1, safe_int(cfg.get('coordinate_width'), width))
+        coord_h = max(1, safe_int(cfg.get('coordinate_height'), height))
+        sx = float(width) / coord_w
+        sy = float(height) / coord_h
+        points = []
+        for point in (cfg.get('polygon') or []):
+            try:
+                if isinstance(point, dict):
+                    px, py = point.get('x', 0), point.get('y', 0)
+                else:
+                    px, py = point[0], point[1]
+                points.append([
+                    max(0, min(int(round(float(px) * sx)), int(width) - 1)),
+                    max(0, min(int(round(float(py) * sy)), int(height) - 1)),
+                ])
+            except Exception:
+                continue
+        if len(points) < 3:
+            area = cfg.get('area') or {}
+            x = max(0, min(int(round(float(area.get('x', 0)) * sx)), int(width) - 1))
+            y = max(0, min(int(round(float(area.get('y', 0)) * sy)), int(height) - 1))
+            w = max(10, min(int(round(float(area.get('width', width)) * sx)), int(width) - x))
+            h = max(10, min(int(round(float(area.get('height', height)) * sy)), int(height) - y))
+            points = [[x, y], [min(int(width)-1, x+w), y], [min(int(width)-1, x+w), min(int(height)-1, y+h)], [x, min(int(height)-1, y+h)]]
+        xs = [p[0] for p in points]; ys = [p[1] for p in points]
+        x1, y1 = min(xs), min(ys)
+        x2, y2 = max(xs), max(ys)
+        return {'enabled': True, 'polygon': points, 'x': x1, 'y': y1, 'width': max(10, x2-x1), 'height': max(10, y2-y1), 'coordinate_width': coord_w, 'coordinate_height': coord_h}
+    except Exception:
+        return {'enabled': False, 'polygon': [], 'x': 0, 'y': 0, 'width': int(width), 'height': int(height)}
+
+
+def _draw_unified_road_roi_on_image(img, area_info):
+    """Draw the same road ROI that is used by the live stream."""
+    if not area_info or not area_info.get('enabled') or len(area_info.get('polygon') or []) < 3:
+        return img
+    pts = np.array(area_info['polygon'], dtype=np.int32)
+    overlay = img.copy()
+    cv2.fillPoly(overlay, [pts], (0, 255, 255))
+    img[:] = cv2.addWeighted(overlay, 0.14, img, 0.86, 0)
+    cv2.polylines(img, [pts], True, (0, 255, 255), 3)
+    label_x = max(8, int(min(p[0] for p in area_info['polygon'])) + 8)
+    label_y = max(28, int(min(p[1] for p in area_info['polygon'])) + 28)
+    cv2.putText(img, 'Analysebereich Strasse', (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 255, 255), 2)
+    return img
+
+
+def _people_line_bounds_for_area(width, height, cfg, area_info=None):
+    """Return the count line coordinates using the same basis as live processing."""
+    axis = str(cfg.get('movement_axis') or 'y').lower()
+    line_percent = max(1, min(99, float(cfg.get('virtual_line_position_percent') or 50)))
+    use_roi = cfg.get('line_relative_to_roi') is not False and area_info and area_info.get('enabled')
+    if use_roi:
+        ax = int(area_info.get('x') or 0); ay = int(area_info.get('y') or 0)
+        aw = int(area_info.get('width') or width); ah = int(area_info.get('height') or height)
+    else:
+        ax, ay, aw, ah = 0, 0, int(width), int(height)
+    if axis == 'x':
+        x = int(ax + aw * line_percent / 100.0)
+        return {'axis': 'x', 'x': x, 'y1': ay, 'y2': min(int(height)-1, ay + ah), 'line_percent': line_percent, 'relative_to_roi': use_roi}
+    y = int(ay + ah * line_percent / 100.0)
+    return {'axis': 'y', 'y': y, 'x1': ax, 'x2': min(int(width)-1, ax + aw), 'line_percent': line_percent, 'relative_to_roi': use_roi}
+
 def _draw_people_calibration_overlay(frame, cfg=None, source_label='Live/RTSP'):
     """Draw line/zone/counting settings on a frame for settings and test previews."""
     if frame is None:
@@ -4280,6 +4404,8 @@ def _draw_people_calibration_overlay(frame, cfg=None, source_label='Live/RTSP'):
     cfg = cfg or (config_manager.get('people') or {})
     img = frame.copy()
     h, w = img.shape[:2]
+    road_roi = _scaled_road_roi_for_frame(w, h)
+    img = _draw_unified_road_roi_on_image(img, road_roi)
     overlay = img.copy()
     # Person zone
     zone = cfg.get('zone') or {}
@@ -4298,28 +4424,27 @@ def _draw_people_calibration_overlay(frame, cfg=None, source_label='Live/RTSP'):
         img = cv2.addWeighted(overlay, 0.16, img, 0.84, 0)
         cv2.rectangle(img, (x1, y1), (x2, y2), (129, 140, 248), 3)
         cv2.putText(img, 'Personen-Zone', (x1 + 10, max(28, y1 + 28)), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (199, 210, 254), 2)
-    # Count line
-    axis = str(cfg.get('movement_axis') or 'y').lower()
+    # Count line: same basis as live processing. By default the line is relative to the road ROI.
     line_enabled = cfg.get('line_crossing_enabled') is not False
-    line_percent = max(1, min(99, float(cfg.get('virtual_line_position_percent') or 50)))
     line_color = (34, 211, 238)
     direction = str(cfg.get('crossing_direction') or 'both')
     if line_enabled:
-        if axis == 'x':
-            x = int(w * line_percent / 100.0)
-            cv2.line(img, (x, 0), (x, h), line_color, 4)
-            cv2.putText(img, f'Zaehllinie X={line_percent:.0f}% / {direction}', (min(w-520, max(20, x + 12)), 42), cv2.FONT_HERSHEY_SIMPLEX, 0.75, line_color, 2)
-            # direction arrows
-            cv2.arrowedLine(img, (max(20, x - 130), int(h*0.50)), (max(20, x - 30), int(h*0.50)), (16,185,129), 3, tipLength=0.25)
-            cv2.arrowedLine(img, (min(w-20, x + 130), int(h*0.58)), (min(w-20, x + 30), int(h*0.58)), (245,158,11), 3, tipLength=0.25)
-            cv2.putText(img, 'links/rechts', (max(20, x - 120), int(h*0.50)-16), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (241,245,249), 2)
+        lb = _people_line_bounds_for_area(w, h, cfg, road_roi)
+        basis_label = 'Strasse' if lb.get('relative_to_roi') else 'Bild'
+        if lb['axis'] == 'x':
+            x = int(lb['x'])
+            cv2.line(img, (x, int(lb['y1'])), (x, int(lb['y2'])), line_color, 4)
+            cv2.putText(img, f'Zaehllinie X={lb["line_percent"]:.0f}% / {direction} / {basis_label}', (min(w-680, max(20, x + 12)), max(42, int(lb['y1']) + 34)), cv2.FONT_HERSHEY_SIMPLEX, 0.68, line_color, 2)
+            mid_y = int((int(lb['y1']) + int(lb['y2'])) / 2)
+            cv2.arrowedLine(img, (max(20, x - 130), mid_y), (max(20, x - 30), mid_y), (16,185,129), 3, tipLength=0.25)
+            cv2.arrowedLine(img, (min(w-20, x + 130), min(h-20, mid_y + 55)), (min(w-20, x + 30), min(h-20, mid_y + 55)), (245,158,11), 3, tipLength=0.25)
         else:
-            y = int(h * line_percent / 100.0)
-            cv2.line(img, (0, y), (w, y), line_color, 4)
-            cv2.putText(img, f'Zaehllinie Y={line_percent:.0f}% / {direction}', (20, max(36, y - 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.75, line_color, 2)
-            cv2.arrowedLine(img, (int(w*0.42), max(20, y - 110)), (int(w*0.42), max(20, y - 25)), (16,185,129), 3, tipLength=0.25)
-            cv2.arrowedLine(img, (int(w*0.52), min(h-20, y + 110)), (int(w*0.52), min(h-20, y + 25)), (245,158,11), 3, tipLength=0.25)
-            cv2.putText(img, 'oben/unten', (int(w*0.42)+15, max(30, y - 55)), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (241,245,249), 2)
+            y = int(lb['y'])
+            cv2.line(img, (int(lb['x1']), y), (int(lb['x2']), y), line_color, 4)
+            cv2.putText(img, f'Zaehllinie Y={lb["line_percent"]:.0f}% / {direction} / {basis_label}', (max(20, int(lb['x1']) + 10), max(36, y - 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.68, line_color, 2)
+            mid_x = int((int(lb['x1']) + int(lb['x2'])) / 2)
+            cv2.arrowedLine(img, (max(20, mid_x - 80), max(20, y - 110)), (max(20, mid_x - 80), max(20, y - 25)), (16,185,129), 3, tipLength=0.25)
+            cv2.arrowedLine(img, (min(w-20, mid_x + 60), min(h-20, y + 110)), (min(w-20, mid_x + 60), min(h-20, y + 25)), (245,158,11), 3, tipLength=0.25)
     # Status strip
     strip_h = 86
     strip = img.copy()
@@ -4345,6 +4470,10 @@ def _people_settings_summary(cfg=None):
         'confidence_threshold': cfg.get('confidence_threshold'),
         'count_strategy': cfg.get('count_strategy'),
         'line_crossing_enabled': cfg.get('line_crossing_enabled') is not False,
+        'roi_filter_enabled': cfg.get('roi_filter_enabled') is not False,
+        'roi_filter_mode': cfg.get('roi_filter_mode') or 'foot_and_center',
+        'line_relative_to_roi': cfg.get('line_relative_to_roi') is not False,
+        'min_roi_overlap_percent': cfg.get('min_roi_overlap_percent'),
         'virtual_line_position_percent': cfg.get('virtual_line_position_percent'),
         'movement_axis': cfg.get('movement_axis'),
         'crossing_direction': cfg.get('crossing_direction'),
@@ -4942,8 +5071,8 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.9',
-        'edition': 'ProTraffic People ROI Mouse Fix',
+        'version': '0.8.10',
+        'edition': 'ProTraffic People ROI Line Fix',
         'features': [
             'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
             'Statistik', 'Suche', 'Watchlist', 'Mehrsprachige Einstellungen',
@@ -5676,7 +5805,7 @@ def api_system_health():
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.9'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.10'})
 
 
 @app.route('/api/system/audit')
@@ -5773,7 +5902,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.9 ProTraffic ROI Geometry Sync                                    ║
+    ║     Version 0.8.10 ProTraffic People ROI/Line Sync                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

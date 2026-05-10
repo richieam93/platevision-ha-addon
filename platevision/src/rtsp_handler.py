@@ -328,14 +328,24 @@ class RTSPHandler:
         }
 
     def _apply_analysis_mask(self, frame, area_info):
-        """Schneidet den Analysebereich aus und maskiert Polygonbereiche außerhalb der Straße."""
+        """
+        Schneidet den Analysebereich aus.
+
+        Wichtig: Standardmäßig wird NICHT mehr vor dem Modell mit schwarzen
+        Polygonrändern maskiert. Diese schwarzen Kanten können bei YOLO, vor
+        allem bei Custom-Personenmodellen, falsche Personenboxen erzeugen.
+        Stattdessen wird nach der Erkennung streng gegen das Polygon gefiltert.
+        Wer das alte Verhalten explizit benötigt, kann
+        rtsp.analysis_area.mask_before_detection aktivieren.
+        """
         if not area_info.get('enabled'):
             return frame, 0, 0
 
         ax = area_info['x']; ay = area_info['y']; aw = area_info['width']; ah = area_info['height']
         process_frame = frame[ay:ay + ah, ax:ax + aw].copy()
 
-        if area_info.get('mode') == 'polygon' and area_info.get('mask_outside') and len(area_info.get('crop_polygon') or []) >= 3:
+        mask_before = bool(self.config_manager.get('rtsp', 'analysis_area', 'mask_before_detection'))
+        if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('crop_polygon') or []) >= 3:
             mask = np.zeros(process_frame.shape[:2], dtype=np.uint8)
             pts = np.array(area_info['crop_polygon'], dtype=np.int32)
             cv2.fillPoly(mask, [pts], 255)
@@ -371,6 +381,98 @@ class RTSPHandler:
             cv2.polylines(frame, [fallback_pts], True, color, 2)
             cv2.putText(frame, "Analysebereich", (ax + 5, ay + 25),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+    def _point_inside_analysis_area(self, x, y, area_info):
+        """True if a point in full-frame coordinates is inside the unified road ROI."""
+        if not area_info or not area_info.get('enabled'):
+            return True
+        pts = area_info.get('polygon') or []
+        if len(pts) < 3:
+            ax = area_info.get('x', 0); ay = area_info.get('y', 0)
+            aw = area_info.get('width', 0); ah = area_info.get('height', 0)
+            return ax <= x <= ax + aw and ay <= y <= ay + ah
+        contour = np.array(pts, dtype=np.float32)
+        return cv2.pointPolygonTest(contour, (float(x), float(y)), False) >= 0
+
+    def _bbox_roi_overlap_percent(self, bbox, area_info):
+        """Approximate percentage of bbox area that lies inside the road ROI."""
+        if not area_info or not area_info.get('enabled'):
+            return 100.0
+        try:
+            x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
+            if x2 <= x1 or y2 <= y1:
+                return 0.0
+            w = max(1, x2 - x1); h = max(1, y2 - y1)
+            mask = np.zeros((h, w), dtype=np.uint8)
+            pts = np.array([[int(px - x1), int(py - y1)] for px, py in (area_info.get('polygon') or [])], dtype=np.int32)
+            if len(pts) >= 3:
+                cv2.fillPoly(mask, [pts], 255)
+                return float(np.count_nonzero(mask)) * 100.0 / float(w * h)
+            return 100.0
+        except Exception:
+            return 0.0
+
+    def _bbox_allowed_in_analysis_area(self, bbox, area_info, kind='object'):
+        """Filter detections so only the one road ROI is analyzed and stored."""
+        if not area_info or not area_info.get('enabled'):
+            return True
+        try:
+            x1, y1, x2, y2 = [float(v) for v in bbox]
+            cx = (x1 + x2) / 2.0
+            cy = (y1 + y2) / 2.0
+            foot_x = cx
+            foot_y = y2
+            if kind == 'person':
+                cfg = self.config_manager.get('people') or {}
+                if cfg.get('roi_filter_enabled') is False:
+                    return True
+                mode = str(cfg.get('roi_filter_mode') or 'foot_and_center').lower()
+                center_ok = self._point_inside_analysis_area(cx, cy, area_info)
+                foot_ok = self._point_inside_analysis_area(foot_x, foot_y, area_info)
+                if mode == 'center':
+                    ok = center_ok
+                elif mode == 'foot':
+                    ok = foot_ok
+                elif mode == 'center_or_foot':
+                    ok = center_ok or foot_ok
+                else:
+                    ok = center_ok and foot_ok
+                if not ok:
+                    return False
+                min_overlap = float(cfg.get('min_roi_overlap_percent') or 0)
+                if cfg.get('reject_partial_outside_roi') and min_overlap > 0:
+                    return self._bbox_roi_overlap_percent([x1, y1, x2, y2], area_info) >= min_overlap
+                return True
+            # Vehicles/plates: center must be inside the road polygon.
+            return self._point_inside_analysis_area(cx, cy, area_info)
+        except Exception:
+            return True
+
+    def _draw_people_line(self, frame, area_info):
+        """Draw the person counting line in the same coordinate basis used for detection."""
+        cfg = self.config_manager.get('people') or {}
+        if not cfg.get('enabled') or cfg.get('show_on_live') is False or cfg.get('line_crossing_enabled') is False:
+            return
+        h, w = frame.shape[:2]
+        axis = str(cfg.get('movement_axis') or 'y').lower()
+        line_percent = max(1, min(99, float(cfg.get('virtual_line_position_percent') or 50)))
+        use_roi = cfg.get('line_relative_to_roi') is not False and area_info and area_info.get('enabled')
+        if use_roi:
+            ax = int(area_info.get('x') or 0); ay = int(area_info.get('y') or 0)
+            aw = int(area_info.get('width') or w); ah = int(area_info.get('height') or h)
+        else:
+            ax, ay, aw, ah = 0, 0, w, h
+        color = (34, 211, 238)
+        if axis == 'x':
+            x = int(ax + aw * line_percent / 100.0)
+            y1 = max(0, ay); y2 = min(h - 1, ay + ah)
+            cv2.line(frame, (x, y1), (x, y2), color, 2)
+            cv2.putText(frame, f"Personenlinie X {line_percent:.0f}%", (min(w - 240, x + 8), max(24, y1 + 24)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+        else:
+            y = int(ay + ah * line_percent / 100.0)
+            x1 = max(0, ax); x2 = min(w - 1, ax + aw)
+            cv2.line(frame, (x1, y), (x2, y), color, 2)
+            cv2.putText(frame, f"Personenlinie Y {line_percent:.0f}%", (max(8, x1 + 8), max(24, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
     def _capture_loop(self):
         """Capture-Schleife für RTSP Stream"""
@@ -455,7 +557,7 @@ class RTSPHandler:
                         process_frame, offset_x, offset_y = self._apply_analysis_mask(frame, area_info)
                         
                         # Erkennung auf (zugeschnittenem/maskiertem) Frame
-                        results = self.detector.process_frame(process_frame, apply_analysis_area=False)
+                        results = self.detector.process_frame(process_frame, apply_analysis_area=False, runtime_roi_polygon=(area_info.get('crop_polygon') if area_enabled else None))
                         
                         # Annotiertes Frame erstellen
                         annotated = frame.copy()
@@ -463,36 +565,51 @@ class RTSPHandler:
                         # Analysis Area einzeichnen
                         self._draw_analysis_area(annotated, area_info)
                         
-                        # Fahrzeuge mit Offset einzeichnen
+                        # Personen-Zähllinie in derselben Basis wie die Erkennung zeichnen
+                        self._draw_people_line(annotated, area_info)
+
+                        # Fahrzeuge mit Offset einzeichnen und gegen die einheitliche ROI filtern
+                        filtered_vehicles = []
                         for vehicle in results.get('vehicles', []):
                             bbox = vehicle.get('bbox', [])
                             if len(bbox) == 4:
-                                vx1, vy1, vx2, vy2 = bbox
-                                # Offset addieren
+                                vx1, vy1, vx2, vy2 = [int(v) for v in bbox]
                                 vx1 += offset_x
                                 vy1 += offset_y
                                 vx2 += offset_x
                                 vy2 += offset_y
-                                
+                                if not self._bbox_allowed_in_analysis_area([vx1, vy1, vx2, vy2], area_info, kind='vehicle'):
+                                    continue
+                                vehicle['bbox'] = [vx1, vy1, vx2, vy2]
+                                vehicle['center_x'] = round((vx1 + vx2) / 2, 2)
+                                vehicle['center_y'] = round((vy1 + vy2) / 2, 2)
+                                vehicle['frame_width'] = frame_w
+                                vehicle['frame_height'] = frame_h
+                                filtered_vehicles.append(vehicle)
                                 cv2.rectangle(annotated, (vx1, vy1), (vx2, vy2), (255, 0, 0), 2)
                                 label = f"{vehicle.get('type', 'Fahrzeug')} ({vehicle.get('color', '')})"
-                                cv2.putText(annotated, label, (vx1, vy1 - 10),
+                                cv2.putText(annotated, label, (vx1, max(18, vy1 - 10)),
                                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-                        
-                        # Erkennungen mit Offset einzeichnen
+                        results['vehicles'] = filtered_vehicles
+
+                        # Kennzeichen mit Offset einzeichnen und gegen die einheitliche ROI filtern
+                        filtered_detections = []
                         for detection in results.get('detections', []):
                             bbox = detection.get('plate_bbox', [])
                             if len(bbox) == 4:
-                                px1, py1, px2, py2 = bbox
-                                # Offset addieren
+                                px1, py1, px2, py2 = [int(v) for v in bbox]
                                 px1 += offset_x
                                 py1 += offset_y
                                 px2 += offset_x
                                 py2 += offset_y
-                                
-                                # Aktualisiere bbox für Historie
+                                if not self._bbox_allowed_in_analysis_area([px1, py1, px2, py2], area_info, kind='plate'):
+                                    continue
                                 detection['plate_bbox'] = [px1, py1, px2, py2]
-                                
+                                detection['plate_center_x'] = round((px1 + px2) / 2, 2)
+                                detection['plate_center_y'] = round((py1 + py2) / 2, 2)
+                                detection['frame_width'] = frame_w
+                                detection['frame_height'] = frame_h
+                                filtered_detections.append(detection)
                                 plate_text = detection.get('plate_text', '')
                                 if plate_text:
                                     cv2.rectangle(annotated, (px1, py1), (px2, py2), (0, 255, 0), 3)
@@ -506,28 +623,38 @@ class RTSPHandler:
                                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
                                 else:
                                     cv2.rectangle(annotated, (px1, py1), (px2, py2), (0, 165, 255), 2)
-                        
-                        # Personenerkennungen mit Offset einzeichnen
+                        results['detections'] = filtered_detections
+
+                        # Personenerkennungen mit Offset einzeichnen und Fußpunkt/Zentrum gegen Straße prüfen
+                        filtered_people = []
                         for person in results.get('people', []):
                             bbox = person.get('bbox', [])
                             if len(bbox) == 4:
-                                x1, y1, x2, y2 = bbox
+                                x1, y1, x2, y2 = [int(v) for v in bbox]
                                 x1 += offset_x
                                 y1 += offset_y
                                 x2 += offset_x
                                 y2 += offset_y
+                                if not self._bbox_allowed_in_analysis_area([x1, y1, x2, y2], area_info, kind='person'):
+                                    person['roi_filtered'] = True
+                                    continue
                                 person['bbox'] = [x1, y1, x2, y2]
                                 person['center_x'] = round((x1 + x2) / 2, 2)
                                 person['center_y'] = round((y1 + y2) / 2, 2)
+                                person['foot_x'] = round((x1 + x2) / 2, 2)
+                                person['foot_y'] = y2
                                 person['frame_width'] = frame_w
                                 person['frame_height'] = frame_h
+                                person['roi_filter_status'] = 'accepted'
+                                filtered_people.append(person)
                                 if self.config_manager.get('people', 'show_on_live') is not False:
                                     color = (16, 185, 129) if person.get('counted') else (245, 158, 11)
                                     cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-                                    label = f"Person #{person.get('track_id', '?')}"
+                                    label = f"Person #{person.get('track_id', '?')} {person.get('confidence', 0):.2f}"
                                     if person.get('counted'):
                                         label += " gezählt"
                                     cv2.putText(annotated, label, (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+                        results['people'] = filtered_people
 
                         # Status-Info einzeichnen
                         status_text = f"FPS: {self.get_fps()} | Frames: {self.frame_count} | Erkennungen: {self.detection_count} | Personen: {len(results.get('people', []))}"

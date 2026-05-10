@@ -1959,6 +1959,10 @@
                                     <div class="col-md-3"><label class="form-label">Zone Y %</label><input type="number" class="form-control" id="peopleZoneY" min="0" max="100" value="{{ config.people.zone.y if config.people is defined and config.people.zone is defined else 0 }}"></div>
                                     <div class="col-md-3"><label class="form-label">Zone Breite %</label><input type="number" class="form-control" id="peopleZoneW" min="1" max="100" value="{{ config.people.zone.width if config.people is defined and config.people.zone is defined else 100 }}"></div>
                                     <div class="col-md-3"><label class="form-label">Zone Höhe %</label><input type="number" class="form-control" id="peopleZoneH" min="1" max="100" value="{{ config.people.zone.height if config.people is defined and config.people.zone is defined else 100 }}"></div>
+                                    <div class="col-md-3"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleRoiFilterEnabled" {% if config.people is not defined or config.people.roi_filter_enabled is not defined or config.people.roi_filter_enabled %}checked{% endif %}><label class="form-check-label" for="peopleRoiFilterEnabled">Straßenbereich für Personen anwenden</label><br><small class="text-secondary">Personen außerhalb der eingezeichneten Straße werden ignoriert.</small></div></div>
+                                    <div class="col-md-3"><label class="form-label">ROI Personenfilter</label>{% set proimode = config.people.roi_filter_mode if config.people is defined and config.people.roi_filter_mode is defined else 'foot_and_center' %}<select class="form-select" id="peopleRoiFilterMode"><option value="foot_and_center" {% if proimode == 'foot_and_center' %}selected{% endif %}>Fußpunkt und Mitte in Straße</option><option value="foot" {% if proimode == 'foot' %}selected{% endif %}>nur Fußpunkt in Straße</option><option value="center" {% if proimode == 'center' %}selected{% endif %}>nur Mitte in Straße</option><option value="center_or_foot" {% if proimode == 'center_or_foot' %}selected{% endif %}>Mitte oder Fußpunkt</option></select></div>
+                                    <div class="col-md-3"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleLineRelativeToRoi" {% if config.people is not defined or config.people.line_relative_to_roi is not defined or config.people.line_relative_to_roi %}checked{% endif %}><label class="form-check-label" for="peopleLineRelativeToRoi">Zähllinie relativ zur Straße</label><br><small class="text-secondary">Livebild und Einstellungen nutzen dieselbe Linienposition.</small></div></div>
+                                    <div class="col-md-3"><label class="form-label">Min. ROI-Überlappung %</label><input type="number" class="form-control" id="peopleMinRoiOverlap" min="0" max="100" step="1" value="{{ config.people.min_roi_overlap_percent if config.people is defined and config.people.min_roi_overlap_percent is defined else 25 }}"><small class="text-secondary">Hilft gegen große falsche Boxen.</small></div>
                                 </div>
                             </div>
 
@@ -3177,6 +3181,11 @@
             max_aspect_ratio: pvNum('peopleMaxAspect', 2.5),
             zone_enabled: pvBool('peopleZoneEnabled'),
             zone: { x: pvNum('peopleZoneX', 0), y: pvNum('peopleZoneY', 0), width: pvNum('peopleZoneW', 100), height: pvNum('peopleZoneH', 100), unit: 'percent' },
+            roi_filter_enabled: pvBool('peopleRoiFilterEnabled'),
+            roi_filter_mode: pvStr('peopleRoiFilterMode', 'foot_and_center'),
+            line_relative_to_roi: pvBool('peopleLineRelativeToRoi'),
+            reject_partial_outside_roi: true,
+            min_roi_overlap_percent: pvNum('peopleMinRoiOverlap', 25),
             tracker_enabled: pvBool('peopleTrackerEnabled'),
             tracker_max_distance: pvNum('peopleTrackerDistance', 120),
             tracker_timeout_seconds: pvNum('peopleTrackerTimeout', 8),
@@ -3223,7 +3232,8 @@
             <div class="people-summary-row"><span>Modell</span><code>${selectedModel}</code></div>
             <div class="people-summary-row"><span>Konfidenz</span><strong>${p.confidence_threshold}</strong></div>
             <div class="people-summary-row"><span>Zählstrategie</span><strong>${p.count_strategy}</strong></div>
-            <div class="people-summary-row"><span>Linie</span><strong>${peopleBoolLabel(p.line_crossing_enabled)} · ${p.movement_axis.toUpperCase()} ${p.virtual_line_position_percent}% · ${p.crossing_direction}</strong></div>
+            <div class="people-summary-row"><span>Linie</span><strong>${peopleBoolLabel(p.line_crossing_enabled)} · ${p.movement_axis.toUpperCase()} ${p.virtual_line_position_percent}% · ${p.crossing_direction} · ${p.line_relative_to_roi ? 'Straße' : 'Bild'}</strong></div>
+            <div class="people-summary-row"><span>Straßen-ROI</span><strong>${peopleBoolLabel(p.roi_filter_enabled)} · ${p.roi_filter_mode} · ${p.min_roi_overlap_percent}%</strong></div>
             <div class="people-summary-row"><span>Zone</span><strong>${peopleBoolLabel(p.zone_enabled)} · X ${p.zone.x}% / Y ${p.zone.y}% / ${p.zone.width}×${p.zone.height}%</strong></div>
             <div class="people-summary-row"><span>Session-Lücke</span><strong>${p.session_gap_minutes} min</strong></div>
             <div class="people-summary-row"><span>Anwesend Timeout</span><strong>${p.present_timeout_minutes} min</strong></div>
@@ -3279,6 +3289,9 @@
             crossing_direction: p.crossing_direction,
             count_strategy: p.count_strategy,
             confidence: p.confidence_threshold,
+            roi_filter_enabled: p.roi_filter_enabled,
+            roi_filter_mode: p.roi_filter_mode,
+            line_relative_to_roi: p.line_relative_to_roi,
             zone_enabled: p.zone_enabled ? '1' : '0',
             zone_x: p.zone.x,
             zone_y: p.zone.y,
