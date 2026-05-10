@@ -1,7 +1,7 @@
-name: "PlateVision ProTraffic People Unified ROI"
+name: "PlateVision ProTraffic People ROI Mouse Fix"
 slug: platevision
 description: PlateVision ProTraffic People mit einheitlichem Straßen-ROI, Personenanalyse, Modell-Upload, Kennzeichen-Erkennung, Statistik, Suche, Dashboard, RTSP und erweiterten Original-Einstellungen
-version: "0.8.7"
+version: "0.8.8"
 arch:
   - amd64
 startup: services

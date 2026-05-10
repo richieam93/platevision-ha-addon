@@ -278,11 +278,11 @@
                             
                             <!-- Canvas Overlay für Zeichnung -->
                             <canvas id="selectionCanvas" 
-                                    style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair;">
+                                    style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; z-index: 20; touch-action: none; user-select: none; pointer-events: none;">
                             </canvas>
                             
                             <!-- Placeholder wenn kein Stream -->
-                            <div id="noStreamPlaceholder" class="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column justify-content-center align-items-center text-white">
+                            <div id="noStreamPlaceholder" class="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column justify-content-center align-items-center text-white" style="z-index: 10; pointer-events: auto;">
                                 <i class="fas fa-video-slash fa-4x mb-3 text-secondary"></i>
                                 <p class="mb-3 text-secondary">Stream nicht aktiv oder lädt...</p>
                                 <button class="btn btn-primary" onclick="loadPreviewImage()">
@@ -309,7 +309,7 @@
                         </div>
                         <div class="card-body py-3">
                             <div id="polygonPointsEditor" class="row g-2"></div>
-                            <small class="text-secondary d-block mt-2">Du kannst die nummerierten Punkte direkt im Bild mit der Maus ziehen. Doppelklick im Bild fügt einen Punkt ein, Rechtsklick entfernt den nächsten Punkt. Die Werte hier sind zur Feineinstellung.</small>
+                            <small class="text-secondary d-block mt-2">Du kannst die nummerierten Punkte direkt im Bild mit der Maus ziehen. Doppelklick im Bild fügt genau an der Mausposition einen Punkt ein. Rechtsklick auf einen Punkt entfernt ihn. Der Button „+ Punkt“ fügt den Punkt auf der längsten Kante ein.</small>
                         </div>
                     </div>
 
@@ -801,19 +801,27 @@ function setupEventListeners() {
         });
     });
     
-    // Canvas Events
+    // Canvas Events: Pointer Events sind robuster als getrennte Maus-/Touch-Events.
+    // Wichtig: setPointerCapture verhindert, dass ein Punkt beim Ziehen verloren geht,
+    // wenn die Maus kurz aus dem Canvas fährt.
     const canvas = document.getElementById('selectionCanvas');
-    canvas.addEventListener('mousedown', startInteraction);
-    canvas.addEventListener('mousemove', handleCanvasPointerMove);
-    canvas.addEventListener('mouseup', endDrawing);
-    canvas.addEventListener('mouseleave', endDrawing);
+    if (window.PointerEvent) {
+        canvas.addEventListener('pointerdown', startInteraction);
+        canvas.addEventListener('pointermove', handleCanvasPointerMove);
+        canvas.addEventListener('pointerup', endDrawing);
+        canvas.addEventListener('pointercancel', endDrawing);
+        canvas.addEventListener('lostpointercapture', endDrawing);
+    } else {
+        canvas.addEventListener('mousedown', startInteraction);
+        canvas.addEventListener('mousemove', handleCanvasPointerMove);
+        canvas.addEventListener('mouseup', endDrawing);
+        canvas.addEventListener('mouseleave', endDrawing);
+        canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+        canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+        canvas.addEventListener('touchend', endDrawing);
+    }
     canvas.addEventListener('dblclick', addPointAtEvent);
     canvas.addEventListener('contextmenu', removePointAtEvent);
-    
-    // Touch Events für Mobile
-    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
-    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
-    canvas.addEventListener('touchend', endDrawing);
     
     // Bild geladen
     document.getElementById('previewImage').addEventListener('load', function() {
@@ -821,6 +829,8 @@ function setupEventListeners() {
         document.getElementById('noStreamPlaceholder').style.display = 'none';
         this.style.display = 'block';
         
+        const canvas = document.getElementById('selectionCanvas');
+        canvas.style.pointerEvents = 'auto';
         syncStreamSizeFromImage(this);
         updateCanvasSize();
         drawSelection();
@@ -829,6 +839,7 @@ function setupEventListeners() {
     document.getElementById('previewImage').addEventListener('error', function() {
         previewLoaded = false;
         this.style.display = 'none';
+        document.getElementById('selectionCanvas').style.pointerEvents = 'none';
         document.getElementById('noStreamPlaceholder').style.display = 'flex';
     });
     
@@ -1013,13 +1024,39 @@ function formatNumber(num) {
 function loadPreviewImage() {
     const img = document.getElementById('previewImage');
     const placeholder = document.getElementById('noStreamPlaceholder');
-    
-    placeholder.innerHTML = `
-        <div class="spinner-border text-primary mb-3" role="status"></div>
-        <p class="text-secondary">Lade Vorschau...</p>
-    `;
-    
+    const canvas = document.getElementById('selectionCanvas');
+
+    if (!previewLoaded) {
+        canvas.style.pointerEvents = 'none';
+        placeholder.style.display = 'flex';
+        placeholder.style.pointerEvents = 'auto';
+        placeholder.innerHTML = `
+            <div class="spinner-border text-primary mb-3" role="status"></div>
+            <p class="text-secondary">Lade Vorschau...</p>
+        `;
+    } else {
+        // Bei bereits geladener Vorschau darf das Overlay die Mausbedienung nicht blockieren.
+        placeholder.style.display = 'none';
+        placeholder.style.pointerEvents = 'none';
+        canvas.style.pointerEvents = 'auto';
+    }
+
     img.src = '/api/stream/snapshot?' + Date.now();
+
+    // Manche Browser melden bei schnell gecachten JPEGs das load-Event unzuverlässig.
+    // Dieser Fallback aktiviert den Editor trotzdem, sobald das Bild wirklich verfügbar ist.
+    setTimeout(() => {
+        if (img.complete && img.naturalWidth > 0) {
+            previewLoaded = true;
+            img.style.display = 'block';
+            placeholder.style.display = 'none';
+            placeholder.style.pointerEvents = 'none';
+            canvas.style.pointerEvents = 'auto';
+            syncStreamSizeFromImage(img);
+            updateCanvasSize();
+            drawSelection();
+        }
+    }, 800);
 }
 
 function syncStreamSizeFromImage(img) {
@@ -1131,7 +1168,15 @@ function getNearestPolygonPoint(coords) {
 
 function startInteraction(e) {
     if (!isAreaEnabled) return;
+    // Nur linke Maustaste startet Ziehen; Rechtsklick bleibt fürs Entfernen frei.
+    if (e.button !== undefined && e.button !== 0) return;
     e.preventDefault();
+
+    const canvas = document.getElementById('selectionCanvas');
+    if (e.pointerId !== undefined && canvas.setPointerCapture) {
+        try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    }
+
     areaMode = 'polygon';
     const coords = getCanvasCoordinates(e);
     startX = coords.x;
@@ -1142,6 +1187,7 @@ function startInteraction(e) {
         isDrawing = true;
         dragMode = 'polygon-point';
         activePointIndex = nearest;
+        canvas.style.cursor = 'grabbing';
         drawSelection();
         return;
     }
@@ -1150,6 +1196,7 @@ function startInteraction(e) {
         isDrawing = true;
         dragMode = 'polygon-pan';
         activePointIndex = -1;
+        canvas.style.cursor = 'move';
         drawSelection();
         return;
     }
@@ -1233,10 +1280,16 @@ function updateSelectionFromDrag(currentX, currentY) {
     drawSelection();
 }
 
-function endDrawing() {
+function endDrawing(e) {
+    const canvas = document.getElementById('selectionCanvas');
+    if (e && e.pointerId !== undefined && canvas.releasePointerCapture) {
+        try { canvas.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    }
     isDrawing = false;
     dragMode = null;
     activePointIndex = -1;
+    if (canvas) canvas.style.cursor = 'crosshair';
+    drawSelection();
 }
 
 function drawSelection() {
@@ -1355,30 +1408,34 @@ function distancePointToSegment(point, a, b) {
 }
 
 function insertPointAtNearestSegment(coords) {
+    const point = {
+        x: clamp(Math.round(coords.x), 0, streamWidth - 1),
+        y: clamp(Math.round(coords.y), 0, streamHeight - 1)
+    };
     if (polygonPoints.length < 2) {
-        polygonPoints.push(coords);
-        return;
+        polygonPoints.push(point);
+        return polygonPoints.length - 1;
     }
     let bestIndex = 0;
     let bestDistance = Infinity;
     for (let i = 0; i < polygonPoints.length; i++) {
         const a = polygonPoints[i];
         const b = polygonPoints[(i + 1) % polygonPoints.length];
-        const dist = distancePointToSegment(coords, a, b);
+        const dist = distancePointToSegment(point, a, b);
         if (dist < bestDistance) {
             bestDistance = dist;
             bestIndex = i + 1;
         }
     }
-    polygonPoints.splice(bestIndex, 0, coords);
+    polygonPoints.splice(bestIndex, 0, point);
+    return bestIndex;
 }
 
 function addPointAtEvent(e) {
     if (!isAreaEnabled) return;
     e.preventDefault();
     const coords = getCanvasCoordinates(e);
-    insertPointAtNearestSegment(coords);
-    activePointIndex = polygonPoints.findIndex(p => p.x === coords.x && p.y === coords.y);
+    activePointIndex = insertPointAtNearestSegment(coords);
     renderPolygonEditor();
     updateAreaInfo();
     drawSelection();
@@ -1505,14 +1562,31 @@ function updatePolygonPoint(index, axis, value) {
 
 function addPolygonPoint() {
     if (polygonPoints.length === 0) polygonPoints = defaultRoadPolygon();
-    const bbox = getPolygonBoundingBox();
-    polygonPoints.push({
-        x: clamp(Math.round(bbox.x + bbox.width / 2), 0, streamWidth - 1),
-        y: clamp(Math.round(bbox.y + bbox.height / 2), 0, streamHeight - 1)
-    });
+
+    // Button "+ Punkt" fügt jetzt nicht mehr immer in der Mitte ein.
+    // Stattdessen wird der neue Punkt auf der längsten Polygonkante eingefügt.
+    let insertIndex = polygonPoints.length;
+    let newPoint = null;
+    let longest = -1;
+    for (let i = 0; i < polygonPoints.length; i++) {
+        const a = polygonPoints[i];
+        const b = polygonPoints[(i + 1) % polygonPoints.length];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        if (len > longest) {
+            longest = len;
+            insertIndex = i + 1;
+            newPoint = {
+                x: clamp(Math.round((a.x + b.x) / 2), 0, streamWidth - 1),
+                y: clamp(Math.round((a.y + b.y) / 2), 0, streamHeight - 1)
+            };
+        }
+    }
+    polygonPoints.splice(insertIndex, 0, newPoint || { x: Math.round(streamWidth / 2), y: Math.round(streamHeight / 2) });
+    activePointIndex = insertIndex;
     renderPolygonEditor();
     updateAreaInfo();
     drawSelection();
+    showToast('Punkt hinzugefügt', 'Der neue Punkt liegt auf der längsten Kante und kann direkt gezogen werden.', 'info');
 }
 
 function removePolygonPoint() {
