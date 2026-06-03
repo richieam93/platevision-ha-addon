@@ -329,29 +329,44 @@ class RTSPHandler:
 
     def _apply_analysis_mask(self, frame, area_info):
         """
-        Schneidet den Analysebereich aus.
+        Applies the analysis area only when explicitly requested.
 
-        Wichtig: Standardmäßig wird NICHT mehr vor dem Modell mit schwarzen
-        Polygonrändern maskiert. Diese schwarzen Kanten können bei YOLO, vor
-        allem bei Custom-Personenmodellen, falsche Personenboxen erzeugen.
-        Stattdessen wird nach der Erkennung streng gegen das Polygon gefiltert.
-        Wer das alte Verhalten explizit benötigt, kann
-        rtsp.analysis_area.mask_before_detection aktivieren.
+        The previous update cropped the model input to the road ROI. That is fast,
+        but it can cut vehicles at the ROI edge, so COCO no longer sees a complete
+        car/truck and the history gets only a plate image. Default behaviour is now:
+        run detection on the full frame and filter detections against the ROI after
+        YOLO. Users who really need the old performance mode can enable
+        detection.crop_before_detection or rtsp.analysis_area.mask_before_detection.
         """
         if not area_info.get('enabled'):
             return frame, 0, 0
 
-        ax = area_info['x']; ay = area_info['y']; aw = area_info['width']; ah = area_info['height']
-        process_frame = frame[ay:ay + ah, ax:ax + aw].copy()
+        crop_before = bool(self.config_manager.get('detection', 'crop_before_detection'))
+        mask_before = bool(self.config_manager.get('detection', 'mask_before_detection') or
+                           self.config_manager.get('rtsp', 'analysis_area', 'mask_before_detection'))
 
-        mask_before = bool(self.config_manager.get('rtsp', 'analysis_area', 'mask_before_detection'))
-        if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('crop_polygon') or []) >= 3:
+        # Safe default: full-frame detection, ROI filtering later.
+        if not crop_before and not mask_before:
+            return frame, 0, 0
+
+        if crop_before:
+            ax = area_info['x']; ay = area_info['y']; aw = area_info['width']; ah = area_info['height']
+            process_frame = frame[ay:ay + ah, ax:ax + aw].copy()
+            if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('crop_polygon') or []) >= 3:
+                mask = np.zeros(process_frame.shape[:2], dtype=np.uint8)
+                pts = np.array(area_info['crop_polygon'], dtype=np.int32)
+                cv2.fillPoly(mask, [pts], 255)
+                process_frame = cv2.bitwise_and(process_frame, process_frame, mask=mask)
+            return process_frame, ax, ay
+
+        # Optional old-style masking without cropping. Coordinates stay full-frame.
+        process_frame = frame.copy()
+        if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('polygon') or []) >= 3:
             mask = np.zeros(process_frame.shape[:2], dtype=np.uint8)
-            pts = np.array(area_info['crop_polygon'], dtype=np.int32)
+            pts = np.array(area_info['polygon'], dtype=np.int32)
             cv2.fillPoly(mask, [pts], 255)
             process_frame = cv2.bitwise_and(process_frame, process_frame, mask=mask)
-
-        return process_frame, ax, ay
+        return process_frame, 0, 0
 
     def _draw_analysis_area(self, frame, area_info):
         """Zeichnet die eine verbindliche Straßen-Analyse-Zone auf das Livebild."""
@@ -556,8 +571,12 @@ class RTSPHandler:
                         area_enabled = area_info.get('enabled', False)
                         process_frame, offset_x, offset_y = self._apply_analysis_mask(frame, area_info)
                         
-                        # Erkennung auf (zugeschnittenem/maskiertem) Frame
-                        results = self.detector.process_frame(process_frame, apply_analysis_area=False, runtime_roi_polygon=(area_info.get('crop_polygon') if area_enabled else None))
+                        # Erkennung auf dem Modell-Frame. Standardmäßig ist das der volle
+                        # Frame; bei bewusst aktiviertem Crop-Modus ist es der ROI-Ausschnitt.
+                        runtime_polygon = None
+                        if area_enabled:
+                            runtime_polygon = area_info.get('crop_polygon') if (offset_x or offset_y) else area_info.get('polygon')
+                        results = self.detector.process_frame(process_frame, apply_analysis_area=False, runtime_roi_polygon=runtime_polygon)
                         
                         # Annotiertes Frame erstellen
                         annotated = frame.copy()
@@ -733,6 +752,7 @@ class RTSPHandler:
             "vehicle_image": detection.get('vehicle_image_base64'),
             "full_frame": detection.get('full_frame_base64'),
             "vehicle_type": detection.get('vehicle_type', 'Unbekannt'),
+            "vehicle_type_en": detection.get('vehicle_type_en', 'unknown'),
             "vehicle_color": detection.get('vehicle_color', 'Unbekannt'),
             "plate_bbox": detection.get('plate_bbox'),
             "vehicle_bbox": detection.get('vehicle_bbox'),

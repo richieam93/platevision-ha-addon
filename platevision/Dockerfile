@@ -7,6 +7,9 @@ ENV PYTHONUNBUFFERED=1 \
 # System-Abhängigkeiten (OpenCV/EasyOCR + ffmpeg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-deu \
     libglib2.0-0 \
     libgl1 \
     libsm6 \
