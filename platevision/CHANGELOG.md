@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.11 - 2026-06-03
+## 0.8.12 - 2026-06-03
 
 ### Added
 - Test-&-Upload-Erkennungslabor mit direkt einstellbaren OCR-, YOLO- und Preprocessing-Parametern.
