@@ -1,7 +1,8 @@
 name: "PlateVision"
 slug: platevision
-description: PlateVision 
-version: "0.8.10"
+description: PlateVision – lokale Kennzeichenerkennung mit RTSP, Test-Upload und OCR-Labor
+url: "https://github.com/richieam93/platevision-ha-addon"
+version: "0.8.11"
 arch:
   - amd64
 startup: services
