@@ -1,26 +1,7 @@
 # Changelog
-## 0.8.16 - 2026-06-03
 
-- Fahrzeug-Farberkennung robuster gemacht: Karosserie-Zonen statt nur Mittelpunkt.
-- Fenster, Kennzeichen/Scheinwerfer, Reifen/Strasse und helle Reflexionen werden optional ignoriert.
-- KMeans-Farbcluster und HSV/Lab-Bewertung kombiniert.
-- Test & Upload um Fahrzeugfarbe-/Karosserie-Farbe-Labor erweitert.
-- Farb-Konfidenz und Methode werden an Detektion/RTSP-Historie weitergegeben.
+## 0.8.17 
 
-
-## 0.8.15 - 2026-06-03
-
-### Added
-- PaddleOCR als dritte OCR-Engine ergänzt.
-- Auto-Modus erweitert auf PaddleOCR + EasyOCR + Tesseract mit Kandidaten-Bewertung.
-- Test-&-Upload-Labor um PaddleOCR-Sprache, Mindest-Konfidenz, Variantenlimit und Ausrichtungsprüfung erweitert.
-- Einstellungen-Seite um PaddleOCR-Optionen und Statusanzeige erweitert.
-
-### Changed
-- `auto_best` nutzt jetzt alle verfügbaren OCR-Engines und überspringt fehlende Engines automatisch.
-- OCR-Reader werden nach Test-/Speicheränderungen sauber neu geladen.
-
-## 0.8.14 - 2026-06-03
 
 ### Added
 - Echter Auto-Länder-Modus: bei Land/Format „Auto“ werden DE, CH, FL, AT, CZ, EU und NL automatisch getestet und gegeneinander bewertet.

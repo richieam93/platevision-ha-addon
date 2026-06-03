@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.16 ProTraffic OCR Color Lab
+Version 0.8.17 EasyOCR Raw Fallback
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -29,15 +29,10 @@ from difflib import SequenceMatcher
 from collections import Counter, defaultdict
 from pathlib import Path
 
-try:
-    import pytesseract
-except Exception:
-    pytesseract = None
-
-try:
-    from paddleocr import PaddleOCR
-except Exception:
-    PaddleOCR = None
+# PlateVision 0.8.17 uses EasyOCR only. Older configuration keys for
+# Tesseract/PaddleOCR are ignored so existing installations migrate safely.
+pytesseract = None
+PaddleOCR = None
 
 # ============================================================
 # KONFIGURATION & INITIALISIERUNG
@@ -556,13 +551,17 @@ class ConfigManager:
             'active_mode': 'enhanced',
             'retry_on_fail': True,
             'max_retries': 3,
-            # Umschaltbar in Test & Upload: easyocr, tesseract, paddleocr oder auto_best.
-            # auto_best nutzt alle verfügbaren Engines und wählt den besten Kandidaten.
-            'engine': 'auto_best',
-            'engine_options': ['easyocr', 'tesseract', 'paddleocr', 'auto_best'],
+            # EasyOCR only. If the normal plate read fails, a raw EasyOCR pass
+            # can read all letters/numbers from the plate crop without country rules.
+            'engine': 'easyocr',
+            'engine_options': ['easyocr'],
             # auto_country = country-independent plate mode; raw = read letters/numbers without country rules.
             'text_mode': 'auto_country',
             'accept_raw_ocr_fallback': True,
+            'raw_fallback_on_no_match': True,
+            'raw_fallback_min_confidence': 0.03,
+            'raw_fallback_min_length': 2,
+            'raw_fallback_confidence_floor': 0.36,
             'decoder': 'greedy',
             'paragraph_mode': False,
             'rotation_variants': True,
@@ -587,8 +586,8 @@ class ConfigManager:
             'tesseract_psm_fallbacks': [7, 8, 6, 13, 11],
             'tesseract_min_confidence': 0.20,
             'tesseract_extra_config': '-c preserve_interword_spaces=1',
-            # PaddleOCR wird lazy geladen, damit der Add-on-Start nicht unnötig verzögert wird.
-            'paddleocr_enabled': True,
+            # Legacy keys are kept for compatibility but ignored by the EasyOCR-only runtime.
+            'paddleocr_enabled': False,
             'paddleocr_lang': 'en',
             'paddleocr_use_angle_cls': False,
             'paddleocr_min_confidence': 0.18,
@@ -948,6 +947,29 @@ class ConfigManager:
             }
         except Exception as e:
             logger.warning(f"Analysebereich konnte nicht normalisiert werden: {e}")
+        return self._normalize_easyocr_only(config)
+
+    def _normalize_easyocr_only(self, config):
+        """Migrate old multi-OCR settings to the EasyOCR-only runtime.
+
+        Existing installations may still have engine=auto_best, tesseract or
+        paddleocr saved in data/config.json. This method makes sure the live
+        stream and Test & Upload always use EasyOCR, while the raw-text fallback
+        stays enabled for hard-to-read plates.
+        """
+        try:
+            ocr = config.setdefault('ocr', {})
+            ocr['engine'] = 'easyocr'
+            ocr['engine_options'] = ['easyocr']
+            ocr['paddleocr_enabled'] = False
+            ocr.setdefault('text_mode', 'auto_country')
+            ocr.setdefault('accept_raw_ocr_fallback', True)
+            ocr.setdefault('raw_fallback_on_no_match', True)
+            ocr.setdefault('raw_fallback_min_confidence', 0.03)
+            ocr.setdefault('raw_fallback_min_length', 2)
+            ocr.setdefault('raw_fallback_confidence_floor', 0.36)
+        except Exception as exc:
+            logger.debug(f"EasyOCR-Konfiguration konnte nicht normalisiert werden: {exc}")
         return config
 
     def _merge_configs(self, default, saved):
@@ -2284,8 +2306,8 @@ class LicensePlateDetector:
         self.ocr_signature = None
         self.paddle_ocr_reader = None
         self.paddle_ocr_signature = None
-        self.tesseract_available = pytesseract is not None
-        self.paddleocr_available = PaddleOCR is not None
+        self.tesseract_available = False
+        self.paddleocr_available = False
         self.models_loaded = False
         self.load_lock = threading.Lock()
         self.recent_plates = {}
@@ -2338,16 +2360,7 @@ class LicensePlateDetector:
                 self.ocr_reader = easyocr.Reader(languages, gpu=gpu_enabled)
                 self.ocr_signature = (tuple(languages), bool(gpu_enabled))
                 logger.info(f"EasyOCR geladen mit Sprachen: {languages}")
-                if pytesseract is None:
-                    logger.info("Tesseract OCR nicht verfügbar; EasyOCR bleibt aktiv.")
-                else:
-                    logger.info("Tesseract OCR verfügbar und in Test & Upload auswählbar.")
-                if PaddleOCR is None:
-                    logger.info("PaddleOCR nicht verfügbar; Auto-Modus nutzt EasyOCR/Tesseract.")
-                else:
-                    logger.info("PaddleOCR verfügbar und in Auto-Modus/Test & Upload auswählbar.")
-                    if self.config_manager.get('ocr', 'paddleocr_preload'):
-                        self._ensure_paddleocr_reader()
+                logger.info("OCR-Modus: EasyOCR only; Tesseract/PaddleOCR werden ignoriert.")
                 
                 self.models_loaded = True
                 return True
@@ -3025,6 +3038,108 @@ class LicensePlateDetector:
                 continue
         return candidates
 
+    def _read_plate_easyocr_raw_fallback(self, variants, allowed_chars):
+        """Read raw letters/numbers with EasyOCR when normal OCR found no plate.
+
+        This is deliberately less strict than the normal country-format reader:
+        it does not apply smart country corrections and it accepts any compact
+        alphanumeric text. It is used only as a fallback so it does not override
+        a good normal recognition result.
+        """
+        reader = self._ensure_easyocr_reader()
+        if reader is None:
+            return []
+
+        max_variants = int(self.config_manager.get('ocr', 'max_variants_to_read') or 8)
+        min_conf = float(self.config_manager.get('ocr', 'raw_fallback_min_confidence') or 0.03)
+        min_len = int(self.config_manager.get('ocr', 'raw_fallback_min_length') or 2)
+        max_len = int(self.config_manager.get('plate_recognition', 'max_length') or 12)
+        allowed = PlateUtils.normalize(allowed_chars or 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', compact=True)
+        if not allowed:
+            allowed = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+        # Raw fallback should never allow punctuation/spaces to dominate the result.
+        allowed = ''.join(ch for ch in allowed if ch.isalnum()) or 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+
+        decoders = []
+        for decoder in (self.config_manager.get('ocr', 'decoder') or 'greedy', 'greedy', 'beamsearch'):
+            if decoder and decoder not in decoders:
+                decoders.append(decoder)
+
+        candidates = []
+        seen = set()
+
+        def box_left(item):
+            try:
+                box = item[0]
+                xs = [float(pt[0]) for pt in box if len(pt) >= 2]
+                return min(xs) if xs else 0.0
+            except Exception:
+                return 0.0
+
+        for variant in variants[:max_variants]:
+            for decoder in decoders:
+                try:
+                    kwargs = {
+                        'detail': 1,
+                        'paragraph': False,
+                        'decoder': decoder,
+                        'allowlist': allowed,
+                        'text_threshold': min(float(self.config_manager.get('ocr', 'easyocr_text_threshold') or 0.30), 0.12),
+                        'low_text': min(float(self.config_manager.get('ocr', 'easyocr_low_text') or 0.20), 0.08),
+                        'link_threshold': min(float(self.config_manager.get('ocr', 'easyocr_link_threshold') or 0.10), 0.05),
+                        'width_ths': max(float(self.config_manager.get('ocr', 'easyocr_width_ths') or 0.80), 0.95),
+                        'mag_ratio': max(float(self.config_manager.get('ocr', 'easyocr_mag_ratio') or 2.0), 2.0),
+                    }
+                    results = reader.readtext(variant, **kwargs)
+                except Exception as exc:
+                    logger.debug(f"EasyOCR Rohtext-Fallback fehlgeschlagen: {exc}")
+                    continue
+
+                fragments = []
+                for item in sorted(results or [], key=box_left):
+                    try:
+                        text = item[1] if len(item) >= 2 else ''
+                        conf = float(item[2]) if len(item) >= 3 else 0.25
+                    except Exception:
+                        continue
+                    clean = PlateUtils.normalize(text, compact=True)
+                    clean = ''.join(ch for ch in clean if ch.isalnum())
+                    if clean and conf >= min_conf:
+                        fragments.append((clean, max(0.0, min(conf, 1.0))))
+
+                if not fragments:
+                    continue
+
+                raw_texts = []
+                if len(fragments) > 1 and self.config_manager.get('ocr', 'merge_fragments') is not False:
+                    raw_texts.append((''.join(t for t, _ in fragments), sum(c for _, c in fragments) / len(fragments)))
+                raw_texts.extend(fragments)
+
+                for text, conf in raw_texts:
+                    normalized = PlateUtils.normalize(text, compact=True)
+                    normalized = ''.join(ch for ch in normalized if ch.isalnum())
+                    if len(normalized) < min_len or len(normalized) > max_len or normalized in seen:
+                        continue
+                    seen.add(normalized)
+                    length_quality = min(1.0, max(0.0, (len(normalized) - 2) / 6.0))
+                    score = float(conf) + length_quality * 0.30 + min(len(normalized), 10) * 0.018
+                    if len(normalized) <= 3:
+                        score -= 0.35
+                    candidates.append({
+                        'text': normalized,
+                        'normalized': normalized,
+                        'confidence': float(conf),
+                        'score': round(score, 4),
+                        'engine': f'easyocr-raw-{decoder}',
+                        'format': 'Rohtext',
+                        'length': len(normalized),
+                        'length_quality': round(length_quality, 3),
+                        'raw_text': text,
+                        'raw_fallback': True,
+                    })
+
+        return candidates
+
     def _extract_paddle_pairs(self, obj):
         """Return [(text, confidence)] from PaddleOCR 2.x/3.x result shapes."""
         pairs = []
@@ -3240,35 +3355,30 @@ class LicensePlateDetector:
                         pass
                 variants.extend(rotated)
 
-            engine = str(self.config_manager.get('ocr', 'engine') or 'easyocr').lower().strip()
-            if engine in ('auto', 'auto_best', 'best', 'combined', 'ensemble', 'vote', 'all', 'auto_all', 'triple'):
-                # Prefer PaddleOCR first because it is often strongest on natural camera images;
-                # unavailable engines are skipped safely.
-                enabled_engines = ['paddleocr', 'easyocr', 'tesseract']
-            elif engine in ('paddle', 'paddleocr', 'ppocr'):
-                enabled_engines = ['paddleocr']
-            elif engine in ('tesseract', 'pytesseract'):
-                enabled_engines = ['tesseract']
-            elif engine in ('easyocr', 'easy'):
-                enabled_engines = ['easyocr']
-            else:
-                enabled_engines = ['paddleocr', 'easyocr', 'tesseract']
-
+            # EasyOCR only. Old saved values such as auto_best, tesseract or
+            # paddleocr are intentionally ignored in 0.8.17.
             min_confidence = self.config_manager.get('ocr', 'min_confidence') or 0.25
             allowed_chars = self.config_manager.get('ocr', 'allowed_characters') or ''
-            candidates = []
-            if 'paddleocr' in enabled_engines:
-                candidates.extend(self._read_plate_paddleocr(variants, allowed_chars))
-            if 'easyocr' in enabled_engines:
-                candidates.extend(self._read_plate_easyocr(variants, min_confidence, allowed_chars))
-            if 'tesseract' in enabled_engines:
-                candidates.extend(self._read_plate_tesseract(variants, allowed_chars))
+            candidates = self._read_plate_easyocr(variants, min_confidence, allowed_chars)
 
             best = self._select_best_ocr_candidate(candidates)
-            self._last_ocr_candidates = sorted(candidates, key=lambda item: item.get('score', 0), reverse=True)[:8]
+            raw_candidates = []
+            if not best and self.config_manager.get('ocr', 'raw_fallback_on_no_match') is not False:
+                # Last safety net: EasyOCR raw-text mode. This reads all letters
+                # and digits from the crop without country/format validation.
+                raw_candidates = self._read_plate_easyocr_raw_fallback(variants, allowed_chars)
+                best = self._select_best_ocr_candidate(raw_candidates)
+
+            all_candidates = list(candidates or []) + list(raw_candidates or [])
+            self._last_ocr_candidates = sorted(all_candidates, key=lambda item: item.get('score', 0), reverse=True)[:8]
             if not best:
                 return None, 0
-            return best.get('text'), float(best.get('confidence') or 0)
+
+            confidence = float(best.get('confidence') or 0)
+            if best.get('raw_fallback'):
+                floor = float(self.config_manager.get('ocr', 'raw_fallback_confidence_floor') or 0.36)
+                confidence = max(confidence, min(0.99, floor))
+            return best.get('text'), confidence
         except Exception as e:
             logger.error(f"OCR Fehler: {e}")
             return None, 0
@@ -4455,6 +4565,7 @@ def api_save_config():
         data = request.json
         
         config_manager.deep_update(config_manager.config, data or {})
+        config_manager.config = config_manager._normalize_easyocr_only(config_manager.config)
         config_manager.save_config()
         if isinstance(data, dict) and 'ocr' in data:
             detector.ocr_reader = None
@@ -4517,6 +4628,7 @@ def api_save_ocr_config():
             del data['preprocessing']
         
         config_manager.config['ocr'].update(data)
+        config_manager.config = config_manager._normalize_easyocr_only(config_manager.config)
         config_manager.save_config()
         
         detector.ocr_reader = None
@@ -4990,7 +5102,9 @@ def _extract_test_calibration_config(raw):
             'use_allowlist', 'tesseract_lang', 'tesseract_oem', 'tesseract_psm',
             'tesseract_min_confidence', 'tesseract_multi_psm', 'tesseract_psm_fallbacks',
             'tesseract_extra_config', 'prefer_country_format', 'fragment_min_confidence_factor',
-            'text_mode', 'accept_raw_ocr_fallback', 'auto_country_priority',
+            'text_mode', 'accept_raw_ocr_fallback', 'raw_fallback_on_no_match',
+            'raw_fallback_min_confidence', 'raw_fallback_min_length',
+            'raw_fallback_confidence_floor', 'auto_country_priority',
             'easyocr_text_threshold', 'easyocr_low_text', 'easyocr_link_threshold',
             'easyocr_width_ths', 'easyocr_mag_ratio', 'paddleocr_enabled', 'paddleocr_lang',
             'paddleocr_use_angle_cls', 'paddleocr_min_confidence', 'paddleocr_max_variants',
@@ -7111,7 +7225,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.16 ProTraffic OCR Color Lab                                    ║
+    ║     Version 0.8.17 EasyOCR Raw Fallback                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

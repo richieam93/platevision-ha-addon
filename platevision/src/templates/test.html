@@ -408,11 +408,9 @@
                                         <div class="col-md-6">
                                             <label class="form-label" for="testOcrEngine">OCR Engine</label>
                                             <select class="form-select form-select-sm" id="testOcrEngine">
-                                                <option value="auto_best">Auto: PaddleOCR + EasyOCR + Tesseract bester Treffer</option>
-                                                <option value="paddleocr">PaddleOCR</option>
-                                                <option value="easyocr">EasyOCR</option>
-                                                <option value="tesseract">Tesseract OCR</option>
+                                                <option value="easyocr" selected>EasyOCR</option>
                                             </select>
+                                            <div class="form-text text-secondary">Tesseract/PaddleOCR wurden entfernt. Der RTSP-Stream nutzt ebenfalls EasyOCR.</div>
                                         </div>
                                         <div class="col-md-6">
                                             <label class="form-label" for="testCountryHint">Land/Format</label>
@@ -441,6 +439,11 @@
                                             <input type="range" class="form-range" id="testOcrMinConfidence" min="0.05" max="0.90" step="0.01">
                                         </div>
                                         <div class="col-md-6">
+                                            <label class="form-label">Rohtext Mindest-Konf. <span class="range-value" id="testRawFallbackMinConfidenceValue"></span></label>
+                                            <input type="range" class="form-range" id="testRawFallbackMinConfidence" min="0.01" max="0.40" step="0.01">
+                                            <div class="form-text text-secondary">Wird nur verwendet, wenn normal kein Kennzeichen gefunden wurde.</div>
+                                        </div>
+                                        <div class="col-md-6">
                                             <label class="form-label">Anzeige-/History Mindest-Konfidenz <span class="range-value" id="testHistoryMinConfidenceValue"></span></label>
                                             <input type="range" class="form-range" id="testHistoryMinConfidence" min="0.05" max="0.90" step="0.01">
                                         </div>
@@ -460,41 +463,14 @@
                                             <label class="form-label" for="testEarlyStop">Early Stop</label>
                                             <input type="number" class="form-control form-control-sm" id="testEarlyStop" min="0.1" max="0.99" step="0.01">
                                         </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label" for="testTessPsm">Tesseract PSM</label>
-                                            <select class="form-select form-select-sm" id="testTessPsm">
-                                                <option value="7">7 Einzelne Textzeile</option>
-                                                <option value="8">8 Einzelnes Wort</option>
-                                                <option value="6">6 Textblock</option>
-                                                <option value="13">13 Raw line</option>
-                                            </select>
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label" for="testTessLang">Tesseract Sprachen</label>
-                                            <input type="text" class="form-control form-control-sm" id="testTessLang" placeholder="eng+deu">
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label">Tesseract Mindest-Konf. <span class="range-value" id="testTessMinConfidenceValue"></span></label>
-                                            <input type="range" class="form-range" id="testTessMinConfidence" min="0.05" max="0.90" step="0.01">
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label" for="testPaddleLang">PaddleOCR Sprache</label>
-                                            <select class="form-select form-select-sm" id="testPaddleLang">
-                                                <option value="en">en / Latein</option>
-                                                <option value="german">german</option>
-                                                <option value="fr">fr</option>
-                                                <option value="it">it</option>
-                                                <option value="latin">latin</option>
-                                            </select>
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label">PaddleOCR Mindest-Konf. <span class="range-value" id="testPaddleMinConfidenceValue"></span></label>
-                                            <input type="range" class="form-range" id="testPaddleMinConfidence" min="0.05" max="0.90" step="0.01">
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label" for="testPaddleMaxVariants">PaddleOCR Varianten</label>
-                                            <input type="number" class="form-control form-control-sm" id="testPaddleMaxVariants" min="1" max="24" step="1">
-                                        </div>
+                                        <input type="hidden" id="testTessPsm" value="7">
+                                        <input type="hidden" id="testTessLang" value="eng+deu">
+                                        <input type="hidden" id="testTessMinConfidence" value="0.20">
+                                        <span id="testTessMinConfidenceValue" class="d-none"></span>
+                                        <input type="hidden" id="testPaddleLang" value="en">
+                                        <input type="hidden" id="testPaddleMinConfidence" value="0.18">
+                                        <span id="testPaddleMinConfidenceValue" class="d-none"></span>
+                                        <input type="hidden" id="testPaddleMaxVariants" value="8">
                                         <div class="col-12">
                                             <label class="form-label" for="testAllowedChars">Erlaubte OCR-Zeichen</label>
                                             <input type="text" class="form-control form-control-sm" id="testAllowedChars">
@@ -504,10 +480,10 @@
                                             <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMergeFragments"><label class="form-check-label" for="testMergeFragments">OCR-Fragmente zusammenfügen</label></div>
                                             <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSmartCorrection"><label class="form-check-label" for="testSmartCorrection">OCR-Fehler intelligent korrigieren</label></div>
                                             <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPrettyOutput"><label class="form-check-label" for="testPrettyOutput">Format schön ausgeben</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRawFallback"><label class="form-check-label" for="testRawFallback">Rohtext-Fallback verwenden</label></div>
+                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRawFallback"><label class="form-check-label" for="testRawFallback">Falls normal nichts gefunden wird: Rohtext lesen</label></div>
                                             <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRotationVariants"><label class="form-check-label" for="testRotationVariants">180° Variante prüfen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPaddleEnabled"><label class="form-check-label" for="testPaddleEnabled">PaddleOCR im Auto-Modus verwenden</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPaddleAngleCls"><label class="form-check-label" for="testPaddleAngleCls">PaddleOCR Text-Ausrichtung prüfen</label></div>
+                                            <input type="checkbox" id="testPaddleEnabled" class="d-none">
+                                            <input type="checkbox" id="testPaddleAngleCls" class="d-none">
                                         </div>
                                     </div>
                                 </div>
@@ -1074,10 +1050,11 @@
         const h = cfg.history || {};
         const pr = cfg.plate_recognition || {};
         const vc = cfg.vehicle_color || {};
-        setVal('testOcrEngine', o.engine || 'auto_best');
+        setVal('testOcrEngine', 'easyocr');
         setVal('testCountryHint', pr.country_hint || 'auto');
         setVal('testOcrTextMode', o.text_mode || 'auto_country');
         setVal('testOcrMinConfidence', o.min_confidence ?? 0.25);
+        setVal('testRawFallbackMinConfidence', o.raw_fallback_min_confidence ?? 0.03);
         setVal('testHistoryMinConfidence', h.min_confidence_to_save ?? 0.35);
         setVal('testDecoder', o.decoder || 'greedy');
         setVal('testMaxVariants', o.max_variants_to_read ?? 8);
@@ -1095,8 +1072,8 @@
         setChecked('testPrettyOutput', pr.format_pretty_output !== false);
         setChecked('testRawFallback', o.accept_raw_ocr_fallback !== false);
         setChecked('testRotationVariants', !!o.rotation_variants);
-        setChecked('testPaddleEnabled', o.paddleocr_enabled !== false);
-        setChecked('testPaddleAngleCls', !!o.paddleocr_use_angle_cls);
+        setChecked('testPaddleEnabled', false);
+        setChecked('testPaddleAngleCls', false);
 
         setVal('testConf', d.confidence_threshold ?? 0.5);
         setVal('testVehicleConf', d.vehicle_confidence_threshold ?? 0.25);
@@ -1154,7 +1131,7 @@
         setChecked('testColorKmeans', vc.kmeans_enabled !== false);
         setChecked('testColorShowConfidence', !!vc.show_confidence_in_label);
         setChecked('testColorUnknownLow', !!vc.return_unknown_on_low_confidence);
-        ['testOcrMinConfidence', 'testHistoryMinConfidence', 'testTessMinConfidence', 'testPaddleMinConfidence', 'testConf', 'testVehicleConf', 'testPlateConf', 'testColorMinConfidence'].forEach(id => bindRange(id, 2));
+        ['testOcrMinConfidence', 'testRawFallbackMinConfidence', 'testHistoryMinConfidence', 'testConf', 'testVehicleConf', 'testPlateConf', 'testColorMinConfidence'].forEach(id => bindRange(id, 2));
     }
 
     function collectCalibrationSettings() {
@@ -1186,7 +1163,7 @@
                 save_full_frame: getChecked('testSaveFullFrame', true),
             },
             ocr: {
-                engine: getText('testOcrEngine', 'auto_best'),
+                engine: 'easyocr',
                 text_mode: getText('testOcrTextMode', 'auto_country'),
                 min_confidence: getNum('testOcrMinConfidence', 0.25),
                 allowed_characters: getText('testAllowedChars', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- ÄÖÜ'),
@@ -1201,13 +1178,15 @@
                 tesseract_psm: getInt('testTessPsm', 7),
                 tesseract_oem: 3,
                 tesseract_min_confidence: getNum('testTessMinConfidence', 0.20),
-                paddleocr_enabled: getChecked('testPaddleEnabled', true),
+                paddleocr_enabled: false,
                 paddleocr_lang: getText('testPaddleLang', 'en'),
                 paddleocr_use_angle_cls: getChecked('testPaddleAngleCls', false),
                 paddleocr_min_confidence: getNum('testPaddleMinConfidence', 0.18),
                 paddleocr_max_variants: getInt('testPaddleMaxVariants', 8),
                 prefer_country_format: true,
                 accept_raw_ocr_fallback: getChecked('testRawFallback', true),
+                raw_fallback_on_no_match: getChecked('testRawFallback', true),
+                raw_fallback_min_confidence: getNum('testRawFallbackMinConfidence', 0.03),
                 auto_country_priority: ['DE', 'CH', 'FL', 'AT', 'CZ', 'EU', 'NL'],
                 test_save_to_history_default: getChecked('testSaveHistory', false),
                 preprocessing: {

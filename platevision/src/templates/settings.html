@@ -712,12 +712,9 @@
                                     <div>
                                         <label class="form-label">OCR Engine</label>
                                         <select class="form-select" id="ocrEngine">
-                                            {% set ocr_engine = config.ocr.engine if config.ocr.engine is defined else 'auto_best' %}
-                                            <option value="auto_best" {% if ocr_engine in ['auto_best', 'auto', 'combined', 'ensemble'] %}selected{% endif %}>Auto: PaddleOCR + EasyOCR + Tesseract</option>
-                                            <option value="paddleocr" {% if ocr_engine == 'paddleocr' %}selected{% endif %}>PaddleOCR</option>
-                                            <option value="easyocr" {% if ocr_engine == 'easyocr' %}selected{% endif %}>EasyOCR</option>
-                                            <option value="tesseract" {% if ocr_engine == 'tesseract' %}selected{% endif %}>Tesseract OCR</option>
+                                            <option value="easyocr" selected>EasyOCR</option>
                                         </select>
+                                        <small class="text-secondary">Ab Version 0.8.17 wird nur noch EasyOCR verwendet.</small>
                                     </div>
                                     <div>
                                         <label class="form-label">Decoder</label>
@@ -740,23 +737,11 @@
                                         <label class="form-label">Min. Textlänge</label>
                                         <input type="number" class="form-control" id="ocrMinTextLength" min="1" max="10" value="{{ config.ocr.min_text_length if config.ocr.min_text_length is defined else 2 }}">
                                     </div>
-                                    <div>
-                                        <label class="form-label">PaddleOCR Sprache</label>
-                                        {% set paddle_lang = config.ocr.paddleocr_lang if config.ocr.paddleocr_lang is defined else 'en' %}
-                                        <select class="form-select" id="paddleOcrLang">
-                                            {% for lang in ['en', 'german', 'fr', 'it', 'latin'] %}
-                                            <option value="{{ lang }}" {% if paddle_lang == lang %}selected{% endif %}>{{ lang }}</option>
-                                            {% endfor %}
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label class="form-label">PaddleOCR Mindest-Konfidenz</label>
-                                        <input type="number" class="form-control" id="paddleOcrMinConfidence" min="0.05" max="0.9" step="0.01" value="{{ config.ocr.paddleocr_min_confidence if config.ocr.paddleocr_min_confidence is defined else 0.18 }}">
-                                    </div>
-                                    <div>
-                                        <label class="form-label">PaddleOCR Varianten</label>
-                                        <input type="number" class="form-control" id="paddleOcrMaxVariants" min="1" max="24" value="{{ config.ocr.paddleocr_max_variants if config.ocr.paddleocr_max_variants is defined else 8 }}">
-                                    </div>
+                                    <input type="hidden" id="paddleOcrLang" value="en">
+                                    <input type="hidden" id="paddleOcrMinConfidence" value="0.18">
+                                    <input type="hidden" id="paddleOcrMaxVariants" value="8">
+                                    <input type="checkbox" id="paddleOcrEnabled" class="d-none">
+                                    <input type="checkbox" id="paddleOcrAngleCls" class="d-none">
                                 </div>
                                 <div class="row g-3 mt-2">
                                     {% set bools = [
@@ -765,8 +750,7 @@
                                         ('mergeFragments', 'merge_fragments', 'OCR-Fragmente zusammenführen'),
                                         ('uppercaseOutput', 'uppercase_output', 'Großschreibung erzwingen'),
                                         ('useAllowlist', 'use_allowlist', 'Zeichenfilter als OCR-Allowlist nutzen'),
-                                        ('paddleOcrEnabled', 'paddleocr_enabled', 'PaddleOCR verwenden'),
-                                        ('paddleOcrAngleCls', 'paddleocr_use_angle_cls', 'PaddleOCR Text-Ausrichtung prüfen')
+                                        ('rawFallbackOnNoMatch', 'raw_fallback_on_no_match', 'Wenn normal nichts gefunden wird: Rohtext lesen')
                                     ] %}
                                     {% for el_id, key, label in bools %}
                                     <div class="col-md-6">
@@ -2068,7 +2052,7 @@
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">OCR Engine</td>
-                                        <td>PaddleOCR + EasyOCR + Tesseract</td>
+                                        <td>EasyOCR + Rohtext-Fallback</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">Backend</td>
@@ -2286,7 +2270,7 @@
             active_mode: document.getElementById('ocrMode').value,
             retry_on_fail: document.getElementById('retryOnFail').checked,
             max_retries: parseInt(document.getElementById('maxRetries').value),
-            engine: pvStr('ocrEngine', 'auto_best'),
+            engine: 'easyocr',
             decoder: pvStr('ocrDecoder', 'greedy'),
             paragraph_mode: pvBool('paragraphMode'),
             rotation_variants: pvBool('rotationVariants'),
@@ -2296,7 +2280,9 @@
             merge_fragments: pvBool('mergeFragments'),
             uppercase_output: pvBool('uppercaseOutput'),
             use_allowlist: pvBool('useAllowlist'),
-            paddleocr_enabled: pvBool('paddleOcrEnabled'),
+            raw_fallback_on_no_match: pvBool('rawFallbackOnNoMatch'),
+            accept_raw_ocr_fallback: pvBool('rawFallbackOnNoMatch'),
+            paddleocr_enabled: false,
             paddleocr_lang: pvStr('paddleOcrLang', 'en'),
             paddleocr_use_angle_cls: pvBool('paddleOcrAngleCls'),
             paddleocr_min_confidence: pvNum('paddleOcrMinConfidence', 0.18),
@@ -2594,8 +2580,8 @@
                     <div class="model-status">
                         <span class="model-status-dot ${data.ocr_reader ? 'loaded' : 'not-loaded'}"></span>
                         <span>EasyOCR: <strong class="${data.ocr_reader ? 'text-success' : 'text-danger'}">${data.ocr_reader ? 'Geladen' : 'Nicht geladen'}</strong></span>
-                        <span>Tesseract: <strong class="${data.tesseract_available ? 'text-success' : 'text-warning'}">${data.tesseract_available ? 'Verfügbar' : 'Nicht verfügbar'}</strong></span>
-                        <span>PaddleOCR: <strong class="${data.paddleocr_available ? 'text-success' : 'text-warning'}">${data.paddleocr_reader ? 'Geladen' : (data.paddleocr_available ? 'Verfügbar' : 'Nicht verfügbar')}</strong></span>
+                        <span>OCR-Modus: <strong class="text-success">EasyOCR only</strong></span>
+                        <span>Rohtext-Fallback: <strong class="text-success">aktivierbar</strong></span>
                     </div>
                     <div class="model-status mt-2">
                         <span class="text-secondary">Gesamtstatus:</span>

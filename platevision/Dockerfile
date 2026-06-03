@@ -1,12 +1,12 @@
 FROM python:3.10-slim
 
-ARG BUILD_VERSION=0.8.16
+ARG BUILD_VERSION=0.8.17
 ARG BUILD_ARCH=amd64
 LABEL io.hass.version="${BUILD_VERSION}" \
       io.hass.type="app" \
       io.hass.arch="${BUILD_ARCH}" \
       io.hass.name="PlateVision" \
-      io.hass.description="Lokale Kennzeichenerkennung mit RTSP, Test-Upload und OCR-Labor"
+      io.hass.description="Lokale Kennzeichenerkennung mit RTSP, Test-Upload und EasyOCR-Labor"
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
@@ -15,9 +15,6 @@ ENV PYTHONUNBUFFERED=1 \
 # System-Abhängigkeiten (OpenCV/EasyOCR + ffmpeg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    tesseract-ocr-deu \
     libglib2.0-0 \
     libgl1 \
     libsm6 \
