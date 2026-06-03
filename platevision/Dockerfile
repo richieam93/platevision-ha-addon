@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-ARG BUILD_VERSION=0.8.12
+ARG BUILD_VERSION=0.8.16
 ARG BUILD_ARCH=amd64
 LABEL io.hass.version="${BUILD_VERSION}" \
       io.hass.type="app" \

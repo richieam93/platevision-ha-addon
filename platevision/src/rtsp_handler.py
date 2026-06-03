@@ -754,6 +754,8 @@ class RTSPHandler:
             "vehicle_type": detection.get('vehicle_type', 'Unbekannt'),
             "vehicle_type_en": detection.get('vehicle_type_en', 'unknown'),
             "vehicle_color": detection.get('vehicle_color', 'Unbekannt'),
+            "vehicle_color_confidence": detection.get('vehicle_color_confidence', 0),
+            "vehicle_color_method": detection.get('vehicle_color_method', ''),
             "plate_bbox": detection.get('plate_bbox'),
             "vehicle_bbox": detection.get('vehicle_bbox'),
             "plate_center_x": detection.get('plate_center_x'),
@@ -778,6 +780,7 @@ class RTSPHandler:
                     'confidence': detection.get('confidence', 0),
                     'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
                     'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
+                    'vehicle_color_confidence': detection.get('vehicle_color_confidence', 0),
                     'timestamp': datetime.now().isoformat()
                 }, broadcast=True, namespace='/')
             except:

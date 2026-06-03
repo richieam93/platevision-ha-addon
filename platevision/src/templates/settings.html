@@ -712,8 +712,11 @@
                                     <div>
                                         <label class="form-label">OCR Engine</label>
                                         <select class="form-select" id="ocrEngine">
-                                            {% set ocr_engine = config.ocr.engine if config.ocr.engine is defined else 'easyocr' %}
+                                            {% set ocr_engine = config.ocr.engine if config.ocr.engine is defined else 'auto_best' %}
+                                            <option value="auto_best" {% if ocr_engine in ['auto_best', 'auto', 'combined', 'ensemble'] %}selected{% endif %}>Auto: PaddleOCR + EasyOCR + Tesseract</option>
+                                            <option value="paddleocr" {% if ocr_engine == 'paddleocr' %}selected{% endif %}>PaddleOCR</option>
                                             <option value="easyocr" {% if ocr_engine == 'easyocr' %}selected{% endif %}>EasyOCR</option>
+                                            <option value="tesseract" {% if ocr_engine == 'tesseract' %}selected{% endif %}>Tesseract OCR</option>
                                         </select>
                                     </div>
                                     <div>
@@ -737,6 +740,23 @@
                                         <label class="form-label">Min. Textlänge</label>
                                         <input type="number" class="form-control" id="ocrMinTextLength" min="1" max="10" value="{{ config.ocr.min_text_length if config.ocr.min_text_length is defined else 2 }}">
                                     </div>
+                                    <div>
+                                        <label class="form-label">PaddleOCR Sprache</label>
+                                        {% set paddle_lang = config.ocr.paddleocr_lang if config.ocr.paddleocr_lang is defined else 'en' %}
+                                        <select class="form-select" id="paddleOcrLang">
+                                            {% for lang in ['en', 'german', 'fr', 'it', 'latin'] %}
+                                            <option value="{{ lang }}" {% if paddle_lang == lang %}selected{% endif %}>{{ lang }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">PaddleOCR Mindest-Konfidenz</label>
+                                        <input type="number" class="form-control" id="paddleOcrMinConfidence" min="0.05" max="0.9" step="0.01" value="{{ config.ocr.paddleocr_min_confidence if config.ocr.paddleocr_min_confidence is defined else 0.18 }}">
+                                    </div>
+                                    <div>
+                                        <label class="form-label">PaddleOCR Varianten</label>
+                                        <input type="number" class="form-control" id="paddleOcrMaxVariants" min="1" max="24" value="{{ config.ocr.paddleocr_max_variants if config.ocr.paddleocr_max_variants is defined else 8 }}">
+                                    </div>
                                 </div>
                                 <div class="row g-3 mt-2">
                                     {% set bools = [
@@ -744,7 +764,9 @@
                                         ('rotationVariants', 'rotation_variants', '180°-Varianten prüfen'),
                                         ('mergeFragments', 'merge_fragments', 'OCR-Fragmente zusammenführen'),
                                         ('uppercaseOutput', 'uppercase_output', 'Großschreibung erzwingen'),
-                                        ('useAllowlist', 'use_allowlist', 'Zeichenfilter als EasyOCR-Allowlist nutzen')
+                                        ('useAllowlist', 'use_allowlist', 'Zeichenfilter als OCR-Allowlist nutzen'),
+                                        ('paddleOcrEnabled', 'paddleocr_enabled', 'PaddleOCR verwenden'),
+                                        ('paddleOcrAngleCls', 'paddleocr_use_angle_cls', 'PaddleOCR Text-Ausrichtung prüfen')
                                     ] %}
                                     {% for el_id, key, label in bools %}
                                     <div class="col-md-6">
@@ -2038,7 +2060,7 @@
                                 <table class="table table-sm text-start">
                                     <tr>
                                         <td class="text-secondary">Version</td>
-                                        <td class="fw-bold">0.8.5 ProTraffic People Image History</td>
+                                        <td class="fw-bold">0.8.16 ProTraffic OCR Color Lab</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">YOLO Version</td>
@@ -2046,7 +2068,7 @@
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">OCR Engine</td>
-                                        <td>EasyOCR</td>
+                                        <td>PaddleOCR + EasyOCR + Tesseract</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">Backend</td>
@@ -2264,7 +2286,7 @@
             active_mode: document.getElementById('ocrMode').value,
             retry_on_fail: document.getElementById('retryOnFail').checked,
             max_retries: parseInt(document.getElementById('maxRetries').value),
-            engine: pvStr('ocrEngine', 'easyocr'),
+            engine: pvStr('ocrEngine', 'auto_best'),
             decoder: pvStr('ocrDecoder', 'greedy'),
             paragraph_mode: pvBool('paragraphMode'),
             rotation_variants: pvBool('rotationVariants'),
@@ -2273,7 +2295,12 @@
             min_text_length: pvNum('ocrMinTextLength', 2),
             merge_fragments: pvBool('mergeFragments'),
             uppercase_output: pvBool('uppercaseOutput'),
-            use_allowlist: pvBool('useAllowlist')
+            use_allowlist: pvBool('useAllowlist'),
+            paddleocr_enabled: pvBool('paddleOcrEnabled'),
+            paddleocr_lang: pvStr('paddleOcrLang', 'en'),
+            paddleocr_use_angle_cls: pvBool('paddleOcrAngleCls'),
+            paddleocr_min_confidence: pvNum('paddleOcrMinConfidence', 0.18),
+            paddleocr_max_variants: pvNum('paddleOcrMaxVariants', 8)
         };
         
         saveConfig('/api/config/ocr', data, 'OCR-Einstellungen');
@@ -2488,7 +2515,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.8.5-protraffic-people-image-history',
+                    version: '0.8.16-protraffic-ocr-color-lab',
                     config: config
                 };
                 
@@ -2566,7 +2593,9 @@
                     </div>
                     <div class="model-status">
                         <span class="model-status-dot ${data.ocr_reader ? 'loaded' : 'not-loaded'}"></span>
-                        <span>OCR Engine (EasyOCR): <strong class="${data.ocr_reader ? 'text-success' : 'text-danger'}">${data.ocr_reader ? 'Geladen' : 'Nicht geladen'}</strong></span>
+                        <span>EasyOCR: <strong class="${data.ocr_reader ? 'text-success' : 'text-danger'}">${data.ocr_reader ? 'Geladen' : 'Nicht geladen'}</strong></span>
+                        <span>Tesseract: <strong class="${data.tesseract_available ? 'text-success' : 'text-warning'}">${data.tesseract_available ? 'Verfügbar' : 'Nicht verfügbar'}</strong></span>
+                        <span>PaddleOCR: <strong class="${data.paddleocr_available ? 'text-success' : 'text-warning'}">${data.paddleocr_reader ? 'Geladen' : (data.paddleocr_available ? 'Verfügbar' : 'Nicht verfügbar')}</strong></span>
                     </div>
                     <div class="model-status mt-2">
                         <span class="text-secondary">Gesamtstatus:</span>
