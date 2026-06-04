@@ -566,12 +566,24 @@ class RTSPHandler:
                         area_info = self._get_analysis_area(frame_h, frame_w)
                         area_enabled = area_info.get('enabled', False)
                         process_frame, offset_x, offset_y = self._apply_analysis_mask(frame, area_info)
+                        if self.config_manager.get('detection', 'detailed_logging') or self.config_manager.get('general', 'debug_mode'):
+                            logger.info('[RTSP Analyse] Frame=%sx%s ROI enabled=%s offset=%s,%s process_shape=%sx%s plate_conf=%s imgsz=%s ocr=%s/%s',
+                                        frame_w, frame_h, area_enabled, offset_x, offset_y,
+                                        process_frame.shape[1], process_frame.shape[0],
+                                        self.config_manager.get('detection', 'plate_detector_confidence'),
+                                        self.config_manager.get('detection', 'plate_detector_imgsz'),
+                                        self.config_manager.get('ocr', 'engine'),
+                                        self.config_manager.get('ocr', 'fast_plate_model'))
                         
                         # Erkennung auf Vollbild; ROI wird danach gefiltert. Nur im Legacy-Crop-Modus werden Crop-Koordinaten genutzt.
                         runtime_polygon = None
                         if area_enabled:
                             runtime_polygon = area_info.get('crop_polygon') if (offset_x or offset_y) else area_info.get('polygon')
                         results = self.detector.process_frame(process_frame, apply_analysis_area=False, runtime_roi_polygon=runtime_polygon)
+                        if self.config_manager.get('detection', 'detailed_logging') or self.config_manager.get('general', 'debug_mode'):
+                            logger.info('[RTSP Analyse] Roh-Ergebnis vor ROI-Filter: vehicles=%s plates=%s people=%s time_ms=%s',
+                                        len(results.get('vehicles', [])), len(results.get('detections', [])), len(results.get('people', [])),
+                                        round(float(results.get('processing_time') or 0) * 1000, 1))
                         
                         # Annotiertes Frame erstellen
                         annotated = frame.copy()
@@ -593,6 +605,8 @@ class RTSPHandler:
                                 vx2 += offset_x
                                 vy2 += offset_y
                                 if not self._bbox_allowed_in_analysis_area([vx1, vy1, vx2, vy2], area_info, kind='vehicle'):
+                                    if self.config_manager.get('detection', 'detailed_logging') or self.config_manager.get('general', 'debug_mode'):
+                                        logger.info('[RTSP Analyse] Fahrzeug durch ROI verworfen: bbox=%s type=%s', [vx1, vy1, vx2, vy2], vehicle.get('type'))
                                     continue
                                 vehicle['bbox'] = [vx1, vy1, vx2, vy2]
                                 vehicle['center_x'] = round((vx1 + vx2) / 2, 2)
@@ -617,6 +631,8 @@ class RTSPHandler:
                                 px2 += offset_x
                                 py2 += offset_y
                                 if not self._bbox_allowed_in_analysis_area([px1, py1, px2, py2], area_info, kind='plate'):
+                                    if self.config_manager.get('detection', 'detailed_logging') or self.config_manager.get('general', 'debug_mode'):
+                                        logger.info('[RTSP Analyse] Kennzeichen durch ROI verworfen: plate=%s bbox=%s', detection.get('plate_text'), [px1, py1, px2, py2])
                                     continue
                                 detection['plate_bbox'] = [px1, py1, px2, py2]
                                 detection['plate_center_x'] = round((px1 + px2) / 2, 2)
@@ -638,6 +654,8 @@ class RTSPHandler:
                                 else:
                                     cv2.rectangle(annotated, (px1, py1), (px2, py2), (0, 165, 255), 2)
                         results['detections'] = filtered_detections
+                        if self.config_manager.get('detection', 'detailed_logging') or self.config_manager.get('general', 'debug_mode'):
+                            logger.info('[RTSP Analyse] Nach ROI-Filter: vehicles=%s plates=%s', len(filtered_vehicles), len(filtered_detections))
 
                         # Personenerkennungen mit Offset einzeichnen und Fußpunkt/Zentrum gegen Straße prüfen
                         filtered_people = []
