@@ -367,3 +367,10 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 - Neuer Einstellungs-Tab **Modelle hochladen** für `.pt`, `.onnx` und `.engine`.
 - Hochgeladene Modelle werden bevorzugt unter `/data/models` gespeichert, damit sie Add-on-Updates überstehen.
 - Personenmodelle können nach dem Upload automatisch ausgewählt und optional direkt neu geladen werden.
+
+## Version 0.8.23
+
+- Neue Paketversion auf Basis der funktionierenden 0.8.22 CPU-/RTSP-Korrektur.
+- Straßenbereich/Polygon bleibt als RTSP-Analysebereich aktiv, mit CPU-Gate und gepuffertem ROI-Crop.
+- Test & Upload, Modelle, Personen-Crops und neue OCR-/YOLO-Pipeline bleiben enthalten.
+

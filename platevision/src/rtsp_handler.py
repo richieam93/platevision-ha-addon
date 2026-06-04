@@ -63,6 +63,14 @@ class RTSPHandler:
         
         # Duplikat-Erkennung
         self.recent_plates = {}
+
+        # CPU-Sparmodus / Bewegungsgate für den gespeicherten Straßenbereich
+        self._motion_prev_gray = None
+        self._motion_prev_shape = None
+        self._last_motion_time = 0.0
+        self._last_analysis_run_time = 0.0
+        self._last_motion_log_time = 0.0
+        self._last_roi_mode_log_time = 0.0
         
         logger.info("RTSP Handler initialisiert")
     
@@ -241,7 +249,8 @@ class RTSPHandler:
                 'mode': 'polygon',
                 'x': 0, 'y': 0, 'width': frame_width, 'height': frame_height,
                 'polygon': [], 'crop_polygon': [], 'mask_outside': False,
-                'coordinate_width': frame_width, 'coordinate_height': frame_height
+                'coordinate_width': frame_width, 'coordinate_height': frame_height,
+                'frame_width': frame_width, 'frame_height': frame_height
             }
 
         mask_outside = True
@@ -316,7 +325,9 @@ class RTSPHandler:
                 'crop_polygon': crop_polygon,
                 'mask_outside': mask_outside,
                 'coordinate_width': coord_w,
-                'coordinate_height': coord_h
+                'coordinate_height': coord_h,
+                'frame_width': frame_width,
+                'frame_height': frame_height
             }
 
         return {
@@ -324,21 +335,20 @@ class RTSPHandler:
             'mode': 'polygon',
             'x': 0, 'y': 0, 'width': frame_width, 'height': frame_height,
             'polygon': [], 'crop_polygon': [], 'mask_outside': False,
-            'coordinate_width': frame_width, 'coordinate_height': frame_height
+            'coordinate_width': frame_width, 'coordinate_height': frame_height,
+            'frame_width': frame_width, 'frame_height': frame_height
         }
 
     def _apply_analysis_mask(self, frame, area_info):
-        """
-        Gibt standardmäßig das komplette Frame an YOLO weiter.
+        """Prepare the frame that goes into YOLO.
 
-        Fix 0.8.21: Der Analysebereich darf nicht vor der YOLO-Erkennung
-        ausgeschnitten werden, sonst sieht das Fahrzeugmodell nicht mehr das
-        komplette Auto/LKW/Motorrad und es wird später kein Fahrzeugbild
-        gespeichert. Der ROI wird deshalb nach der Erkennung gefiltert.
-
-        Optionales Legacy-Verhalten:
-        - rtsp.analysis_area.crop_before_detection = true  -> alter Crop
-        - rtsp.analysis_area.mask_before_detection = true  -> Vollbild maskieren
+        0.8.23 CPU-Fix:
+        - If a road ROI is active, RTSP analysis uses a padded crop around that
+          ROI by default. This keeps the detector away from irrelevant parts of
+          the image while still leaving enough border so vehicles are not cut in
+          half.
+        - Foto/Test-Upload still uses the demo pipeline on the full uploaded
+          image; this method is only used by the RTSP loop.
         """
         if not area_info.get('enabled'):
             return frame, 0, 0
@@ -347,22 +357,128 @@ class RTSPHandler:
         mask_before = bool(self.config_manager.get('rtsp', 'analysis_area', 'mask_before_detection'))
 
         if crop_before:
-            ax = area_info['x']; ay = area_info['y']; aw = area_info['width']; ah = area_info['height']
-            process_frame = frame[ay:ay + ah, ax:ax + aw].copy()
-            if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('crop_polygon') or []) >= 3:
+            frame_h, frame_w = frame.shape[:2]
+            ax = int(area_info['x']); ay = int(area_info['y'])
+            aw = int(area_info['width']); ah = int(area_info['height'])
+            try:
+                pct = float(self.config_manager.get('rtsp', 'analysis_area', 'crop_padding_percent') or 25.0)
+            except Exception:
+                pct = 25.0
+            try:
+                min_px = int(self.config_manager.get('rtsp', 'analysis_area', 'crop_min_padding_px') or 120)
+            except Exception:
+                min_px = 120
+            pad_x = max(min_px, int(round(aw * max(0.0, pct) / 100.0)))
+            pad_y = max(min_px, int(round(ah * max(0.0, pct) / 100.0)))
+            cx1 = max(0, ax - pad_x)
+            cy1 = max(0, ay - pad_y)
+            cx2 = min(frame_w, ax + aw + pad_x)
+            cy2 = min(frame_h, ay + ah + pad_y)
+            if cx2 <= cx1 or cy2 <= cy1:
+                return frame, 0, 0
+            process_frame = frame[cy1:cy2, cx1:cx2].copy()
+            runtime_poly = [[int(pt[0] - cx1), int(pt[1] - cy1)] for pt in (area_info.get('polygon') or [])]
+            area_info['runtime_crop_polygon'] = runtime_poly
+            area_info['runtime_crop_bbox'] = [cx1, cy1, cx2, cy2]
+            if mask_before and area_info.get('mode') == 'polygon' and len(runtime_poly) >= 3:
                 mask = np.zeros(process_frame.shape[:2], dtype=np.uint8)
-                pts = np.array(area_info['crop_polygon'], dtype=np.int32)
+                pts = np.array(runtime_poly, dtype=np.int32)
                 cv2.fillPoly(mask, [pts], 255)
                 process_frame = cv2.bitwise_and(process_frame, process_frame, mask=mask)
-            return process_frame, ax, ay
+            return process_frame, cx1, cy1
 
         process_frame = frame.copy()
+        area_info['runtime_crop_polygon'] = area_info.get('polygon') or []
+        area_info['runtime_crop_bbox'] = [0, 0, frame.shape[1], frame.shape[0]]
         if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('polygon') or []) >= 3:
             mask = np.zeros(process_frame.shape[:2], dtype=np.uint8)
             pts = np.array(area_info['polygon'], dtype=np.int32)
             cv2.fillPoly(mask, [pts], 255)
             process_frame = cv2.bitwise_and(process_frame, process_frame, mask=mask)
         return process_frame, 0, 0
+
+    def _analysis_motion_active(self, frame, area_info):
+        """Return True when YOLO should run for this frame.
+
+        The check is intentionally cheap: it looks only at the saved road ROI,
+        compares it with the previous ROI frame, and skips heavy YOLO inference
+        when there is no relevant activity. A low-frequency idle scan still runs
+        so a stationary object is not ignored forever.
+        """
+        if not area_info or not area_info.get('enabled'):
+            return True
+        if self.config_manager.get('rtsp', 'analysis_area', 'motion_gate_enabled') is False:
+            return True
+
+        now = time.time()
+        try:
+            idle_scan = float(self.config_manager.get('rtsp', 'analysis_area', 'motion_gate_idle_scan_seconds') or 5.0)
+        except Exception:
+            idle_scan = 5.0
+        if self._last_analysis_run_time <= 0 or (idle_scan > 0 and now - self._last_analysis_run_time >= idle_scan):
+            return True
+
+        try:
+            x = int(area_info.get('x') or 0); y = int(area_info.get('y') or 0)
+            w = int(area_info.get('width') or frame.shape[1]); h = int(area_info.get('height') or frame.shape[0])
+            x2 = min(frame.shape[1], x + w); y2 = min(frame.shape[0], y + h)
+            if x2 <= x or y2 <= y:
+                return True
+            roi = frame[y:y2, x:x2]
+            if roi.size == 0:
+                return True
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            # Polygon mask, so the moving leaves/background outside the road bbox
+            # do not trigger the detector.
+            pts = area_info.get('crop_polygon') or []
+            if len(pts) >= 3:
+                mask = np.zeros(gray.shape, dtype=np.uint8)
+                cv2.fillPoly(mask, [np.array(pts, dtype=np.int32)], 255)
+                gray = cv2.bitwise_and(gray, gray, mask=mask)
+            max_w = 240
+            scale = max_w / max(gray.shape[1], 1)
+            if scale < 1.0:
+                gray = cv2.resize(gray, (max(1, int(gray.shape[1] * scale)), max(1, int(gray.shape[0] * scale))), interpolation=cv2.INTER_AREA)
+            gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
+            if self._motion_prev_gray is None or self._motion_prev_shape != gray.shape:
+                self._motion_prev_gray = gray
+                self._motion_prev_shape = gray.shape
+                self._last_motion_time = now
+                return True
+
+            diff = cv2.absdiff(self._motion_prev_gray, gray)
+            _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
+            changed_percent = (float(np.count_nonzero(thresh)) * 100.0) / float(max(1, thresh.size))
+            self._motion_prev_gray = gray
+            self._motion_prev_shape = gray.shape
+
+            try:
+                threshold_percent = float(self.config_manager.get('rtsp', 'analysis_area', 'motion_gate_threshold_percent') or 0.20)
+            except Exception:
+                threshold_percent = 0.20
+            try:
+                hold_seconds = float(self.config_manager.get('rtsp', 'analysis_area', 'motion_gate_hold_seconds') or 2.0)
+            except Exception:
+                hold_seconds = 2.0
+
+            if changed_percent >= threshold_percent:
+                self._last_motion_time = now
+                if now - self._last_motion_log_time > 2.0:
+                    logger.info(f"RTSP CPU-Gate: Bewegung im Straßenbereich erkannt ({changed_percent:.3f}% >= {threshold_percent:.3f}%). YOLO läuft.")
+                    self._last_motion_log_time = now
+                return True
+
+            if hold_seconds > 0 and now - self._last_motion_time <= hold_seconds:
+                return True
+
+            if now - self._last_motion_log_time > 10.0:
+                logger.info(f"RTSP CPU-Gate: keine Bewegung im Straßenbereich ({changed_percent:.3f}% < {threshold_percent:.3f}%). YOLO wird übersprungen; Idle-Scan spätestens nach {idle_scan:.1f}s.")
+                self._last_motion_log_time = now
+            return False
+        except Exception as exc:
+            logger.warning(f"RTSP CPU-Gate Fehler, YOLO läuft sicherheitshalber weiter: {exc}")
+            return True
 
     def _draw_analysis_area(self, frame, area_info):
         """Zeichnet die eine verbindliche Straßen-Analyse-Zone auf das Livebild."""
@@ -562,15 +678,41 @@ class RTSPHandler:
                         continue
                     
                     try:
-                        # Analysis Area holen und ggf. auf Straße/Polygon maskieren
+                        # Analysis Area holen und CPU-Sparmodus anwenden.
                         area_info = self._get_analysis_area(frame_h, frame_w)
                         area_enabled = area_info.get('enabled', False)
+                        now_roi_log = time.time()
+                        if area_enabled and now_roi_log - self._last_roi_mode_log_time > 15.0:
+                            logger.info(
+                                "RTSP Analysebereich aktiv: bbox=%s,%s %sx%s crop_before=%s padding=%s%% min_px=%s motion_gate=%s" % (
+                                    area_info.get('x'), area_info.get('y'), area_info.get('width'), area_info.get('height'),
+                                    self.config_manager.get('rtsp', 'analysis_area', 'crop_before_detection'),
+                                    self.config_manager.get('rtsp', 'analysis_area', 'crop_padding_percent'),
+                                    self.config_manager.get('rtsp', 'analysis_area', 'crop_min_padding_px'),
+                                    self.config_manager.get('rtsp', 'analysis_area', 'motion_gate_enabled')
+                                )
+                            )
+                            self._last_roi_mode_log_time = now_roi_log
+
+                        if area_enabled and not self._analysis_motion_active(frame, area_info):
+                            annotated = frame.copy()
+                            self._draw_analysis_area(annotated, area_info)
+                            self._draw_people_line(annotated, area_info)
+                            cv2.putText(annotated, "CPU-Sparmodus: keine Bewegung im Strassenbereich", (10, 30),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+                            with self.frame_lock:
+                                self.annotated_frame = annotated
+                            self.frame_count += 1
+                            time.sleep(process_interval)
+                            continue
+
                         process_frame, offset_x, offset_y = self._apply_analysis_mask(frame, area_info)
+                        self._last_analysis_run_time = time.time()
                         
-                        # Erkennung auf Vollbild; ROI wird danach gefiltert. Nur im Legacy-Crop-Modus werden Crop-Koordinaten genutzt.
+                        # Erkennung auf den RTSP-Analyse-Crop; danach wird gegen den exakten Straßenbereich gefiltert.
                         runtime_polygon = None
                         if area_enabled:
-                            runtime_polygon = area_info.get('crop_polygon') if (offset_x or offset_y) else area_info.get('polygon')
+                            runtime_polygon = area_info.get('runtime_crop_polygon') if (offset_x or offset_y) else area_info.get('polygon')
                         results = self.detector.process_frame(process_frame, apply_analysis_area=False, runtime_roi_polygon=runtime_polygon)
                         
                         # Annotiertes Frame erstellen

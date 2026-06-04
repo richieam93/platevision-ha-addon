@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.22 FastPlateOCR Vehicle Intelligence
+Version 0.8.23 FastPlateOCR Vehicle Intelligence
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -334,8 +334,17 @@ class ConfigManager:
                 'enabled': False,
                 'mode': 'polygon',
                 'mask_outside': True,
-                'crop_before_detection': False,
+                # RTSP CPU-Sparmodus: Erkennung standardmäßig auf den gespeicherten
+                # Straßenbereich beschränken. Der Crop bekommt bewusst Zusatzrand,
+                # damit Fahrzeuge/LKW/Motorräder nicht abgeschnitten werden.
+                'crop_before_detection': True,
                 'mask_before_detection': False,
+                'crop_padding_percent': 25.0,
+                'crop_min_padding_px': 120,
+                'motion_gate_enabled': True,
+                'motion_gate_threshold_percent': 0.20,
+                'motion_gate_hold_seconds': 2.0,
+                'motion_gate_idle_scan_seconds': 5.0,
                 'coordinate_width': 1280,
                 'coordinate_height': 720,
                 'area': {
@@ -695,7 +704,7 @@ class ConfigManager:
         return self._normalize_analysis_area(json.loads(json.dumps(self.DEFAULT_CONFIG)))
     
     def _migrate_config_for_0821(self, config, saved_config=None):
-        """Apply safe defaults for the 0.8.22 OCR/vehicle pipeline.
+        """Apply safe defaults for the 0.8.23 OCR/vehicle pipeline.
 
         This keeps EasyOCR available, but makes fast-plate-ocr the default OCR
         engine for both RTSP and upload analysis. Existing configs from older
@@ -705,7 +714,7 @@ class ConfigManager:
             ocr_cfg = config.setdefault('ocr', {})
             migration_cfg = config.setdefault('migration', {})
             old_engine = str(ocr_cfg.get('engine') or '').strip().lower()
-            # Apply the new 0.8.22 default once for old installations. After the
+            # Apply the new 0.8.23 default once for old installations. After the
             # flag is stored, a user can switch back to EasyOCR in the settings
             # and the next restart will keep that explicit choice.
             if not migration_cfg.get('fast_plate_ocr_default_applied'):
@@ -728,7 +737,7 @@ class ConfigManager:
             if 'bicycle' not in classes:
                 detection['vehicle_class_filter'] = list(classes) + ['bicycle']
 
-            # 0.8.22b: make live/test upload use the same robust plate-detector
+            # 0.8.23b: make live/test upload use the same robust plate-detector
             # settings that worked in the demo UI. This is applied once to older
             # saved configs because otherwise old thresholds can override the new
             # DEFAULT_CONFIG after merge_config().
@@ -758,10 +767,37 @@ class ConfigManager:
                 detection.setdefault('plate_scan_strategy', 'full_frame_first')
 
             area = config.setdefault('rtsp', {}).setdefault('analysis_area', {})
-            area.setdefault('crop_before_detection', False)
-            area.setdefault('mask_before_detection', False)
+            area.setdefault('crop_padding_percent', 25.0)
+            area.setdefault('crop_min_padding_px', 120)
+            area.setdefault('motion_gate_enabled', True)
+            area.setdefault('motion_gate_threshold_percent', 0.20)
+            area.setdefault('motion_gate_hold_seconds', 2.0)
+            area.setdefault('motion_gate_idle_scan_seconds', 5.0)
+            if not migration_cfg.get('rtsp_cpu_saver_area_applied_v1'):
+                # 0.8.23 CPU-Fix: Nicht mehr permanent das komplette Bild durch
+                # drei YOLO-Stufen schicken. Der verbindliche Straßenbereich wird
+                # vor der RTSP-Erkennung als gepolsterter Crop genutzt. Das Demo-
+                # Verhalten für Foto-Uploads bleibt unverändert.
+                area['crop_before_detection'] = True
+                area['mask_before_detection'] = False
+                area['crop_padding_percent'] = float(area.get('crop_padding_percent') or 25.0)
+                area['crop_min_padding_px'] = int(area.get('crop_min_padding_px') or 120)
+                area['motion_gate_enabled'] = True
+                area['motion_gate_threshold_percent'] = float(area.get('motion_gate_threshold_percent') or 0.20)
+                area['motion_gate_hold_seconds'] = float(area.get('motion_gate_hold_seconds') or 2.0)
+                area['motion_gate_idle_scan_seconds'] = float(area.get('motion_gate_idle_scan_seconds') or 5.0)
+                detection_cfg = config.setdefault('detection', {})
+                try:
+                    if float(detection_cfg.get('process_interval') or 0.5) < 0.8:
+                        detection_cfg['process_interval'] = 0.8
+                except Exception:
+                    detection_cfg['process_interval'] = 0.8
+                migration_cfg['rtsp_cpu_saver_area_applied_v1'] = True
+            else:
+                area.setdefault('crop_before_detection', True)
+                area.setdefault('mask_before_detection', False)
 
-            # 0.8.22c: persons should be stored with images like vehicle/plate detections.
+            # 0.8.23c: persons should be stored with images like vehicle/plate detections.
             # This is applied once to existing installations so the /people page gets
             # useful image history from Test & Upload and from the RTSP loop.
             people_cfg = config.setdefault('people', {})
@@ -784,7 +820,7 @@ class ConfigManager:
                 people_cfg['image_history_store_full_frame'] = False
                 migration_cfg['people_crop_only_display_applied_v1'] = True
         except Exception as exc:
-            logger.warning(f"0.8.22 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
+            logger.warning(f"0.8.23 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
         return config
 
     def _normalize_analysis_area(self, config):
@@ -3804,6 +3840,7 @@ def api_rtsp_analysis_area():
 
         xs = [p['x'] for p in clean_points]
         ys = [p['y'] for p in clean_points]
+        existing_area = config_manager.get('rtsp', 'analysis_area') or {}
         normalized = {
             'enabled': bool(area.get('enabled', True)),
             'mode': 'polygon',
@@ -3816,7 +3853,16 @@ def api_rtsp_analysis_area():
                 'y': int(min(ys)),
                 'width': int(max(1, max(xs) - min(xs))),
                 'height': int(max(1, max(ys) - min(ys))),
-            }
+            },
+            # Keep RTSP CPU-saver keys when the user only saves the polygon.
+            'crop_before_detection': area.get('crop_before_detection', existing_area.get('crop_before_detection', True)),
+            'mask_before_detection': area.get('mask_before_detection', existing_area.get('mask_before_detection', False)),
+            'crop_padding_percent': area.get('crop_padding_percent', existing_area.get('crop_padding_percent', 25.0)),
+            'crop_min_padding_px': area.get('crop_min_padding_px', existing_area.get('crop_min_padding_px', 120)),
+            'motion_gate_enabled': area.get('motion_gate_enabled', existing_area.get('motion_gate_enabled', True)),
+            'motion_gate_threshold_percent': area.get('motion_gate_threshold_percent', existing_area.get('motion_gate_threshold_percent', 0.20)),
+            'motion_gate_hold_seconds': area.get('motion_gate_hold_seconds', existing_area.get('motion_gate_hold_seconds', 2.0)),
+            'motion_gate_idle_scan_seconds': area.get('motion_gate_idle_scan_seconds', existing_area.get('motion_gate_idle_scan_seconds', 5.0)),
         }
         config_manager.config.setdefault('rtsp', {})['analysis_area'] = normalized
         config_manager.config['rtsp']['resolution'] = {'width': coord_w, 'height': coord_h}
@@ -4780,7 +4826,7 @@ def _json_safe(value, _seen=None):
 
     The live detector keeps OpenCV crops as numpy arrays and some nested helper
     dicts for debugging. Flask cannot serialize numpy objects, and a bug in the
-    first 0.8.22 build created a color palette self-reference. This helper also
+    first 0.8.23 build created a color palette self-reference. This helper also
     protects future API responses against circular references.
     """
     if _seen is None:
@@ -5778,7 +5824,7 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.22',
+        'version': '0.8.23',
         'edition': 'FastPlateOCR + YOLO Vehicle Intelligence',
         'features': [
             'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
@@ -6580,7 +6626,7 @@ def api_people_cleanup():
 
 @app.route('/api/people/test/simulate', methods=['POST'])
 def api_people_test_simulate():
-    return jsonify({'success': False, 'error': 'Demo-Daten wurden in Version 0.8.22 entfernt. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
+    return jsonify({'success': False, 'error': 'Demo-Daten wurden in Version 0.8.23 entfernt. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
 
 @app.route('/api/system/health')
 def api_system_health():
@@ -6597,7 +6643,7 @@ def api_system_health():
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.22'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.23'})
 
 
 @app.route('/api/system/audit')
@@ -6694,7 +6740,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.22 FastPlateOCR Vehicle Intelligence                                    ║
+    ║     Version 0.8.23 FastPlateOCR Vehicle Intelligence                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║
