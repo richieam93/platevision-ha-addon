@@ -357,95 +357,6 @@
                         <i class="fas fa-magic me-2"></i>Erkennung starten
                     </button>
                 </div>
-                    <div class="recognition-tuning-panel mt-3 p-3 rounded border border-secondary-subtle bg-dark bg-opacity-25">
-                        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
-                            <div>
-                                <h6 class="mb-1"><i class="fas fa-sliders me-2 text-warning"></i>OCR-/Erkennungsparameter für diesen Test</h6>
-                                <p class="text-secondary small mb-0">Diese Werte gelten nur für den Upload-Test. Du kannst danach mit demselben Bild sofort erneut scannen.</p>
-                            </div>
-                            <button class="btn btn-sm btn-outline-warning" type="button" onclick="processImage()" title="Mit aktuellen Parametern erneut scannen">
-                                <i class="fas fa-rotate me-1"></i>Erneut scannen
-                            </button>
-                        </div>
-
-                        <div class="row g-2 mt-1">
-                            <div class="col-sm-4">
-                                <label class="form-label small">YOLO Fahrzeuge/Kennzeichen</label>
-                                <input class="form-control form-control-sm" type="number" step="0.05" min="0.05" max="0.95" id="recConf" value="{{ config.detection.confidence_threshold|default(0.5) }}">
-                            </div>
-                            <div class="col-sm-4">
-                                <label class="form-label small">Kennzeichen-Faktor</label>
-                                <input class="form-control form-control-sm" type="number" step="0.05" min="0.1" max="1.2" id="recPlateFactor" value="{{ config.detection.plate_detector_confidence_factor|default(0.6) }}">
-                            </div>
-                            <div class="col-sm-4">
-                                <label class="form-label small">Min. Speichern/OCR</label>
-                                <input class="form-control form-control-sm" type="number" step="0.05" min="0.0" max="0.95" id="recSaveConf" value="{{ config.history.min_confidence_to_save|default(0.35) }}">
-                            </div>
-
-                            <div class="col-sm-4">
-                                <label class="form-label small">OCR min. Konfidenz</label>
-                                <input class="form-control form-control-sm" type="number" step="0.05" min="0.0" max="0.95" id="recOcrConf" value="{{ config.ocr.min_confidence|default(0.25) }}">
-                            </div>
-                            <div class="col-sm-4">
-                                <label class="form-label small">OCR Decoder</label>
-                                <select class="form-select form-select-sm" id="recDecoder">
-                                    <option value="greedy" {% if config.ocr.decoder == 'greedy' %}selected{% endif %}>greedy</option>
-                                    <option value="beamsearch" {% if config.ocr.decoder == 'beamsearch' %}selected{% endif %}>beamsearch</option>
-                                    <option value="wordbeamsearch" {% if config.ocr.decoder == 'wordbeamsearch' %}selected{% endif %}>wordbeamsearch</option>
-                                </select>
-                            </div>
-                            <div class="col-sm-4">
-                                <label class="form-label small">Land/Format</label>
-                                <select class="form-select form-select-sm" id="recCountryHint">
-                                    {% set country_hint = config.plate_recognition.country_hint|default('CH') %}
-                                    {% for country in ['auto', 'CH', 'FL', 'DE', 'AT', 'NL'] %}
-                                        <option value="{{ country }}" {% if country_hint == country %}selected{% endif %}>{{ country }}</option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-
-                            <div class="col-sm-4">
-                                <label class="form-label small">OCR Varianten</label>
-                                <input class="form-control form-control-sm" type="number" min="1" max="20" id="recMaxVariants" value="{{ config.ocr.max_variants_to_read|default(8) }}">
-                            </div>
-                            <div class="col-sm-4">
-                                <label class="form-label small">Zielhöhe Schild</label>
-                                <input class="form-control form-control-sm" type="number" min="40" max="260" id="recTargetHeight" value="{{ config.ocr.preprocessing.target_height|default(120) }}">
-                            </div>
-                            <div class="col-sm-4">
-                                <label class="form-label small">Resize-Faktor</label>
-                                <input class="form-control form-control-sm" type="number" step="0.25" min="1" max="8" id="recResizeFactor" value="{{ config.ocr.preprocessing.resize_factor|default(4.0) }}">
-                            </div>
-
-                            <div class="col-sm-4">
-                                <label class="form-label small">Zoom-Faktor</label>
-                                <input class="form-control form-control-sm" type="number" step="0.25" min="1" max="6" id="recZoomFactor" value="{{ config.detection.zoom_factor|default(2.5) }}">
-                            </div>
-                            <div class="col-sm-4">
-                                <label class="form-label small">Zoom-Padding</label>
-                                <input class="form-control form-control-sm" type="number" min="0" max="400" id="recZoomPadding" value="{{ config.detection.zoom_padding|default(100) }}">
-                            </div>
-                            <div class="col-sm-4">
-                                <label class="form-label small">Fahrzeug-Kontext Breite</label>
-                                <input class="form-control form-control-sm" type="number" step="0.5" min="3" max="14" id="recContextWidth" value="{{ config.detection.vehicle_context_width_factor|default(7.0) }}">
-                            </div>
-                        </div>
-
-                        <div class="row g-2 mt-2 small">
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recSaveHistory"><label class="form-check-label" for="recSaveHistory">In Historie speichern</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recCarDetection" {% if config.detection.car_detection_enabled %}checked{% endif %}><label class="form-check-label" for="recCarDetection">Fahrzeuge erkennen</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recFullFrame" {% if config.detection.scan_full_frame_when_vehicle_found %}checked{% endif %}><label class="form-check-label" for="recFullFrame">Zusätzlich Vollbild scannen</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recZoomEnabled" {% if config.detection.zoom_enabled %}checked{% endif %}><label class="form-check-label" for="recZoomEnabled">Fahrzeug-Zoom</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recVehicleFallback" {% if config.detection.vehicle_context_fallback_enabled != false %}checked{% endif %}><label class="form-check-label" for="recVehicleFallback">Fahrzeugbild-Fallback</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recAllowlist" {% if config.ocr.use_allowlist %}checked{% endif %}><label class="form-check-label" for="recAllowlist">OCR-Allowlist</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recPreEnabled" {% if config.ocr.preprocessing.enabled %}checked{% endif %}><label class="form-check-label" for="recPreEnabled">Vorverarbeitung</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recContrast" {% if config.ocr.preprocessing.contrast_enhance %}checked{% endif %}><label class="form-check-label" for="recContrast">Kontrast/CLAHE</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recAdaptive" {% if config.ocr.preprocessing.adaptive_threshold %}checked{% endif %}><label class="form-check-label" for="recAdaptive">Adaptive Schwelle</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recDenoise" {% if config.ocr.preprocessing.denoise %}checked{% endif %}><label class="form-check-label" for="recDenoise">Rauschfilter</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recSharpen" {% if config.ocr.preprocessing.sharpen %}checked{% endif %}><label class="form-check-label" for="recSharpen">Schärfen</label></div></div>
-                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recRotation" {% if config.ocr.rotation_variants %}checked{% endif %}><label class="form-check-label" for="recRotation">Schräglage testen</label></div></div>
-                        </div>
-                    </div>
                 
                 <hr class="my-4">
                 
@@ -856,86 +767,12 @@
     // ============================================
     // IMAGE PROCESSING
     // ============================================
-
-    function getNumberValue(id, fallback = null) {
-        const el = document.getElementById(id);
-        if (!el || el.value === '') return fallback;
-        const value = Number(el.value);
-        return Number.isFinite(value) ? value : fallback;
-    }
-
-    function isChecked(id) {
-        return !!document.getElementById(id)?.checked;
-    }
-
-    function gatherRecognitionSettings() {
-        return {
-            detection: {
-                confidence_threshold: getNumberValue('recConf', 0.5),
-                plate_detector_confidence_factor: getNumberValue('recPlateFactor', 0.6),
-                car_detection_enabled: isChecked('recCarDetection'),
-                zoom_enabled: isChecked('recZoomEnabled'),
-                zoom_factor: getNumberValue('recZoomFactor', 2.5),
-                zoom_padding: getNumberValue('recZoomPadding', 100),
-                scan_full_frame_when_vehicle_found: isChecked('recFullFrame'),
-                vehicle_context_fallback_enabled: isChecked('recVehicleFallback'),
-                vehicle_context_width_factor: getNumberValue('recContextWidth', 7.0),
-                vehicle_context_height_factor: 5.0,
-                vehicle_plate_match_margin: 35
-            },
-            ocr: {
-                min_confidence: getNumberValue('recOcrConf', 0.25),
-                decoder: document.getElementById('recDecoder')?.value || 'greedy',
-                use_allowlist: isChecked('recAllowlist'),
-                rotation_variants: isChecked('recRotation'),
-                merge_fragments: true,
-                return_debug: true,
-                max_variants_to_read: getNumberValue('recMaxVariants', 8),
-                preprocessing: {
-                    enabled: isChecked('recPreEnabled'),
-                    resize_factor: getNumberValue('recResizeFactor', 4.0),
-                    target_height: getNumberValue('recTargetHeight', 120),
-                    min_width: 200,
-                    denoise: isChecked('recDenoise'),
-                    sharpen: isChecked('recSharpen'),
-                    contrast_enhance: isChecked('recContrast'),
-                    adaptive_threshold: isChecked('recAdaptive'),
-                    threshold_block_size: 11,
-                    threshold_c: 2,
-                    morphology: true,
-                    invert_variant: true,
-                    bilateral_filter: false,
-                    border_padding: 6
-                }
-            },
-            history: {
-                min_confidence_to_save: getNumberValue('recSaveConf', 0.35)
-            },
-            plate_recognition: {
-                country_hint: document.getElementById('recCountryHint')?.value || 'CH',
-                min_length: 3,
-                max_length: 12,
-                smart_ocr_correction: true,
-                format_pretty_output: true
-            }
-        };
-    }
     
     function processImage() {
-        if (!selectedFile) {
-            showToast('Hinweis', 'Bitte zuerst ein Bild auswählen.', 'warning');
-            return;
-        }
-        if (!selectedFile.type.startsWith('image/')) {
-            showToast('Hinweis', 'Die OCR-Schnellparameter sind für Bild-Uploads gedacht. Für Videos bitte „Erkennung starten“ verwenden.', 'warning');
-            return;
-        }
-        showProcessing('Bild wird analysiert...', 'Erkenne Fahrzeuge, Kennzeichen und OCR-Kandidaten...');
+        showProcessing('Bild wird analysiert...', 'Erkenne Fahrzeuge und Kennzeichen...');
         
         const formData = new FormData();
         formData.append('file', selectedFile);
-        formData.append('settings_json', JSON.stringify(gatherRecognitionSettings()));
-        formData.append('save_to_history', isChecked('recSaveHistory') ? 'true' : 'false');
         
         fetch('/api/process/image', {
             method: 'POST',
@@ -985,36 +822,6 @@
         displayPeopleList(data.people);
     }
     
-    function escapeHtml(value) {
-        return String(value ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'}[ch]));
-    }
-
-    function renderOcrCandidates(det) {
-        const candidates = det?.ocr_details?.candidates || [];
-        if (!candidates.length) return '';
-        const rows = candidates.slice(0, 5).map((c, i) => `
-            <tr>
-                <td>${i + 1}</td>
-                <td><code>${escapeHtml(c.pretty || c.corrected || c.raw)}</code></td>
-                <td>${escapeHtml(c.format || '-')}</td>
-                <td>${c.valid ? '<span class="text-success">ja</span>' : '<span class="text-secondary">nein</span>'}</td>
-                <td>${Math.round((c.confidence || 0) * 100)}%</td>
-                <td>${Number(c.score || 0).toFixed(2)}</td>
-            </tr>
-        `).join('');
-        return `
-            <details class="mt-2 small">
-                <summary class="text-info" style="cursor:pointer;">OCR-Kandidaten anzeigen</summary>
-                <div class="table-responsive mt-2">
-                    <table class="table table-sm table-dark table-striped align-middle mb-0">
-                        <thead><tr><th>#</th><th>Kandidat</th><th>Format</th><th>gültig</th><th>OCR</th><th>Score</th></tr></thead>
-                        <tbody>${rows}</tbody>
-                    </table>
-                </div>
-            </details>
-        `;
-    }
-
     function displayDetectionsList(detections) {
         const listEl = document.getElementById('detectionsList');
         
@@ -1022,52 +829,46 @@
             listEl.innerHTML = `
                 <div class="alert alert-warning mb-0">
                     <i class="fas fa-exclamation-triangle me-2"></i>
-                    Keine Kennzeichen erkannt. Passe links die OCR-/Erkennungsparameter an und klicke auf „Erneut scannen“.
+                    Keine Kennzeichen erkannt. Versuchen Sie ein anderes Bild oder passen Sie die Einstellungen an.
                 </div>
             `;
             return;
         }
         
         listEl.innerHTML = detections.map((det, index) => `
-            <div class="detection-result flex-wrap">
+            <div class="detection-result">
                 ${det.plate_image_base64 
-                    ? `<img src="data:image/jpeg;base64,${det.plate_image_base64}" alt="Kennzeichen ${index + 1}" onclick="showImageModal(this.src, 'Kennzeichen')" style="cursor:pointer;">`
+                    ? `<img src="data:image/jpeg;base64,${det.plate_image_base64}" alt="Kennzeichen ${index + 1}">`
                     : `<div class="detection-result-placeholder"><i class="fas fa-id-card text-secondary"></i></div>`
                 }
-                <div class="detection-result-info" style="min-width: 220px;">
+                <div class="detection-result-info">
                     <div class="plate-badge mb-2" style="display: inline-block;">
-                        ${escapeHtml(det.plate_text || 'Nicht lesbar')}
+                        ${det.plate_text || 'Nicht lesbar'}
                     </div>
                     <div class="d-flex flex-wrap gap-2 align-items-center" style="font-size: 0.8rem;">
                         <span class="text-secondary">
-                            <i class="fas fa-car me-1"></i>${escapeHtml(det.vehicle_type || 'Unbekannt')}
+                            <i class="fas fa-car me-1"></i>${det.vehicle_type || 'Unbekannt'}
                         </span>
-                        ${det.vehicle_crop_source === 'plate_context' ? `
-                            <span class="badge bg-warning text-dark" title="Fahrzeug wurde nicht sicher erkannt, es wird ein Kontextausschnitt gespeichert.">Kontextbild</span>
-                        ` : ''}
                         ${det.vehicle_color && det.vehicle_color !== 'Unbekannt' ? `
                             <span class="text-secondary">
-                                <i class="fas fa-palette me-1"></i>${escapeHtml(det.vehicle_color)}
+                                <i class="fas fa-palette me-1"></i>${det.vehicle_color}
                             </span>
                         ` : ''}
                         <span class="confidence-badge ${getConfidenceClass(det.confidence)}">
                             ${det.confidence ? Math.round(det.confidence * 100) : 0}%
                         </span>
-                        <span class="text-secondary">YOLO Schild: ${det.plate_score ? Math.round(det.plate_score * 100) : 0}%</span>
                     </div>
-                    ${renderOcrCandidates(det)}
                 </div>
                 ${det.vehicle_image_base64 ? `
                     <img src="data:image/jpeg;base64,${det.vehicle_image_base64}" 
                          alt="Fahrzeug" 
-                         style="width: 96px; height: 72px; object-fit: cover; border-radius: 6px; cursor: pointer;"
+                         style="width: 80px; height: 60px; object-fit: cover; border-radius: 6px; cursor: pointer;"
                          onclick="showImageModal(this.src, 'Fahrzeug')"
                          title="Fahrzeugbild anzeigen">
-                ` : `<div class="detection-result-placeholder" title="Kein Fahrzeugbild"><i class="fas fa-car text-secondary"></i></div>`}
+                ` : ''}
             </div>
         `).join('');
     }
-
     
 
 

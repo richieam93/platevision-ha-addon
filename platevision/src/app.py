@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.19 ROI-safe vehicle context + OCR tuning
+Version 0.8.20 ProTraffic ROI Safe Detection
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -24,7 +24,6 @@ import queue
 import logging
 import re
 import csv
-import copy
 from difflib import SequenceMatcher
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -335,6 +334,8 @@ class ConfigManager:
                 'enabled': False,
                 'mode': 'polygon',
                 'mask_outside': True,
+                'crop_before_detection': False,
+                'mask_before_detection': False,
                 'coordinate_width': 1280,
                 'coordinate_height': 720,
                 'area': {
@@ -370,12 +371,11 @@ class ConfigManager:
             'plate_detector_confidence_factor': 0.6,
             'annotate_frames': True,
             'draw_confidence': True,
-            'scan_full_frame_when_vehicle_found': True,
-            'analysis_area_filter_after_detection': True,
-            'vehicle_context_fallback_enabled': True,
-            'vehicle_context_width_factor': 7.0,
-            'vehicle_context_height_factor': 5.0,
-            'vehicle_plate_match_margin': 35,
+            'scan_full_frame_when_vehicle_found': False,
+            'plate_crop_padding_px': 6,
+            'fallback_vehicle_context_image': True,
+            'vehicle_roi_min_overlap_percent': 5,
+            'plate_roi_min_overlap_percent': 15,
             'min_vehicle_width': 80,
             'min_vehicle_height': 60,
             'duplicate_cooldown_per_frame': True,
@@ -421,8 +421,6 @@ class ConfigManager:
             'merge_fragments': True,
             'uppercase_output': True,
             'use_allowlist': True,
-            'return_debug': False,
-            'prefer_valid_plate_candidates': True,
         },
         'general': {
             'theme': 'dark',
@@ -2148,11 +2146,9 @@ class LicensePlateDetector:
             kwargs['half'] = True
         return kwargs
 
-    def _is_duplicate(self, plate_text, enabled=True):
+    def _is_duplicate(self, plate_text):
         if not plate_text or len(plate_text) < 3:
             return True
-        if not enabled:
-            return False
             
         filter_enabled = self.config_manager.get('history', 'filter_duplicates')
         if not filter_enabled:
@@ -2227,6 +2223,80 @@ class LicensePlateDetector:
                     
         except Exception as e:
             return "unbekannt"
+
+    def _clamp_bbox(self, bbox, frame_w, frame_h):
+        try:
+            x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
+            x1 = max(0, min(frame_w - 1, x1))
+            y1 = max(0, min(frame_h - 1, y1))
+            x2 = max(x1 + 1, min(frame_w, x2))
+            y2 = max(y1 + 1, min(frame_h, y2))
+            return [x1, y1, x2, y2]
+        except Exception:
+            return [0, 0, max(1, frame_w), max(1, frame_h)]
+
+    def _crop_bbox(self, frame, bbox):
+        if frame is None or frame.size == 0:
+            return None
+        frame_h, frame_w = frame.shape[:2]
+        x1, y1, x2, y2 = self._clamp_bbox(bbox, frame_w, frame_h)
+        crop = frame[y1:y2, x1:x2]
+        return crop.copy() if crop is not None and crop.size > 0 else None
+
+    def _plate_context_crop(self, frame, plate_bbox):
+        """Fallback-Fahrzeugbild aus dem Vollbild, falls YOLO kein Fahrzeug liefert.
+
+        Nach ROI-Änderungen kann die Kennzeichenerkennung ein Schild finden, ohne
+        dass gleichzeitig eine Fahrzeugbox vorhanden ist. Damit /latest trotzdem
+        ein Fahrzeug-/Kontextbild bekommt, wird rund um das Kennzeichen ein
+        großzügiger Bereich aus dem unveränderten Vollbild gespeichert.
+        """
+        if frame is None or frame.size == 0 or not plate_bbox:
+            return None
+        frame_h, frame_w = frame.shape[:2]
+        x1, y1, x2, y2 = self._clamp_bbox(plate_bbox, frame_w, frame_h)
+        pw = max(1, x2 - x1)
+        ph = max(1, y2 - y1)
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+        context_w = max(pw * 10, 240)
+        context_h = max(ph * 12, 180)
+        nx1 = int(round(cx - context_w / 2.0))
+        nx2 = int(round(cx + context_w / 2.0))
+        ny1 = int(round(cy - context_h * 0.62))
+        ny2 = int(round(cy + context_h * 0.38))
+        return self._crop_bbox(frame, [nx1, ny1, nx2, ny2])
+
+    def _match_vehicle_for_plate(self, plate_bbox, vehicles):
+        """Findet die plausibelste Fahrzeugbox zu einem Kennzeichen."""
+        if not plate_bbox or not vehicles:
+            return None
+        try:
+            px1, py1, px2, py2 = [float(v) for v in plate_bbox]
+            pcx = (px1 + px2) / 2.0
+            pcy = (py1 + py2) / 2.0
+            best_vehicle = None
+            best_score = -1e18
+            for vehicle in vehicles:
+                bbox = vehicle.get('bbox') or []
+                if len(bbox) != 4:
+                    continue
+                vx1, vy1, vx2, vy2 = [float(v) for v in bbox]
+                vw = max(1.0, vx2 - vx1)
+                vh = max(1.0, vy2 - vy1)
+                vcx = (vx1 + vx2) / 2.0
+                vcy = (vy1 + vy2) / 2.0
+                contains = vx1 <= pcx <= vx2 and vy1 <= pcy <= vy2
+                distance = ((pcx - vcx) ** 2 + (pcy - vcy) ** 2) ** 0.5
+                normalized_distance = distance / max(vw, vh)
+                area_bonus = min(2.0, (vw * vh) / max(1.0, (px2 - px1) * (py2 - py1) * 80.0))
+                score = (1000.0 if contains else 0.0) + area_bonus - normalized_distance
+                if score > best_score:
+                    best_score = score
+                    best_vehicle = vehicle
+            return best_vehicle
+        except Exception:
+            return None
     
     def _preprocess_plate_image(self, plate_image):
         if plate_image is None or plate_image.size == 0:
@@ -2322,32 +2392,83 @@ class LicensePlateDetector:
         except Exception as e:
             return plate_image, [plate_image]
     
-    def _score_ocr_text(self, text, confidence):
-        """Score OCR text by confidence plus plate-format plausibility."""
-        compact = PlateUtils.normalize(text, compact=True)
-        if not compact:
-            return 0.0, PlateUtils.analyze('', country_hint='auto')
-        country_hint = self.config_manager.get('plate_recognition', 'country_hint') or 'auto'
-        analysis = PlateUtils.best_candidate(compact, country_hint=country_hint)
-        corrected = analysis.get('corrected') or compact
-        min_len = int(self.config_manager.get('plate_recognition', 'min_length') or 3)
-        max_len = int(self.config_manager.get('plate_recognition', 'max_length') or 12)
-        length_ok = min_len <= len(corrected) <= max_len
-        length_bonus = 0.08 if length_ok else -0.18
-        valid_bonus = 0.28 if analysis.get('valid') else 0.0
-        format_bonus = 0.10 if analysis.get('format') not in ('Unbekannt', None, '') else 0.0
-        numeric_bonus = 0.05 if any(ch.isdigit() for ch in corrected) else -0.05
-        alpha_bonus = 0.05 if any(ch.isalpha() for ch in corrected) else -0.05
-        score = float(confidence or 0) + valid_bonus + format_bonus + length_bonus + numeric_bonus + alpha_bonus
-        return score, analysis
+    def _read_plate_enhanced(self, plate_image):
+        if not self.ocr_reader or plate_image is None or plate_image.size == 0:
+            return None, 0
+        
+        try:
+            result = self._preprocess_plate_image(plate_image)
+            
+            if result is None:
+                return None, 0
+            
+            processed, variants = result
+            
+            min_confidence = self.config_manager.get('ocr', 'min_confidence') or 0.25
+            allowed_chars = self.config_manager.get('ocr', 'allowed_characters') or ''
+            use_allowlist = self.config_manager.get('ocr', 'use_allowlist')
+            max_variants = int(self.config_manager.get('ocr', 'max_variants_to_read') or 8)
+            early_stop = float(self.config_manager.get('ocr', 'early_stop_confidence') or 0.85)
+            paragraph_mode = bool(self.config_manager.get('ocr', 'paragraph_mode'))
+            decoder = self.config_manager.get('ocr', 'decoder') or 'greedy'
+            rotation_variants = bool(self.config_manager.get('ocr', 'rotation_variants'))
+            
+            if rotation_variants:
+                rotated = []
+                for variant in variants[:3]:
+                    try:
+                        rotated.append(cv2.rotate(variant, cv2.ROTATE_180))
+                    except Exception:
+                        pass
+                variants.extend(rotated)
 
-    def _extract_ocr_candidates(self, results, min_confidence, allowed_chars):
-        """Return cleaned OCR candidates from one EasyOCR run."""
-        candidates = []
+            best_result = None
+            best_confidence = 0
+            
+            for i, variant in enumerate(variants[:max_variants]):
+                try:
+                    kwargs = {'detail': 1, 'paragraph': paragraph_mode, 'decoder': decoder}
+                    if use_allowlist and allowed_chars:
+                        kwargs['allowlist'] = allowed_chars
+                    results = self.ocr_reader.readtext(variant, **kwargs)
+                    text, confidence = self._process_ocr_results(results, min_confidence * 0.7, allowed_chars)
+                    
+                    if text and confidence > best_confidence:
+                        best_confidence = confidence
+                        best_result = text
+                    
+                    if best_confidence >= early_stop:
+                        break
+                        
+                except Exception:
+                    continue
+            
+            if best_result:
+                country_hint = self.config_manager.get('plate_recognition', 'country_hint') or 'auto'
+                analysis = PlateUtils.best_candidate(best_result, country_hint=country_hint)
+                best_result = analysis.get('corrected') or self._correct_common_errors(best_result)
+                if not PlateUtils.is_valid(
+                    best_result,
+                    self.config_manager.get('plate_recognition', 'min_length') or 3,
+                    self.config_manager.get('plate_recognition', 'max_length') or 12,
+                    self.config_manager.get('plate_recognition', 'validation_regex') or None
+                ):
+                    return None, 0
+                if self.config_manager.get('plate_recognition', 'format_pretty_output'):
+                    best_result = analysis.get('pretty') or PlateUtils.pretty(best_result)
+            
+            return best_result, best_confidence
+            
+        except Exception as e:
+            logger.error(f"OCR Fehler: {e}")
+            return None, 0
+    
+    def _process_ocr_results(self, results, min_confidence, allowed_chars):
         if not results:
-            return candidates
+            return None, 0
+
+        candidates = []
         allowed_upper = allowed_chars.upper() if allowed_chars else ''
-        min_text_length = int(self.config_manager.get('ocr', 'min_text_length') or 2)
         for result in results:
             if len(result) >= 3:
                 text, confidence = result[1], float(result[2])
@@ -2360,141 +2481,21 @@ class LicensePlateDetector:
             raw_text = str(text).upper() if self.config_manager.get('ocr', 'uppercase_output') else str(text)
             clean_text = ''.join(c for c in raw_text if not allowed_upper or c.upper() in allowed_upper)
             clean_text = PlateUtils.normalize(clean_text, compact=True)
+            min_text_length = int(self.config_manager.get('ocr', 'min_text_length') or 2)
             if len(clean_text) >= min_text_length:
                 candidates.append((clean_text, confidence))
 
-        if candidates and self.config_manager.get('ocr', 'merge_fragments'):
-            # EasyOCR sometimes returns CH plates as two fragments (e.g. OW + 12345).
-            combined = ''.join(c[0] for c in candidates)
-            avg = sum(c[1] for c in candidates) / len(candidates)
-            if len(combined) >= min_text_length:
-                candidates.append((combined, avg))
-        return candidates
-
-    def _process_ocr_results(self, results, min_confidence, allowed_chars):
-        candidates = self._extract_ocr_candidates(results, min_confidence, allowed_chars)
         if not candidates:
             return None, 0
-        ranked = []
-        for text, confidence in candidates:
-            score, analysis = self._score_ocr_text(text, confidence)
-            ranked.append((score, text, confidence, analysis))
-        ranked.sort(key=lambda item: (item[0], item[2], len(item[1])), reverse=True)
-        return ranked[0][1], ranked[0][2]
 
-    def _read_plate_enhanced(self, plate_image, return_details=False):
-        if not self.ocr_reader or plate_image is None or plate_image.size == 0:
-            return (None, 0, {'candidates': []}) if return_details else (None, 0)
-        
-        details = {
-            'variants_tried': 0,
-            'candidates': [],
-            'best_score': 0,
-            'used_decoder': self.config_manager.get('ocr', 'decoder') or 'greedy'
-        }
-        try:
-            result = self._preprocess_plate_image(plate_image)
-            
-            if result is None:
-                return (None, 0, details) if return_details else (None, 0)
-            
-            processed, variants = result
-            
-            min_confidence = float(self.config_manager.get('ocr', 'min_confidence') or 0.25)
-            allowed_chars = self.config_manager.get('ocr', 'allowed_characters') or ''
-            use_allowlist = self.config_manager.get('ocr', 'use_allowlist')
-            max_variants = int(self.config_manager.get('ocr', 'max_variants_to_read') or 8)
-            early_stop = float(self.config_manager.get('ocr', 'early_stop_confidence') or 0.85)
-            paragraph_mode = bool(self.config_manager.get('ocr', 'paragraph_mode'))
-            decoder = self.config_manager.get('ocr', 'decoder') or 'greedy'
-            rotation_variants = bool(self.config_manager.get('ocr', 'rotation_variants'))
-            prefer_valid = self.config_manager.get('ocr', 'prefer_valid_plate_candidates') is not False
-            
-            if rotation_variants:
-                rotated = []
-                # Try small deskew variants instead of only 180°; upside-down plates are rare,
-                # but a few degrees of camera tilt are common.
-                for variant in variants[:3]:
-                    try:
-                        h, w = variant.shape[:2]
-                        center = (w / 2.0, h / 2.0)
-                        for angle in (-3, 3):
-                            mat = cv2.getRotationMatrix2D(center, angle, 1.0)
-                            rotated.append(cv2.warpAffine(variant, mat, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE))
-                    except Exception:
-                        pass
-                variants.extend(rotated)
+        # Einzelne OCR-Fragmente und zusammengesetzte Variante bewerten.
+        if self.config_manager.get('ocr', 'merge_fragments'):
+            combined = ''.join(c[0] for c in candidates)
+            avg = sum(c[1] for c in candidates) / len(candidates)
+            candidates.append((combined, avg))
+        best_text, best_conf = max(candidates, key=lambda item: (item[1], len(item[0])))
+        return best_text, best_conf
 
-            best_result = None
-            best_confidence = 0.0
-            best_score = -999.0
-            best_analysis = None
-            seen_candidates = set()
-            
-            for i, variant in enumerate(variants[:max_variants]):
-                try:
-                    kwargs = {'detail': 1, 'paragraph': paragraph_mode, 'decoder': decoder}
-                    if use_allowlist and allowed_chars:
-                        kwargs['allowlist'] = allowed_chars
-                    results = self.ocr_reader.readtext(variant, **kwargs)
-                    details['variants_tried'] += 1
-                    extracted = self._extract_ocr_candidates(results, min_confidence * 0.65, allowed_chars)
-                    for text, confidence in extracted:
-                        score, analysis = self._score_ocr_text(text, confidence)
-                        corrected = analysis.get('corrected') or PlateUtils.normalize(text, compact=True)
-                        key = corrected or text
-                        if not key or key in seen_candidates:
-                            continue
-                        seen_candidates.add(key)
-                        candidate_info = {
-                            'variant': i + 1,
-                            'raw': text,
-                            'corrected': corrected,
-                            'pretty': analysis.get('pretty') or PlateUtils.pretty(corrected),
-                            'format': analysis.get('format'),
-                            'valid': bool(analysis.get('valid')),
-                            'confidence': round(float(confidence or 0), 4),
-                            'score': round(float(score), 4)
-                        }
-                        details['candidates'].append(candidate_info)
-                        should_replace = score > best_score
-                        if prefer_valid and best_analysis and not best_analysis.get('valid') and analysis.get('valid'):
-                            should_replace = True
-                        if should_replace:
-                            best_score = score
-                            best_confidence = float(confidence or 0)
-                            best_result = text
-                            best_analysis = analysis
-                    if best_confidence >= early_stop and best_analysis and best_analysis.get('valid'):
-                        break
-                except Exception as e:
-                    details.setdefault('errors', []).append(str(e))
-                    continue
-            
-            details['candidates'] = sorted(details['candidates'], key=lambda c: (c.get('score', 0), c.get('confidence', 0)), reverse=True)[:12]
-            details['best_score'] = round(float(best_score if best_score != -999.0 else 0), 4)
-            if best_result:
-                analysis = best_analysis or PlateUtils.best_candidate(best_result, country_hint=self.config_manager.get('plate_recognition', 'country_hint') or 'auto')
-                corrected = analysis.get('corrected') or self._correct_common_errors(best_result)
-                if not PlateUtils.is_valid(
-                    corrected,
-                    self.config_manager.get('plate_recognition', 'min_length') or 3,
-                    self.config_manager.get('plate_recognition', 'max_length') or 12,
-                    self.config_manager.get('plate_recognition', 'validation_regex') or None
-                ):
-                    # Keep the debug candidates for Test & Upload, but do not accept invalid text.
-                    return (None, 0, details) if return_details else (None, 0)
-                best_result = corrected
-                if self.config_manager.get('plate_recognition', 'format_pretty_output'):
-                    best_result = analysis.get('pretty') or PlateUtils.pretty(corrected)
-            
-            return (best_result, best_confidence, details) if return_details else (best_result, best_confidence)
-            
-        except Exception as e:
-            logger.error(f"OCR Fehler: {e}")
-            details.setdefault('errors', []).append(str(e))
-            return (None, 0, details) if return_details else (None, 0)
-    
     def _correct_common_errors(self, text):
         if not text or len(text) < 2:
             return text
@@ -2502,83 +2503,6 @@ class LicensePlateDetector:
             return PlateUtils.normalize(text, compact=True)
         country_hint = self.config_manager.get('plate_recognition', 'country_hint') or 'auto'
         return PlateUtils.smart_correct(text, country_hint=country_hint)
-
-
-    def _clamp_bbox(self, bbox, frame_w, frame_h):
-        x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
-        x1 = max(0, min(frame_w - 1, x1))
-        y1 = max(0, min(frame_h - 1, y1))
-        x2 = max(0, min(frame_w, x2))
-        y2 = max(0, min(frame_h, y2))
-        if x2 <= x1:
-            x2 = min(frame_w, x1 + 1)
-        if y2 <= y1:
-            y2 = min(frame_h, y1 + 1)
-        return [x1, y1, x2, y2]
-
-    def _expand_bbox(self, bbox, frame_w, frame_h, width_factor=2.0, height_factor=2.0):
-        x1, y1, x2, y2 = [float(v) for v in bbox]
-        cx = (x1 + x2) / 2.0
-        cy = (y1 + y2) / 2.0
-        bw = max(1.0, x2 - x1)
-        bh = max(1.0, y2 - y1)
-        new_w = bw * float(width_factor or 2.0)
-        new_h = bh * float(height_factor or 2.0)
-        # Put the plate in the lower half of the context crop, which usually captures the whole car front/rear.
-        new_x1 = cx - new_w / 2.0
-        new_x2 = cx + new_w / 2.0
-        new_y1 = cy - new_h * 0.62
-        new_y2 = cy + new_h * 0.38
-        return self._clamp_bbox([new_x1, new_y1, new_x2, new_y2], frame_w, frame_h)
-
-    def _bbox_contains_point(self, bbox, x, y, margin=0):
-        x1, y1, x2, y2 = [float(v) for v in bbox]
-        return (x1 - margin) <= x <= (x2 + margin) and (y1 - margin) <= y <= (y2 + margin)
-
-    def _match_vehicle_for_plate(self, plate_bbox, vehicles, frame_w, frame_h):
-        """Attach a plate detection to the best vehicle, even when the plate scan came from full frame."""
-        if not vehicles:
-            return None
-        px1, py1, px2, py2 = [float(v) for v in plate_bbox]
-        pcx = (px1 + px2) / 2.0
-        pcy = (py1 + py2) / 2.0
-        margin = float(self.config_manager.get('detection', 'vehicle_plate_match_margin') or 35)
-        best = None
-        best_score = -999999.0
-        for vehicle in vehicles:
-            bbox = vehicle.get('bbox') or []
-            if len(bbox) != 4:
-                continue
-            vx1, vy1, vx2, vy2 = [float(v) for v in bbox]
-            vcx = (vx1 + vx2) / 2.0
-            vcy = (vy1 + vy2) / 2.0
-            contains = self._bbox_contains_point(bbox, pcx, pcy, margin=margin)
-            # Prefer boxes containing the plate center. Otherwise choose nearest plausible vehicle.
-            dist = ((pcx - vcx) ** 2 + (pcy - vcy) ** 2) ** 0.5
-            if not contains and dist > max(frame_w, frame_h) * 0.35:
-                continue
-            vehicle_area = max(1.0, (vx2 - vx1) * (vy2 - vy1))
-            size_bonus = min(vehicle_area / max(1.0, frame_w * frame_h), 0.5)
-            score = (100000.0 if contains else 0.0) - dist + size_bonus * 1000.0 + float(vehicle.get('confidence') or 0) * 100.0
-            if score > best_score:
-                best_score = score
-                best = vehicle
-        return best
-
-    def _vehicle_context_from_plate(self, frame, plate_bbox):
-        if frame is None or frame.size == 0:
-            return None, None
-        if not self.config_manager.get('detection', 'vehicle_context_fallback_enabled'):
-            return None, None
-        frame_h, frame_w = frame.shape[:2]
-        width_factor = float(self.config_manager.get('detection', 'vehicle_context_width_factor') or 7.0)
-        height_factor = float(self.config_manager.get('detection', 'vehicle_context_height_factor') or 5.0)
-        context_bbox = self._expand_bbox(plate_bbox, frame_w, frame_h, width_factor, height_factor)
-        x1, y1, x2, y2 = context_bbox
-        crop = frame[y1:y2, x1:x2].copy()
-        if crop.size == 0:
-            return None, None
-        return crop, context_bbox
 
 
     def _person_config(self):
@@ -2834,7 +2758,7 @@ class LicensePlateDetector:
                 cv2.putText(annotated, label, (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
         return people
 
-    def process_frame(self, frame, apply_analysis_area=False, runtime_roi_polygon=None, enable_duplicate_filter=True):
+    def process_frame(self, frame, apply_analysis_area=False, runtime_roi_polygon=None):
         """Verarbeitet einen einzelnen Frame"""
         if not self.models_loaded:
             self.load_models()
@@ -2983,7 +2907,15 @@ class LicensePlateDetector:
                         orig_px2 = int(px2 / scale + off_x)
                         orig_py2 = int(py2 / scale + off_y)
                         
-                        plate_crop_scaled = proc_frame[int(py1):int(py2), int(px1):int(px2)]
+                        # OCR nicht auf einer zu eng geschnittenen Box ausführen.
+                        # Ein kleiner Rand hilft EasyOCR deutlich, besonders wenn das
+                        # Kennzeichen vom Detektor sehr knapp begrenzt wurde.
+                        plate_padding = int(self.config_manager.get('detection', 'plate_crop_padding_px') or 0)
+                        sx1 = max(0, int(px1) - plate_padding)
+                        sy1 = max(0, int(py1) - plate_padding)
+                        sx2 = min(proc_frame.shape[1], int(px2) + plate_padding)
+                        sy2 = min(proc_frame.shape[0], int(py2) + plate_padding)
+                        plate_crop_scaled = proc_frame[sy1:sy2, sx1:sx2]
                         
                         if plate_crop_scaled.size == 0:
                             continue
@@ -3001,7 +2933,7 @@ class LicensePlateDetector:
                         if max_detections_per_frame and len(result['detections']) >= max_detections_per_frame:
                             break
                         
-                        plate_text, ocr_confidence, ocr_details = self._read_plate_enhanced(plate_crop_scaled, return_details=True)
+                        plate_text, ocr_confidence = self._read_plate_enhanced(plate_crop_scaled)
                         
                         min_save_conf = self.config_manager.get('history', 'min_confidence_to_save') or 0.35
                         
@@ -3010,7 +2942,7 @@ class LicensePlateDetector:
                                 cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), (0, 165, 255), 2)
                             continue
                         
-                        if self._is_duplicate(plate_text, enabled=enable_duplicate_filter):
+                        if self._is_duplicate(plate_text):
                             continue
                         
                         if annotate_frames:
@@ -3022,19 +2954,12 @@ class LicensePlateDetector:
                             cv2.putText(annotated, label_text, (orig_px1 + 5, orig_py1 - 8),
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
                         
-                        # Fahrzeug zuordnen: Wenn das Kennzeichen aus dem Vollbild kommt, hängt vorher kein Vehicle-Objekt daran.
-                        # Dann suchen wir das passende Fahrzeug; wenn keines erkannt wurde, speichern wir einen
-                        # Kontextausschnitt um das Kennzeichen, damit in UI/Historie nicht nur das Schild sichtbar ist.
-                        plate_bbox_full = self._clamp_bbox([orig_px1, orig_py1, orig_px2, orig_py2], frame_w, frame_h)
-                        orig_px1, orig_py1, orig_px2, orig_py2 = plate_bbox_full
-                        linked_vehicle = vehicle or self._match_vehicle_for_plate(plate_bbox_full, detected_vehicles, frame_w, frame_h)
-                        vehicle_crop_source = 'detected_vehicle' if linked_vehicle else 'plate_context'
-                        context_bbox = None
-                        context_crop = None
-                        if not linked_vehicle:
-                            context_crop, context_bbox = self._vehicle_context_from_plate(frame, plate_bbox_full)
-                        
-                        # Bilder speichern
+                        # Bilder speichern. Wenn das Schild ohne zugeordnete Fahrzeugbox
+                        # erkannt wurde, wird nachträglich das plausibelste Fahrzeug gesucht.
+                        # Falls auch das fehlt, speichern wir zumindest einen großen
+                        # Vollbild-Kontextausschnitt rund um das Kennzeichen.
+                        plate_bbox = [orig_px1, orig_py1, orig_px2, orig_py2]
+                        associated_vehicle = vehicle or self._match_vehicle_for_plate(plate_bbox, detected_vehicles)
                         plate_image_b64 = None
                         vehicle_image_b64 = None
                         
@@ -3044,7 +2969,11 @@ class LicensePlateDetector:
                             plate_image_b64 = base64.b64encode(buffer).decode('utf-8')
                         
                         if self.config_manager.get('detection', 'save_detected_vehicles'):
-                            vehicle_crop = linked_vehicle.get('crop') if linked_vehicle else context_crop
+                            vehicle_crop = associated_vehicle.get('crop') if associated_vehicle else None
+                            if (vehicle_crop is None or vehicle_crop.size == 0) and associated_vehicle:
+                                vehicle_crop = self._crop_bbox(frame, associated_vehicle.get('bbox'))
+                            if (vehicle_crop is None or vehicle_crop.size == 0) and self.config_manager.get('detection', 'fallback_vehicle_context_image') is not False:
+                                vehicle_crop = self._plate_context_crop(frame, plate_bbox)
                             if vehicle_crop is not None and vehicle_crop.size > 0:
                                 vehicle_quality = int(self.config_manager.get('storage', 'jpeg_quality_vehicle') or 90)
                                 _, buffer = cv2.imencode('.jpg', vehicle_crop, [cv2.IMWRITE_JPEG_QUALITY, vehicle_quality])
@@ -3053,22 +2982,20 @@ class LicensePlateDetector:
                         detection_info = {
                             'plate_text': plate_text,
                             'confidence': ocr_confidence,
-                            'plate_bbox': [orig_px1, orig_py1, orig_px2, orig_py2],
+                            'plate_bbox': plate_bbox,
                             'plate_center_x': round((orig_px1 + orig_px2) / 2, 2),
                             'plate_center_y': round((orig_py1 + orig_py2) / 2, 2),
                             'frame_width': frame_w,
                             'frame_height': frame_h,
-                            'vehicle_bbox': linked_vehicle['bbox'] if linked_vehicle else context_bbox,
-                            'vehicle_center_x': round((linked_vehicle['bbox'][0] + linked_vehicle['bbox'][2]) / 2, 2) if linked_vehicle else (round((context_bbox[0] + context_bbox[2]) / 2, 2) if context_bbox else None),
-                            'vehicle_center_y': round((linked_vehicle['bbox'][1] + linked_vehicle['bbox'][3]) / 2, 2) if linked_vehicle else (round((context_bbox[1] + context_bbox[3]) / 2, 2) if context_bbox else None),
+                            'vehicle_bbox': associated_vehicle['bbox'] if associated_vehicle else None,
+                            'vehicle_center_x': round((associated_vehicle['bbox'][0] + associated_vehicle['bbox'][2]) / 2, 2) if associated_vehicle else None,
+                            'vehicle_center_y': round((associated_vehicle['bbox'][1] + associated_vehicle['bbox'][3]) / 2, 2) if associated_vehicle else None,
                             'plate_score': plate_score,
                             'plate_image_base64': plate_image_b64,
                             'vehicle_image_base64': vehicle_image_b64,
-                            'vehicle_crop_source': vehicle_crop_source,
-                            'vehicle_type': linked_vehicle['type'] if linked_vehicle else 'Unbekannt',
-                            'vehicle_type_en': linked_vehicle['type_en'] if linked_vehicle else 'unknown',
-                            'vehicle_color': linked_vehicle['color'] if linked_vehicle else 'Unbekannt',
-                            'ocr_details': ocr_details if self.config_manager.get('ocr', 'return_debug') else None,
+                            'vehicle_type': associated_vehicle['type'] if associated_vehicle else 'Unbekannt',
+                            'vehicle_type_en': associated_vehicle['type_en'] if associated_vehicle else 'unknown',
+                            'vehicle_color': associated_vehicle['color'] if associated_vehicle else 'Unbekannt',
                             'plate_text_normalized': PlateUtils.normalize(plate_text, compact=True),
                             'plate_format': PlateUtils.detect_format(plate_text),
                             'is_valid_plate': PlateUtils.is_valid(plate_text),
@@ -4021,175 +3948,6 @@ def api_clear_all_storage():
     })
 
 
-
-# ============================================================
-# TEST-/UPLOAD-PARAMETER HILFEN
-# ============================================================
-
-def _deep_update_allowed(target, updates, allowed_paths):
-    """Apply only whitelisted nested settings from the Test & Upload form."""
-    if not isinstance(updates, dict):
-        return
-    allowed = {tuple(path.split('.')) for path in allowed_paths}
-
-    def walk(prefix, value):
-        if not isinstance(value, dict):
-            return
-        for key, item in value.items():
-            next_prefix = prefix + (str(key),)
-            if isinstance(item, dict):
-                walk(next_prefix, item)
-                continue
-            if next_prefix not in allowed:
-                continue
-            cur = target
-            for part in next_prefix[:-1]:
-                cur = cur.setdefault(part, {})
-            cur[next_prefix[-1]] = item
-
-    walk(tuple(), updates)
-
-
-def _coerce_test_settings(settings):
-    """Normalize form values so sliders/selects can override runtime settings safely."""
-    if not isinstance(settings, dict):
-        return {}
-
-    numeric_paths = {
-        ('detection', 'confidence_threshold'): float,
-        ('detection', 'plate_detector_confidence_factor'): float,
-        ('detection', 'zoom_factor'): float,
-        ('detection', 'zoom_padding'): int,
-        ('detection', 'min_plate_width'): int,
-        ('detection', 'min_plate_height'): int,
-        ('detection', 'vehicle_context_width_factor'): float,
-        ('detection', 'vehicle_context_height_factor'): float,
-        ('detection', 'vehicle_plate_match_margin'): int,
-        ('ocr', 'min_confidence'): float,
-        ('ocr', 'max_variants_to_read'): int,
-        ('ocr', 'early_stop_confidence'): float,
-        ('ocr', 'preprocessing', 'resize_factor'): float,
-        ('ocr', 'preprocessing', 'target_height'): int,
-        ('ocr', 'preprocessing', 'min_width'): int,
-        ('ocr', 'preprocessing', 'threshold_block_size'): int,
-        ('ocr', 'preprocessing', 'threshold_c'): int,
-        ('ocr', 'preprocessing', 'border_padding'): int,
-        ('history', 'min_confidence_to_save'): float,
-        ('plate_recognition', 'min_length'): int,
-        ('plate_recognition', 'max_length'): int,
-    }
-    bool_paths = {
-        ('detection', 'car_detection_enabled'),
-        ('detection', 'zoom_enabled'),
-        ('detection', 'scan_full_frame_when_vehicle_found'),
-        ('detection', 'vehicle_context_fallback_enabled'),
-        ('ocr', 'use_allowlist'),
-        ('ocr', 'rotation_variants'),
-        ('ocr', 'merge_fragments'),
-        ('ocr', 'return_debug'),
-        ('ocr', 'preprocessing', 'enabled'),
-        ('ocr', 'preprocessing', 'denoise'),
-        ('ocr', 'preprocessing', 'sharpen'),
-        ('ocr', 'preprocessing', 'contrast_enhance'),
-        ('ocr', 'preprocessing', 'adaptive_threshold'),
-        ('ocr', 'preprocessing', 'morphology'),
-        ('ocr', 'preprocessing', 'invert_variant'),
-        ('ocr', 'preprocessing', 'bilateral_filter'),
-        ('plate_recognition', 'smart_ocr_correction'),
-        ('plate_recognition', 'format_pretty_output'),
-    }
-
-    result = copy.deepcopy(settings)
-
-    def get_path(obj, path):
-        cur = obj
-        for part in path:
-            if not isinstance(cur, dict) or part not in cur:
-                return None, False
-            cur = cur[part]
-        return cur, True
-
-    def set_path(obj, path, value):
-        cur = obj
-        for part in path[:-1]:
-            cur = cur.setdefault(part, {})
-        cur[path[-1]] = value
-
-    for path, caster in numeric_paths.items():
-        value, found = get_path(result, path)
-        if not found or value in ('', None):
-            continue
-        try:
-            if caster is int:
-                value = int(round(float(value)))
-            else:
-                value = float(value)
-            set_path(result, path, value)
-        except Exception:
-            pass
-
-    for path in bool_paths:
-        value, found = get_path(result, path)
-        if not found:
-            continue
-        if isinstance(value, str):
-            value = value.lower().strip() in ('1', 'true', 'yes', 'on', 'ja')
-        else:
-            value = bool(value)
-        set_path(result, path, value)
-
-    # Keep EasyOCR decoder to known values.
-    decoder = result.get('ocr', {}).get('decoder')
-    if decoder not in (None, 'greedy', 'beamsearch', 'wordbeamsearch'):
-        result.setdefault('ocr', {})['decoder'] = 'greedy'
-
-    return result
-
-
-TEST_UPLOAD_ALLOWED_SETTINGS = [
-    'detection.confidence_threshold',
-    'detection.plate_detector_confidence_factor',
-    'detection.car_detection_enabled',
-    'detection.zoom_enabled',
-    'detection.zoom_factor',
-    'detection.zoom_padding',
-    'detection.scan_full_frame_when_vehicle_found',
-    'detection.vehicle_context_fallback_enabled',
-    'detection.vehicle_context_width_factor',
-    'detection.vehicle_context_height_factor',
-    'detection.vehicle_plate_match_margin',
-    'detection.min_plate_width',
-    'detection.min_plate_height',
-    'ocr.min_confidence',
-    'ocr.decoder',
-    'ocr.use_allowlist',
-    'ocr.rotation_variants',
-    'ocr.merge_fragments',
-    'ocr.max_variants_to_read',
-    'ocr.early_stop_confidence',
-    'ocr.return_debug',
-    'ocr.preprocessing.enabled',
-    'ocr.preprocessing.resize_factor',
-    'ocr.preprocessing.target_height',
-    'ocr.preprocessing.min_width',
-    'ocr.preprocessing.denoise',
-    'ocr.preprocessing.sharpen',
-    'ocr.preprocessing.contrast_enhance',
-    'ocr.preprocessing.adaptive_threshold',
-    'ocr.preprocessing.threshold_block_size',
-    'ocr.preprocessing.threshold_c',
-    'ocr.preprocessing.morphology',
-    'ocr.preprocessing.invert_variant',
-    'ocr.preprocessing.bilateral_filter',
-    'ocr.preprocessing.border_padding',
-    'history.min_confidence_to_save',
-    'plate_recognition.country_hint',
-    'plate_recognition.min_length',
-    'plate_recognition.max_length',
-    'plate_recognition.smart_ocr_correction',
-    'plate_recognition.format_pretty_output',
-]
-
 # ============================================================
 # API ROUTEN - BILD VERARBEITUNG
 # ============================================================
@@ -4203,60 +3961,39 @@ def api_process_image():
     if file.filename == '':
         return jsonify({'success': False, 'error': 'Keine Datei ausgewählt'}), 400
     
-    original_config = None
-    applied_settings = {}
-    save_to_history_raw = request.form.get('save_to_history')
-    save_to_history = True if save_to_history_raw is None else str(save_to_history_raw).lower() in ('1', 'true', 'yes', 'on', 'ja')
     try:
-        settings_json = request.form.get('settings_json')
-        if settings_json:
-            try:
-                incoming_settings = _coerce_test_settings(json.loads(settings_json))
-                original_config = copy.deepcopy(config_manager.config)
-                runtime_config = copy.deepcopy(config_manager.config)
-                _deep_update_allowed(runtime_config, incoming_settings, TEST_UPLOAD_ALLOWED_SETTINGS)
-                config_manager.config = runtime_config
-                applied_settings = incoming_settings
-            except Exception as e:
-                return jsonify({'success': False, 'error': f'Ungültige Test-Einstellungen: {e}'}), 400
-
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         
         if image is None:
             return jsonify({'success': False, 'error': 'Ungültiges Bild'}), 400
         
-        result = detector.process_frame(image, enable_duplicate_filter=False)
+        result = detector.process_frame(image)
         
         _, buffer = cv2.imencode('.jpg', result['annotated_frame'])
         result_image_b64 = base64.b64encode(buffer).decode('utf-8')
         
-        if save_to_history:
-            for detection in result['detections']:
-                if detection.get('plate_text'):
-                    entry = {
-                        'plate_text': detection['plate_text'],
-                        'confidence': detection.get('confidence', 0),
-                        'source': 'image_upload',
-                        'filename': file.filename,
-                        'plate_image': detection.get('plate_image_base64'),
-                        'vehicle_image': detection.get('vehicle_image_base64'),
-                        'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
-                        'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
-                        'plate_bbox': detection.get('plate_bbox'),
-                        'vehicle_bbox': detection.get('vehicle_bbox'),
-                        'vehicle_crop_source': detection.get('vehicle_crop_source'),
-                        'plate_score': detection.get('plate_score'),
-                    }
-                    history_manager.add_entry(entry)
+        for detection in result['detections']:
+            if detection.get('plate_text'):
+                entry = {
+                    'plate_text': detection['plate_text'],
+                    'confidence': detection.get('confidence', 0),
+                    'source': 'image_upload',
+                    'filename': file.filename,
+                    'plate_image': detection.get('plate_image_base64'),
+                    'vehicle_image': detection.get('vehicle_image_base64'),
+                    'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
+                    'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
+                }
+                history_manager.add_entry(entry)
 
-            for person in result.get('people', []):
-                if person.get('counted') or config_manager.get('people', 'save_all_detections'):
-                    event = dict(person)
-                    event.update({'source': 'image_upload', 'filename': file.filename})
-                    saved_person_event = person_history_manager.add_event(event, frame=image, annotated_frame=result.get('annotated_frame'))
-                    if saved_person_event:
-                        person.update({k: saved_person_event.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved_person_event})
+        for person in result.get('people', []):
+            if person.get('counted') or config_manager.get('people', 'save_all_detections'):
+                event = dict(person)
+                event.update({'source': 'image_upload', 'filename': file.filename})
+                saved_person_event = person_history_manager.add_event(event, frame=image, annotated_frame=result.get('annotated_frame'))
+                if saved_person_event:
+                    person.update({k: saved_person_event.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved_person_event})
         
         return jsonify({
             'success': True,
@@ -4265,17 +4002,12 @@ def api_process_image():
             'vehicles': [{k: v for k, v in v.items() if k != 'crop'} for v in result['vehicles']],
             'people': result.get('people', []),
             'people_counted': sum(1 for p in result.get('people', []) if p.get('counted')),
-            'processing_time': result['processing_time'],
-            'save_to_history': save_to_history,
-            'applied_settings': applied_settings
+            'processing_time': result['processing_time']
         })
         
     except Exception as e:
         logger.error(f"Bildverarbeitung Fehler: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-    finally:
-        if original_config is not None:
-            config_manager.config = original_config
 
 
 # ============================================================
@@ -5436,12 +5168,12 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.19',
-        'edition': 'ROI-safe Vehicle Context + OCR Tuning',
+        'version': '0.8.20',
+        'edition': 'ProTraffic ROI Safe Detection Fix',
         'features': [
-            'RTSP Live Stream', 'ROI-Filter nach YOLO', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
+            'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
             'Statistik', 'Suche', 'Watchlist', 'Mehrsprachige Einstellungen',
-            'Erweiterte Original-Einstellungen', 'Personenzählung und Personenanalyse', 'Test & Upload OCR-Tuning'
+            'Erweiterte Original-Einstellungen', 'Personenzählung und Personenanalyse'
         ],
         'config': config_manager.get('about') or {},
         'models_loaded': detector.models_loaded,
@@ -6170,7 +5902,7 @@ def api_system_health():
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.19'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.20'})
 
 
 @app.route('/api/system/audit')
@@ -6267,7 +5999,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.19 ROI + OCR Tuning                       ║
+    ║     Version 0.8.20 ProTraffic ROI Safe Detection                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

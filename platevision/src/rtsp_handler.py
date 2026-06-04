@@ -2,7 +2,7 @@
 """
 RTSP Stream Handler
 Verwaltet RTSP Videostreams im Hintergrund
-Version 2.3 - ROI wird nach der Erkennung gefiltert
+Version 2.3 - ROI filtert nach der Erkennung, kein Vorab-Zuschnitt
 """
 
 import cv2
@@ -328,23 +328,35 @@ class RTSPHandler:
         }
 
     def _apply_analysis_mask(self, frame, area_info):
-        """
-        Schneidet den Analysebereich aus.
+        """Bereitet das Frame für die Modelle vor.
 
-        Wichtig: Standardmäßig wird NICHT mehr vor dem Modell mit schwarzen
-        Polygonrändern maskiert. Diese schwarzen Kanten können bei YOLO, vor
-        allem bei Custom-Personenmodellen, falsche Personenboxen erzeugen.
-        Stattdessen wird nach der Erkennung streng gegen das Polygon gefiltert.
-        Wer das alte Verhalten explizit benötigt, kann
-        rtsp.analysis_area.mask_before_detection aktivieren.
+        Fix ab 0.8.20: Die Analysezone darf das Bild vor YOLO nicht mehr
+        automatisch zuschneiden. Der Detektor braucht das komplette Fahrzeug als
+        Kontext; sonst verschwinden Fahrzeugboxen und damit auch Fahrzeugbilder.
+        Standard ist daher: Vollbild erkennen, danach per ROI filtern.
+
+        Alte Installationen können das frühere Verhalten nur explizit über
+        rtsp.analysis_area.crop_before_detection=true reaktivieren.
         """
-        if not area_info.get('enabled'):
+        if frame is None or frame.size == 0 or not area_info.get('enabled'):
+            return frame, 0, 0
+
+        crop_before = bool(self.config_manager.get('rtsp', 'analysis_area', 'crop_before_detection'))
+        mask_before = bool(self.config_manager.get('rtsp', 'analysis_area', 'mask_before_detection'))
+
+        if not crop_before:
+            if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('polygon') or []) >= 3:
+                process_frame = frame.copy()
+                mask = np.zeros(process_frame.shape[:2], dtype=np.uint8)
+                pts = np.array(area_info['polygon'], dtype=np.int32)
+                cv2.fillPoly(mask, [pts], 255)
+                process_frame = cv2.bitwise_and(process_frame, process_frame, mask=mask)
+                return process_frame, 0, 0
             return frame, 0, 0
 
         ax = area_info['x']; ay = area_info['y']; aw = area_info['width']; ah = area_info['height']
         process_frame = frame[ay:ay + ah, ax:ax + aw].copy()
 
-        mask_before = bool(self.config_manager.get('rtsp', 'analysis_area', 'mask_before_detection'))
         if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('crop_polygon') or []) >= 3:
             mask = np.zeros(process_frame.shape[:2], dtype=np.uint8)
             pts = np.array(area_info['crop_polygon'], dtype=np.int32)
@@ -443,8 +455,20 @@ class RTSPHandler:
                 if cfg.get('reject_partial_outside_roi') and min_overlap > 0:
                     return self._bbox_roi_overlap_percent([x1, y1, x2, y2], area_info) >= min_overlap
                 return True
-            # Vehicles/plates: center must be inside the road polygon.
-            return self._point_inside_analysis_area(cx, cy, area_info)
+            center_ok = self._point_inside_analysis_area(cx, cy, area_info)
+            foot_ok = self._point_inside_analysis_area(foot_x, foot_y, area_info)
+            if center_ok or foot_ok:
+                return True
+
+            overlap = self._bbox_roi_overlap_percent([x1, y1, x2, y2], area_info)
+            detection_cfg = self.config_manager.get('detection') or {}
+            if kind == 'vehicle':
+                min_overlap = float(detection_cfg.get('vehicle_roi_min_overlap_percent') or 5)
+            elif kind == 'plate':
+                min_overlap = float(detection_cfg.get('plate_roi_min_overlap_percent') or 15)
+            else:
+                min_overlap = 1.0
+            return overlap >= min_overlap
         except Exception:
             return True
 
@@ -551,22 +575,18 @@ class RTSPHandler:
                         continue
                     
                     try:
-                        # Analysis Area holen. Wichtig ab 0.8.19: Fahrzeug/Kennzeichen YOLO läuft auf
-                        # dem kompletten Frame. Die Analysezone filtert erst danach. So bleiben Autos
-                        # vollständig im Modell und das Fahrzeugbild geht nicht verloren, wenn die ROI
-                        # nur die Straße bzw. das Kennzeichen anschneidet.
+                        # Analysis Area holen und ggf. auf Straße/Polygon maskieren
                         area_info = self._get_analysis_area(frame_h, frame_w)
                         area_enabled = area_info.get('enabled', False)
-                        filter_after_detection = self.config_manager.get('detection', 'analysis_area_filter_after_detection') is not False
-                        if area_enabled and not filter_after_detection:
-                            process_frame, offset_x, offset_y = self._apply_analysis_mask(frame, area_info)
-                            runtime_polygon = area_info.get('crop_polygon')
-                        else:
-                            process_frame, offset_x, offset_y = frame, 0, 0
-                            runtime_polygon = area_info.get('polygon') if area_enabled else None
+                        process_frame, offset_x, offset_y = self._apply_analysis_mask(frame, area_info)
+                        roi_on_processed_frame = None
+                        if area_enabled:
+                            same_size = getattr(process_frame, 'shape', None) is not None and process_frame.shape[:2] == frame.shape[:2]
+                            roi_on_processed_frame = area_info.get('polygon') if same_size else area_info.get('crop_polygon')
                         
-                        # Erkennung auf Vollbild, ROI-Filter danach
-                        results = self.detector.process_frame(process_frame, apply_analysis_area=False, runtime_roi_polygon=runtime_polygon)
+                        # Erkennung standardmäßig auf dem Vollbild. Die ROI filtert erst danach,
+                        # damit Fahrzeuge nicht durch einen Vorab-Zuschnitt abgeschnitten werden.
+                        results = self.detector.process_frame(process_frame, apply_analysis_area=False, runtime_roi_polygon=roi_on_processed_frame)
                         
                         # Annotiertes Frame erstellen
                         annotated = frame.copy()
