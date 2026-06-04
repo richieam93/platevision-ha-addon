@@ -586,7 +586,7 @@
                 <i class="fas fa-car-side"></i>
                 <div>
                     <div class="sidebar-logo-text">Plate<span>Vision</span></div>
-                    <div class="mini-label">ProTraffic v0.8.21</div>
+                    <div class="mini-label">ProTraffic v0.8.22</div>
                 </div>
             </a>
         </div>
@@ -628,10 +628,6 @@
                 <span>{{ t('people') }}</span>
             </a>
 
-            <a href="{{ url_for('diagnostics_page') }}" class="nav-link {% if page == 'diagnostics' %}active{% endif %}">
-                <i class="fas fa-stethoscope"></i>
-                <span>{{ t('diagnostics') }}</span>
-            </a>
 			
 			<a href="{{ url_for('latest_detection_page') }}" class="nav-link {% if page == 'latest' %}active{% endif %}">
 				<i class="fas fa-car-side"></i>
@@ -655,6 +651,11 @@
             <a href="{{ url_for('settings') }}" class="nav-link {% if page == 'settings' %}active{% endif %}">
                 <i class="fas fa-cog"></i>
                 <span>{{ t('settings') }}</span>
+            </a>
+
+            <a href="{{ url_for('settings') }}#diagnosticsAudit" class="nav-link {% if page == 'diagnostics' %}active{% endif %}">
+                <i class="fas fa-stethoscope"></i>
+                <span>Diagnose & Audit</span>
             </a>
         </div>
         

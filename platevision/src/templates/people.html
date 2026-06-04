@@ -17,7 +17,6 @@
         <div class="d-flex flex-wrap gap-2">
             <a href="/test#recognitionTestSettingsCard" class="btn btn-outline-info"><i class="fas fa-flask me-2"></i>Test & Upload Einstellungen</a>
             <button class="btn btn-outline-success" onclick="runSnapshotTest()"><i class="fas fa-vial me-2"></i>Live analysieren</button>
-            <button class="btn btn-outline-warning" onclick="simulatePeople()"><i class="fas fa-flask me-2"></i>Demo-Daten</button>
             <button class="btn btn-outline-danger" onclick="cleanupPeopleHistory()"><i class="fas fa-broom me-2"></i>Cleanup</button>
             <a href="/api/people/export?format=csv" class="btn btn-outline-primary"><i class="fas fa-file-csv me-2"></i>CSV</a>
             <a href="/api/people/export?format=json" class="btn btn-outline-secondary"><i class="fas fa-file-code me-2"></i>JSON</a>
@@ -255,13 +254,6 @@ function loadPeopleModels() {
                 <div class="col-12"><div class="mini-label">Gefundene Modelldateien</div><strong>${models.length}</strong></div>
             </div>`;
     });
-}
-function simulatePeople() {
-    fetch('/api/people/test/simulate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count: 8})})
-        .then(r=>r.json()).then(data => {
-            if (!data.success) { alert(data.error || 'Demo-Daten nicht möglich'); return; }
-            loadPeopleStats(); loadPeoplePresence();
-        });
 }
 function cleanupPeopleHistory() {
     if (!confirm('Personen-Historie nach Aufbewahrungszeit bereinigen?')) return;

@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.21 FastPlateOCR Vehicle Intelligence
+Version 0.8.22 FastPlateOCR Vehicle Intelligence
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -596,7 +596,7 @@ class ConfigManager:
             'test_force_enable_people': True,
             'test_save_uploads': False,
             'test_save_to_history_default': True,
-            'simulation_enabled': True,
+            'simulation_enabled': False,
             'retention_days': 90,
             'auto_cleanup_enabled': False,
             'export_default_format': 'csv',
@@ -695,7 +695,7 @@ class ConfigManager:
         return self._normalize_analysis_area(json.loads(json.dumps(self.DEFAULT_CONFIG)))
     
     def _migrate_config_for_0821(self, config, saved_config=None):
-        """Apply safe defaults for the 0.8.21 OCR/vehicle pipeline.
+        """Apply safe defaults for the 0.8.22 OCR/vehicle pipeline.
 
         This keeps EasyOCR available, but makes fast-plate-ocr the default OCR
         engine for both RTSP and upload analysis. Existing configs from older
@@ -705,7 +705,7 @@ class ConfigManager:
             ocr_cfg = config.setdefault('ocr', {})
             migration_cfg = config.setdefault('migration', {})
             old_engine = str(ocr_cfg.get('engine') or '').strip().lower()
-            # Apply the new 0.8.21 default once for old installations. After the
+            # Apply the new 0.8.22 default once for old installations. After the
             # flag is stored, a user can switch back to EasyOCR in the settings
             # and the next restart will keep that explicit choice.
             if not migration_cfg.get('fast_plate_ocr_default_applied'):
@@ -728,7 +728,7 @@ class ConfigManager:
             if 'bicycle' not in classes:
                 detection['vehicle_class_filter'] = list(classes) + ['bicycle']
 
-            # 0.8.21b: make live/test upload use the same robust plate-detector
+            # 0.8.22b: make live/test upload use the same robust plate-detector
             # settings that worked in the demo UI. This is applied once to older
             # saved configs because otherwise old thresholds can override the new
             # DEFAULT_CONFIG after merge_config().
@@ -761,7 +761,7 @@ class ConfigManager:
             area.setdefault('crop_before_detection', False)
             area.setdefault('mask_before_detection', False)
 
-            # 0.8.21c: persons should be stored with images like vehicle/plate detections.
+            # 0.8.22c: persons should be stored with images like vehicle/plate detections.
             # This is applied once to existing installations so the /people page gets
             # useful image history from Test & Upload and from the RTSP loop.
             people_cfg = config.setdefault('people', {})
@@ -774,7 +774,7 @@ class ConfigManager:
                 people_cfg.setdefault('enabled', True)
                 migration_cfg['people_images_default_applied_v1'] = True
         except Exception as exc:
-            logger.warning(f"0.8.21 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
+            logger.warning(f"0.8.22 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
         return config
 
     def _normalize_analysis_area(self, config):
@@ -1931,6 +1931,26 @@ class PersonHistoryManager:
             self.history = []
             self.save_history()
             return {'deleted_images': deleted_images}
+
+    def purge_simulation_events(self, delete_images=True):
+        """Remove old demo/simulation people entries from earlier builds."""
+        with self.lock:
+            deleted_images = 0
+            kept = []
+            removed = 0
+            for item in self.history:
+                is_sim = (item or {}).get('event_type') == 'simulation' or (item or {}).get('source') == 'test_environment' or str((item or {}).get('track_id') or '').startswith('sim-')
+                if is_sim:
+                    removed += 1
+                    if delete_images:
+                        deleted_images += self._delete_images_for_item(item)
+                else:
+                    kept.append(item)
+            if removed:
+                self.history = kept
+                self.save_history()
+                logger.info(f"Personenanalyse Demo-Daten entfernt: entries={removed}, images={deleted_images}")
+            return {'removed': removed, 'deleted_images': deleted_images}
 
     def delete_event(self, event_id, delete_images=True):
         with self.lock:
@@ -3508,6 +3528,10 @@ config_manager = ConfigManager()
 history_manager = HistoryManager()
 watchlist_manager = WatchlistManager()
 person_history_manager = PersonHistoryManager()
+try:
+    person_history_manager.purge_simulation_events(delete_images=True)
+except Exception as exc:
+    logger.warning(f"Personenanalyse Demo-Daten konnten nicht automatisch bereinigt werden: {exc}")
 detector = LicensePlateDetector(config_manager)
 
 # RTSP Handler importieren
@@ -4745,7 +4769,7 @@ def _json_safe(value, _seen=None):
 
     The live detector keeps OpenCV crops as numpy arrays and some nested helper
     dicts for debugging. Flask cannot serialize numpy objects, and a bug in the
-    first 0.8.21 build created a color palette self-reference. This helper also
+    first 0.8.22 build created a color palette self-reference. This helper also
     protects future API responses against circular references.
     """
     if _seen is None:
@@ -5703,7 +5727,7 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.21',
+        'version': '0.8.22',
         'edition': 'FastPlateOCR + YOLO Vehicle Intelligence',
         'features': [
             'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
@@ -6504,26 +6528,7 @@ def api_people_cleanup():
 
 @app.route('/api/people/test/simulate', methods=['POST'])
 def api_people_test_simulate():
-    if not config_manager.get('people', 'test_environment_enabled') or not config_manager.get('people', 'simulation_enabled'):
-        return jsonify({'success': False, 'error': 'Testumgebung oder Simulation ist deaktiviert.'}), 403
-    data = request.get_json(silent=True) or {}
-    count = min(max(int(data.get('count') or 5), 1), 100)
-    now = datetime.now()
-    created = []
-    for i in range(count):
-        item = person_history_manager.add_event({
-            'timestamp': (now - timedelta(minutes=i * 7)).isoformat(),
-            'event_type': 'simulation',
-            'direction': ['down', 'up', 'left', 'right'][i % 4],
-            'track_id': f'sim-{i+1}',
-            'confidence': 0.80 + (i % 10) / 100,
-            'counted': True,
-            'source': 'test_environment',
-            'bbox': [10, 10, 80, 180],
-            'note': 'Simulierter Testeintrag'
-        })
-        created.append(item)
-    return jsonify({'success': True, 'created': len(created), 'items': created})
+    return jsonify({'success': False, 'error': 'Demo-Daten wurden in Version 0.8.22 entfernt. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
 
 @app.route('/api/system/health')
 def api_system_health():
@@ -6540,7 +6545,7 @@ def api_system_health():
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.21'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.22'})
 
 
 @app.route('/api/system/audit')
@@ -6637,7 +6642,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.21 FastPlateOCR Vehicle Intelligence                                    ║
+    ║     Version 0.8.22 FastPlateOCR Vehicle Intelligence                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║
