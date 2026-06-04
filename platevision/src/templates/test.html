@@ -303,34 +303,6 @@
         border-radius: 2px;
         transition: width 0.3s ease;
     }
-
-    .calibration-panel {
-        background: rgba(15, 23, 42, 0.65);
-        border: 1px solid var(--card-border);
-        border-radius: 14px;
-        padding: 1rem;
-    }
-
-    .calibration-panel .form-label {
-        font-size: 0.78rem;
-        color: var(--text-secondary);
-        margin-bottom: 0.25rem;
-    }
-
-    .calibration-panel .form-control,
-    .calibration-panel .form-select {
-        background: var(--dark-bg);
-        border-color: var(--card-border);
-        color: var(--text-primary);
-    }
-
-    .range-value {
-        min-width: 3.6rem;
-        text-align: right;
-        font-variant-numeric: tabular-nums;
-        color: var(--text-secondary);
-    }
-
 </style>
 {% endblock %}
 
@@ -385,240 +357,96 @@
                         <i class="fas fa-magic me-2"></i>Erkennung starten
                     </button>
                 </div>
+                    <div class="recognition-tuning-panel mt-3 p-3 rounded border border-secondary-subtle bg-dark bg-opacity-25">
+                        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                            <div>
+                                <h6 class="mb-1"><i class="fas fa-sliders me-2 text-warning"></i>OCR-/Erkennungsparameter für diesen Test</h6>
+                                <p class="text-secondary small mb-0">Diese Werte gelten nur für den Upload-Test. Du kannst danach mit demselben Bild sofort erneut scannen.</p>
+                            </div>
+                            <button class="btn btn-sm btn-outline-warning" type="button" onclick="processImage()" title="Mit aktuellen Parametern erneut scannen">
+                                <i class="fas fa-rotate me-1"></i>Erneut scannen
+                            </button>
+                        </div>
+
+                        <div class="row g-2 mt-1">
+                            <div class="col-sm-4">
+                                <label class="form-label small">YOLO Fahrzeuge/Kennzeichen</label>
+                                <input class="form-control form-control-sm" type="number" step="0.05" min="0.05" max="0.95" id="recConf" value="{{ config.detection.confidence_threshold|default(0.5) }}">
+                            </div>
+                            <div class="col-sm-4">
+                                <label class="form-label small">Kennzeichen-Faktor</label>
+                                <input class="form-control form-control-sm" type="number" step="0.05" min="0.1" max="1.2" id="recPlateFactor" value="{{ config.detection.plate_detector_confidence_factor|default(0.6) }}">
+                            </div>
+                            <div class="col-sm-4">
+                                <label class="form-label small">Min. Speichern/OCR</label>
+                                <input class="form-control form-control-sm" type="number" step="0.05" min="0.0" max="0.95" id="recSaveConf" value="{{ config.history.min_confidence_to_save|default(0.35) }}">
+                            </div>
+
+                            <div class="col-sm-4">
+                                <label class="form-label small">OCR min. Konfidenz</label>
+                                <input class="form-control form-control-sm" type="number" step="0.05" min="0.0" max="0.95" id="recOcrConf" value="{{ config.ocr.min_confidence|default(0.25) }}">
+                            </div>
+                            <div class="col-sm-4">
+                                <label class="form-label small">OCR Decoder</label>
+                                <select class="form-select form-select-sm" id="recDecoder">
+                                    <option value="greedy" {% if config.ocr.decoder == 'greedy' %}selected{% endif %}>greedy</option>
+                                    <option value="beamsearch" {% if config.ocr.decoder == 'beamsearch' %}selected{% endif %}>beamsearch</option>
+                                    <option value="wordbeamsearch" {% if config.ocr.decoder == 'wordbeamsearch' %}selected{% endif %}>wordbeamsearch</option>
+                                </select>
+                            </div>
+                            <div class="col-sm-4">
+                                <label class="form-label small">Land/Format</label>
+                                <select class="form-select form-select-sm" id="recCountryHint">
+                                    {% set country_hint = config.plate_recognition.country_hint|default('CH') %}
+                                    {% for country in ['auto', 'CH', 'FL', 'DE', 'AT', 'NL'] %}
+                                        <option value="{{ country }}" {% if country_hint == country %}selected{% endif %}>{{ country }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="col-sm-4">
+                                <label class="form-label small">OCR Varianten</label>
+                                <input class="form-control form-control-sm" type="number" min="1" max="20" id="recMaxVariants" value="{{ config.ocr.max_variants_to_read|default(8) }}">
+                            </div>
+                            <div class="col-sm-4">
+                                <label class="form-label small">Zielhöhe Schild</label>
+                                <input class="form-control form-control-sm" type="number" min="40" max="260" id="recTargetHeight" value="{{ config.ocr.preprocessing.target_height|default(120) }}">
+                            </div>
+                            <div class="col-sm-4">
+                                <label class="form-label small">Resize-Faktor</label>
+                                <input class="form-control form-control-sm" type="number" step="0.25" min="1" max="8" id="recResizeFactor" value="{{ config.ocr.preprocessing.resize_factor|default(4.0) }}">
+                            </div>
+
+                            <div class="col-sm-4">
+                                <label class="form-label small">Zoom-Faktor</label>
+                                <input class="form-control form-control-sm" type="number" step="0.25" min="1" max="6" id="recZoomFactor" value="{{ config.detection.zoom_factor|default(2.5) }}">
+                            </div>
+                            <div class="col-sm-4">
+                                <label class="form-label small">Zoom-Padding</label>
+                                <input class="form-control form-control-sm" type="number" min="0" max="400" id="recZoomPadding" value="{{ config.detection.zoom_padding|default(100) }}">
+                            </div>
+                            <div class="col-sm-4">
+                                <label class="form-label small">Fahrzeug-Kontext Breite</label>
+                                <input class="form-control form-control-sm" type="number" step="0.5" min="3" max="14" id="recContextWidth" value="{{ config.detection.vehicle_context_width_factor|default(7.0) }}">
+                            </div>
+                        </div>
+
+                        <div class="row g-2 mt-2 small">
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recSaveHistory"><label class="form-check-label" for="recSaveHistory">In Historie speichern</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recCarDetection" {% if config.detection.car_detection_enabled %}checked{% endif %}><label class="form-check-label" for="recCarDetection">Fahrzeuge erkennen</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recFullFrame" {% if config.detection.scan_full_frame_when_vehicle_found %}checked{% endif %}><label class="form-check-label" for="recFullFrame">Zusätzlich Vollbild scannen</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recZoomEnabled" {% if config.detection.zoom_enabled %}checked{% endif %}><label class="form-check-label" for="recZoomEnabled">Fahrzeug-Zoom</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recVehicleFallback" {% if config.detection.vehicle_context_fallback_enabled != false %}checked{% endif %}><label class="form-check-label" for="recVehicleFallback">Fahrzeugbild-Fallback</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recAllowlist" {% if config.ocr.use_allowlist %}checked{% endif %}><label class="form-check-label" for="recAllowlist">OCR-Allowlist</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recPreEnabled" {% if config.ocr.preprocessing.enabled %}checked{% endif %}><label class="form-check-label" for="recPreEnabled">Vorverarbeitung</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recContrast" {% if config.ocr.preprocessing.contrast_enhance %}checked{% endif %}><label class="form-check-label" for="recContrast">Kontrast/CLAHE</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recAdaptive" {% if config.ocr.preprocessing.adaptive_threshold %}checked{% endif %}><label class="form-check-label" for="recAdaptive">Adaptive Schwelle</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recDenoise" {% if config.ocr.preprocessing.denoise %}checked{% endif %}><label class="form-check-label" for="recDenoise">Rauschfilter</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recSharpen" {% if config.ocr.preprocessing.sharpen %}checked{% endif %}><label class="form-check-label" for="recSharpen">Schärfen</label></div></div>
+                            <div class="col-6 col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="recRotation" {% if config.ocr.rotation_variants %}checked{% endif %}><label class="form-check-label" for="recRotation">Schräglage testen</label></div></div>
+                        </div>
+                    </div>
                 
-                <div class="calibration-panel mt-4" id="calibrationPanel">
-                    <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
-                        <div>
-                            <h6 class="mb-1"><i class="fas fa-sliders me-2 text-primary"></i>Erkennungs-Labor für dieses Bild</h6>
-                            <p class="text-secondary small mb-0">Parameter ändern, dann <strong>Erkennung starten</strong> oder <strong>Nochmals scannen</strong>. Die Werte werden temporär auf das Upload-Bild angewendet; mit „Speichern“ werden sie dauerhaft übernommen.</p>
-                        </div>
-                        <span class="badge bg-info">Live-Test</span>
-                    </div>
-
-                    <div class="accordion mt-3" id="calibrationAccordion">
-                        <div class="accordion-item bg-transparent border-secondary">
-                            <h2 class="accordion-header" id="ocrHeading">
-                                <button class="accordion-button collapsed bg-dark text-light" type="button" data-bs-toggle="collapse" data-bs-target="#ocrCollapse" aria-expanded="false" aria-controls="ocrCollapse">
-                                    OCR & Kennzeichen-Lesung
-                                </button>
-                            </h2>
-                            <div id="ocrCollapse" class="accordion-collapse collapse show" aria-labelledby="ocrHeading" data-bs-parent="#calibrationAccordion">
-                                <div class="accordion-body">
-                                    <div class="row g-3">
-                                        <div class="col-md-6">
-                                            <label class="form-label" for="testOcrEngine">OCR Engine</label>
-                                            <select class="form-select form-select-sm" id="testOcrEngine">
-                                                <option value="easyocr" selected>EasyOCR</option>
-                                            </select>
-                                            <div class="form-text text-secondary">Tesseract/PaddleOCR wurden entfernt. Der RTSP-Stream nutzt ebenfalls EasyOCR.</div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label" for="testCountryHint">Land/Format</label>
-                                            <select class="form-select form-select-sm" id="testCountryHint">
-                                                <option value="auto">Auto: Länder automatisch testen</option>
-                                                <option value="CH">Schweiz / Kantonskürzel</option>
-                                                <option value="FL">Liechtenstein</option>
-                                                <option value="DE">Deutschland</option>
-                                                <option value="AT">Österreich</option>
-                                                <option value="CZ">Tschechien / CZ</option>
-                                                <option value="EU">EU gemischt / lange Nummern</option>
-                                                <option value="NL">Niederlande / NL</option>
-                                            </select>
-                                            <div class="form-text text-secondary">Bei Auto werden mehrere Länderlogiken gegeneinander bewertet. Ein Land muss nicht explizit gesetzt werden.</div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label" for="testOcrTextMode">Lesemodus</label>
-                                            <select class="form-select form-select-sm" id="testOcrTextMode">
-                                                <option value="auto_country">Automatisch: Kennzeichen + Länderlogik</option>
-                                                <option value="raw">Rohtext: alle Buchstaben/Zahlen lesen</option>
-                                            </select>
-                                            <div class="form-text text-secondary">Rohtext ist gut zum Kalibrieren: es wird weniger korrigiert und weniger verworfen.</div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label">OCR Mindest-Konfidenz <span class="range-value" id="testOcrMinConfidenceValue"></span></label>
-                                            <input type="range" class="form-range" id="testOcrMinConfidence" min="0.05" max="0.90" step="0.01">
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label">Rohtext Mindest-Konf. <span class="range-value" id="testRawFallbackMinConfidenceValue"></span></label>
-                                            <input type="range" class="form-range" id="testRawFallbackMinConfidence" min="0.01" max="0.40" step="0.01">
-                                            <div class="form-text text-secondary">Wird nur verwendet, wenn normal kein Kennzeichen gefunden wurde.</div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label class="form-label">Anzeige-/History Mindest-Konfidenz <span class="range-value" id="testHistoryMinConfidenceValue"></span></label>
-                                            <input type="range" class="form-range" id="testHistoryMinConfidence" min="0.05" max="0.90" step="0.01">
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label" for="testDecoder">EasyOCR Decoder</label>
-                                            <select class="form-select form-select-sm" id="testDecoder">
-                                                <option value="greedy">greedy</option>
-                                                <option value="beamsearch">beamsearch</option>
-                                                <option value="wordbeamsearch">wordbeamsearch</option>
-                                            </select>
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label" for="testMaxVariants">OCR Varianten</label>
-                                            <input type="number" class="form-control form-control-sm" id="testMaxVariants" min="1" max="24" step="1">
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label" for="testEarlyStop">Early Stop</label>
-                                            <input type="number" class="form-control form-control-sm" id="testEarlyStop" min="0.1" max="0.99" step="0.01">
-                                        </div>
-                                        <input type="hidden" id="testTessPsm" value="7">
-                                        <input type="hidden" id="testTessLang" value="eng+deu">
-                                        <input type="hidden" id="testTessMinConfidence" value="0.20">
-                                        <span id="testTessMinConfidenceValue" class="d-none"></span>
-                                        <input type="hidden" id="testPaddleLang" value="en">
-                                        <input type="hidden" id="testPaddleMinConfidence" value="0.18">
-                                        <span id="testPaddleMinConfidenceValue" class="d-none"></span>
-                                        <input type="hidden" id="testPaddleMaxVariants" value="8">
-                                        <div class="col-12">
-                                            <label class="form-label" for="testAllowedChars">Erlaubte OCR-Zeichen</label>
-                                            <input type="text" class="form-control form-control-sm" id="testAllowedChars">
-                                        </div>
-                                        <div class="col-12 d-flex flex-wrap gap-3 small">
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testUseAllowlist"><label class="form-check-label" for="testUseAllowlist">Allowlist verwenden</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMergeFragments"><label class="form-check-label" for="testMergeFragments">OCR-Fragmente zusammenfügen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSmartCorrection"><label class="form-check-label" for="testSmartCorrection">OCR-Fehler intelligent korrigieren</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPrettyOutput"><label class="form-check-label" for="testPrettyOutput">Format schön ausgeben</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRawFallback"><label class="form-check-label" for="testRawFallback">Falls normal nichts gefunden wird: Rohtext lesen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRotationVariants"><label class="form-check-label" for="testRotationVariants">180° Variante prüfen</label></div>
-                                            <input type="checkbox" id="testPaddleEnabled" class="d-none">
-                                            <input type="checkbox" id="testPaddleAngleCls" class="d-none">
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="accordion-item bg-transparent border-secondary">
-                            <h2 class="accordion-header" id="detHeading">
-                                <button class="accordion-button collapsed bg-dark text-light" type="button" data-bs-toggle="collapse" data-bs-target="#detCollapse" aria-expanded="false" aria-controls="detCollapse">
-                                    YOLO Fahrzeug/Kennzeichen-Erkennung
-                                </button>
-                            </h2>
-                            <div id="detCollapse" class="accordion-collapse collapse" aria-labelledby="detHeading" data-bs-parent="#calibrationAccordion">
-                                <div class="accordion-body">
-                                    <div class="row g-3">
-                                        <div class="col-md-4"><label class="form-label">Allgemeine Konf. <span id="testConfValue" class="range-value"></span></label><input type="range" class="form-range" id="testConf" min="0.05" max="0.95" step="0.01"></div>
-                                        <div class="col-md-4"><label class="form-label">Fahrzeug-Konf. <span id="testVehicleConfValue" class="range-value"></span></label><input type="range" class="form-range" id="testVehicleConf" min="0.05" max="0.95" step="0.01"></div>
-                                        <div class="col-md-4"><label class="form-label">Kennzeichen-Konf. <span id="testPlateConfValue" class="range-value"></span></label><input type="range" class="form-range" id="testPlateConf" min="0.05" max="0.95" step="0.01"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testMinPlateWidth">Min. Kennz. Breite</label><input type="number" class="form-control form-control-sm" id="testMinPlateWidth" min="1" max="1000"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testMinPlateHeight">Min. Kennz. Höhe</label><input type="number" class="form-control form-control-sm" id="testMinPlateHeight" min="1" max="500"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testAspectMin">Aspect min</label><input type="number" class="form-control form-control-sm" id="testAspectMin" min="0.5" max="10" step="0.1"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testAspectMax">Aspect max</label><input type="number" class="form-control form-control-sm" id="testAspectMax" min="0.5" max="20" step="0.1"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testPlateOcrPaddingPx">OCR Rand px</label><input type="number" class="form-control form-control-sm" id="testPlateOcrPaddingPx" min="0" max="80" step="1"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testPlateOcrPaddingPercent">OCR Rand %</label><input type="number" class="form-control form-control-sm" id="testPlateOcrPaddingPercent" min="0" max="0.5" step="0.01"></div>
-                                        <div class="col-md-4"><label class="form-label" for="testZoomFactor">Zoom Faktor</label><input type="number" class="form-control form-control-sm" id="testZoomFactor" min="1" max="6" step="0.1"></div>
-                                        <div class="col-md-4"><label class="form-label" for="testZoomPadding">Zoom Padding</label><input type="number" class="form-control form-control-sm" id="testZoomPadding" min="0" max="1000" step="10"></div>
-                                        <div class="col-md-4"><label class="form-label" for="testMaxDetections">Max. Detections/Frame</label><input type="number" class="form-control form-control-sm" id="testMaxDetections" min="1" max="50" step="1"></div>
-                                        <div class="col-12 d-flex flex-wrap gap-3 small">
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testCarDetection"><label class="form-check-label" for="testCarDetection">Fahrzeug erkennen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testZoomEnabled"><label class="form-check-label" for="testZoomEnabled">Auto-Zoom nutzen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testScanFullFrame"><label class="form-check-label" for="testScanFullFrame">Zusätzlich Full Frame scannen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testOcrFallbackScan"><label class="form-check-label" for="testOcrFallbackScan">OCR-Fallback ohne Kennzeichenbox</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testCropBefore"><label class="form-check-label" for="testCropBefore">Vor Detection ROI croppen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMaskBefore"><label class="form-check-label" for="testMaskBefore">Vor Detection maskieren</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testAnnotate"><label class="form-check-label" for="testAnnotate">Annotation zeichnen</label></div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="accordion-item bg-transparent border-secondary">
-                            <h2 class="accordion-header" id="colorHeading">
-                                <button class="accordion-button collapsed bg-dark text-light" type="button" data-bs-toggle="collapse" data-bs-target="#colorCollapse" aria-expanded="false" aria-controls="colorCollapse">
-                                    Fahrzeugfarbe / Karosserie-Farbe
-                                </button>
-                            </h2>
-                            <div id="colorCollapse" class="accordion-collapse collapse" aria-labelledby="colorHeading" data-bs-parent="#calibrationAccordion">
-                                <div class="accordion-body">
-                                    <div class="alert alert-info py-2 small mb-3">
-                                        <i class="fas fa-circle-info me-1"></i>
-                                        YOLO erkennt nur das Fahrzeug. Die Farbe wird danach aus dem Fahrzeugbild berechnet. Mit „Robust“ werden Fenster, Kennzeichen, Reifen und Reflexionen stärker ignoriert.
-                                    </div>
-                                    <div class="row g-3">
-                                        <div class="col-md-4">
-                                            <label class="form-label" for="testColorMethod">Farbmethode</label>
-                                            <select class="form-select form-select-sm" id="testColorMethod">
-                                                <option value="robust">Robust: Karosserie-Zonen + Masken</option>
-                                                <option value="classic">Klassisch: Mitte des Fahrzeugbilds</option>
-                                            </select>
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label">Farb-Mindest-Konf. <span class="range-value" id="testColorMinConfidenceValue"></span></label>
-                                            <input type="range" class="form-range" id="testColorMinConfidence" min="0.05" max="0.90" step="0.01">
-                                        </div>
-                                        <div class="col-md-4">
-                                            <label class="form-label" for="testColorKmeansClusters">Farb-Cluster</label>
-                                            <input type="number" class="form-control form-control-sm" id="testColorKmeansClusters" min="2" max="6" step="1">
-                                        </div>
-                                        <div class="col-md-3"><label class="form-label" for="testColorTop">Sample oben %</label><input type="number" class="form-control form-control-sm" id="testColorTop" min="0" max="0.5" step="0.01"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testColorBottom">Sample unten %</label><input type="number" class="form-control form-control-sm" id="testColorBottom" min="0.4" max="1" step="0.01"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testColorSide">Seitenrand %</label><input type="number" class="form-control form-control-sm" id="testColorSide" min="0" max="0.35" step="0.01"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testColorMinPixelRatio">Farbpixel-Minimum</label><input type="number" class="form-control form-control-sm" id="testColorMinPixelRatio" min="0" max="0.5" step="0.01"></div>
-                                        <div class="col-12 d-flex flex-wrap gap-3 small">
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testColorEnabled"><label class="form-check-label" for="testColorEnabled">Farberkennung aktiv</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testColorExcludePlate"><label class="form-check-label" for="testColorExcludePlate">Kennzeichen/Scheinwerfer-Zone ignorieren</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testColorExcludeWindows"><label class="form-check-label" for="testColorExcludeWindows">Fenster-Zone ignorieren</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testColorExcludeTires"><label class="form-check-label" for="testColorExcludeTires">Reifen/Strasse unten ignorieren</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testColorExcludeReflections"><label class="form-check-label" for="testColorExcludeReflections">Helle Reflexionen ignorieren</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testColorKmeans"><label class="form-check-label" for="testColorKmeans">KMeans-Farbcluster verwenden</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testColorShowConfidence"><label class="form-check-label" for="testColorShowConfidence">Farb-Konfidenz im Label zeigen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testColorUnknownLow"><label class="form-check-label" for="testColorUnknownLow">Unsichere Farben als Unbekannt</label></div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="accordion-item bg-transparent border-secondary">
-                            <h2 class="accordion-header" id="preHeading">
-                                <button class="accordion-button collapsed bg-dark text-light" type="button" data-bs-toggle="collapse" data-bs-target="#preCollapse" aria-expanded="false" aria-controls="preCollapse">
-                                    Bildvorverarbeitung & Speicherung
-                                </button>
-                            </h2>
-                            <div id="preCollapse" class="accordion-collapse collapse" aria-labelledby="preHeading" data-bs-parent="#calibrationAccordion">
-                                <div class="accordion-body">
-                                    <div class="row g-3">
-                                        <div class="col-md-3"><label class="form-label" for="testResizeFactor">Resize Faktor</label><input type="number" class="form-control form-control-sm" id="testResizeFactor" min="1" max="8" step="0.1"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testTargetHeight">Zielhöhe</label><input type="number" class="form-control form-control-sm" id="testTargetHeight" min="20" max="600" step="10"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testMinWidth">Min. Breite</label><input type="number" class="form-control form-control-sm" id="testMinWidth" min="20" max="1200" step="10"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testBorderPadding">Rand Padding</label><input type="number" class="form-control form-control-sm" id="testBorderPadding" min="0" max="80" step="1"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testClaheClip">CLAHE Clip</label><input type="number" class="form-control form-control-sm" id="testClaheClip" min="0.5" max="10" step="0.1"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testDenoiseStrength">Denoise Stärke</label><input type="number" class="form-control form-control-sm" id="testDenoiseStrength" min="0" max="40" step="1"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testThresholdBlock">Threshold Block</label><input type="number" class="form-control form-control-sm" id="testThresholdBlock" min="3" max="99" step="2"></div>
-                                        <div class="col-md-3"><label class="form-label" for="testThresholdC">Threshold C</label><input type="number" class="form-control form-control-sm" id="testThresholdC" min="-20" max="20" step="1"></div>
-                                        <div class="col-12 d-flex flex-wrap gap-3 small">
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPreEnabled"><label class="form-check-label" for="testPreEnabled">Preprocessing aktiv</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDenoise"><label class="form-check-label" for="testDenoise">Denoise</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSharpen"><label class="form-check-label" for="testSharpen">Schärfen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testContrast"><label class="form-check-label" for="testContrast">Kontrast/CLAHE</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testAdaptive"><label class="form-check-label" for="testAdaptive">Adaptive Threshold</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMorphology"><label class="form-check-label" for="testMorphology">Morphology</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testInvert"><label class="form-check-label" for="testInvert">Invertierte Variante</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testBilateral"><label class="form-check-label" for="testBilateral">Bilateral Filter</label></div>
-                                        </div>
-                                        <div class="col-12 d-flex flex-wrap gap-3 small mt-2">
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSavePlateImage"><label class="form-check-label" for="testSavePlateImage">Kennzeichen-Bild speichern/anzeigen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSaveVehicleImage"><label class="form-check-label" for="testSaveVehicleImage">Fahrzeug-Bild speichern/anzeigen</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSaveFullFrame"><label class="form-check-label" for="testSaveFullFrame">Full Frame mitgeben</label></div>
-                                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSaveHistory"><label class="form-check-label" for="testSaveHistory">Test in Historie speichern</label></div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="d-flex gap-2 flex-wrap mt-3">
-                        <button type="button" class="btn btn-sm btn-primary" onclick="processFile()"><i class="fas fa-rotate me-1"></i>Nochmals scannen</button>
-                        <button type="button" class="btn btn-sm btn-outline-success" onclick="saveCalibrationSettings()"><i class="fas fa-save me-1"></i>Diese Einstellungen speichern</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadCalibrationSettings(true)"><i class="fas fa-undo me-1"></i>Gespeicherte Werte neu laden</button>
-                    </div>
-                    <div class="small text-secondary mt-2" id="calibrationStatus">Lade aktuelle Einstellungen...</div>
-                </div>
-
                 <hr class="my-4">
                 
                 <!-- Camera Section -->
@@ -869,7 +697,6 @@
     let currentJobId = null;
     let jobPollingInterval = null;
     let jobsRefreshInterval = null;
-    let calibrationConfig = null;
     
     // ============================================
     // INITIALIZATION
@@ -877,7 +704,6 @@
     
     document.addEventListener('DOMContentLoaded', function() {
         loadPeopleSettingsForUpload();
-        loadCalibrationSettings();
         initDragAndDrop();
         refreshJobs();
         
@@ -1009,257 +835,6 @@
     }
     
     // ============================================
-    // CALIBRATION SETTINGS
-    // ============================================
-
-    function byId(id) { return document.getElementById(id); }
-    function setVal(id, value) { const el = byId(id); if (el && value !== undefined && value !== null) el.value = value; }
-    function setChecked(id, value) { const el = byId(id); if (el) el.checked = !!value; }
-    function getNum(id, fallback) { const el = byId(id); const n = parseFloat(el?.value); return Number.isFinite(n) ? n : fallback; }
-    function getInt(id, fallback) { const el = byId(id); const n = parseInt(el?.value, 10); return Number.isFinite(n) ? n : fallback; }
-    function getChecked(id, fallback=false) { const el = byId(id); return el ? !!el.checked : fallback; }
-    function getText(id, fallback='') { const el = byId(id); return el ? el.value : fallback; }
-
-    function bindRange(id, decimals=2) {
-        const input = byId(id);
-        const label = byId(id + 'Value');
-        if (!input || !label) return;
-        const update = () => { label.textContent = Number(input.value || 0).toFixed(decimals); };
-        input.addEventListener('input', update);
-        update();
-    }
-
-    async function loadCalibrationSettings(showToastOnLoad=false) {
-        const status = byId('calibrationStatus');
-        try {
-            const response = await fetch('/api/config');
-            const cfg = await response.json();
-            calibrationConfig = cfg;
-            applyCalibrationConfig(cfg);
-            if (status) status.textContent = 'Aktuelle gespeicherte Einstellungen geladen. Änderungen hier sind zunächst nur für den Test-Scan aktiv.';
-            if (showToastOnLoad) showToast('Geladen', 'Gespeicherte Einstellungen wurden neu geladen.', 'info');
-        } catch (error) {
-            if (status) status.textContent = 'Einstellungen konnten nicht geladen werden.';
-        }
-    }
-
-    function applyCalibrationConfig(cfg) {
-        const d = cfg.detection || {};
-        const o = cfg.ocr || {};
-        const p = o.preprocessing || {};
-        const h = cfg.history || {};
-        const pr = cfg.plate_recognition || {};
-        const vc = cfg.vehicle_color || {};
-        setVal('testOcrEngine', 'easyocr');
-        setVal('testCountryHint', pr.country_hint || 'auto');
-        setVal('testOcrTextMode', o.text_mode || 'auto_country');
-        setVal('testOcrMinConfidence', o.min_confidence ?? 0.25);
-        setVal('testRawFallbackMinConfidence', o.raw_fallback_min_confidence ?? 0.03);
-        setVal('testHistoryMinConfidence', h.min_confidence_to_save ?? 0.35);
-        setVal('testDecoder', o.decoder || 'greedy');
-        setVal('testMaxVariants', o.max_variants_to_read ?? 8);
-        setVal('testEarlyStop', o.early_stop_confidence ?? 0.85);
-        setVal('testTessPsm', o.tesseract_psm ?? 7);
-        setVal('testTessLang', o.tesseract_lang || 'eng+deu');
-        setVal('testTessMinConfidence', o.tesseract_min_confidence ?? 0.20);
-        setVal('testPaddleLang', o.paddleocr_lang || 'en');
-        setVal('testPaddleMinConfidence', o.paddleocr_min_confidence ?? 0.18);
-        setVal('testPaddleMaxVariants', o.paddleocr_max_variants ?? 8);
-        setVal('testAllowedChars', o.allowed_characters || 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- ÄÖÜ');
-        setChecked('testUseAllowlist', o.use_allowlist !== false);
-        setChecked('testMergeFragments', o.merge_fragments !== false);
-        setChecked('testSmartCorrection', pr.smart_ocr_correction !== false);
-        setChecked('testPrettyOutput', pr.format_pretty_output !== false);
-        setChecked('testRawFallback', o.accept_raw_ocr_fallback !== false);
-        setChecked('testRotationVariants', !!o.rotation_variants);
-        setChecked('testPaddleEnabled', false);
-        setChecked('testPaddleAngleCls', false);
-
-        setVal('testConf', d.confidence_threshold ?? 0.5);
-        setVal('testVehicleConf', d.vehicle_confidence_threshold ?? 0.25);
-        setVal('testPlateConf', d.plate_confidence_threshold ?? 0.25);
-        setVal('testMinPlateWidth', d.min_plate_width ?? 60);
-        setVal('testMinPlateHeight', d.min_plate_height ?? 15);
-        setVal('testAspectMin', d.plate_aspect_ratio_min ?? 2.0);
-        setVal('testAspectMax', d.plate_aspect_ratio_max ?? 6.5);
-        setVal('testPlateOcrPaddingPx', d.plate_ocr_padding_px ?? 8);
-        setVal('testPlateOcrPaddingPercent', d.plate_ocr_padding_percent ?? 0.10);
-        setVal('testZoomFactor', d.zoom_factor ?? 2.5);
-        setVal('testZoomPadding', d.zoom_padding ?? 100);
-        setVal('testMaxDetections', d.max_detections_per_frame ?? 8);
-        setChecked('testCarDetection', d.car_detection_enabled !== false);
-        setChecked('testZoomEnabled', d.zoom_enabled !== false);
-        setChecked('testScanFullFrame', !!d.scan_full_frame_when_vehicle_found);
-        setChecked('testOcrFallbackScan', !!d.ocr_fallback_scan_enabled);
-        setChecked('testCropBefore', !!d.crop_before_detection);
-        setChecked('testMaskBefore', !!d.mask_before_detection);
-        setChecked('testAnnotate', d.annotate_frames !== false);
-
-        setVal('testResizeFactor', p.resize_factor ?? 4.0);
-        setVal('testTargetHeight', p.target_height ?? 120);
-        setVal('testMinWidth', p.min_width ?? 200);
-        setVal('testBorderPadding', p.border_padding ?? 6);
-        setVal('testClaheClip', p.clahe_clip_limit ?? 3.0);
-        setVal('testDenoiseStrength', p.denoise_strength ?? 10);
-        setVal('testThresholdBlock', p.threshold_block_size ?? 11);
-        setVal('testThresholdC', p.threshold_c ?? 2);
-        setChecked('testPreEnabled', p.enabled !== false);
-        setChecked('testDenoise', p.denoise !== false);
-        setChecked('testSharpen', p.sharpen !== false);
-        setChecked('testContrast', p.contrast_enhance !== false);
-        setChecked('testAdaptive', p.adaptive_threshold !== false);
-        setChecked('testMorphology', p.morphology !== false);
-        setChecked('testInvert', p.invert_variant !== false);
-        setChecked('testBilateral', !!p.bilateral_filter);
-        setChecked('testSavePlateImage', h.save_plate_image !== false && d.save_detected_plates !== false);
-        setChecked('testSaveVehicleImage', h.save_vehicle_image !== false && d.save_detected_vehicles !== false);
-        setChecked('testSaveFullFrame', d.save_full_frame !== false);
-        setChecked('testSaveHistory', !!o.test_save_to_history_default);
-
-        setVal('testColorMethod', vc.method || 'robust');
-        setVal('testColorMinConfidence', vc.min_confidence ?? 0.22);
-        setVal('testColorKmeansClusters', vc.kmeans_clusters ?? 4);
-        setVal('testColorTop', vc.sample_top_percent ?? 0.16);
-        setVal('testColorBottom', vc.sample_bottom_percent ?? 0.82);
-        setVal('testColorSide', vc.sample_side_margin_percent ?? 0.08);
-        setVal('testColorMinPixelRatio', vc.min_color_pixel_ratio ?? 0.08);
-        setChecked('testColorEnabled', vc.enabled !== false);
-        setChecked('testColorExcludePlate', vc.exclude_plate_area !== false);
-        setChecked('testColorExcludeWindows', vc.exclude_windows !== false);
-        setChecked('testColorExcludeTires', vc.exclude_tires_bottom !== false);
-        setChecked('testColorExcludeReflections', vc.exclude_bright_reflections !== false);
-        setChecked('testColorKmeans', vc.kmeans_enabled !== false);
-        setChecked('testColorShowConfidence', !!vc.show_confidence_in_label);
-        setChecked('testColorUnknownLow', !!vc.return_unknown_on_low_confidence);
-        ['testOcrMinConfidence', 'testRawFallbackMinConfidence', 'testHistoryMinConfidence', 'testConf', 'testVehicleConf', 'testPlateConf', 'testColorMinConfidence'].forEach(id => bindRange(id, 2));
-    }
-
-    function collectCalibrationSettings() {
-        const thresholdBlock = getInt('testThresholdBlock', 11);
-        return {
-            detection: {
-                confidence_threshold: getNum('testConf', 0.5),
-                vehicle_confidence_threshold: getNum('testVehicleConf', 0.25),
-                plate_confidence_threshold: getNum('testPlateConf', 0.25),
-                car_detection_enabled: getChecked('testCarDetection', true),
-                zoom_enabled: getChecked('testZoomEnabled', true),
-                zoom_factor: getNum('testZoomFactor', 2.5),
-                zoom_padding: getInt('testZoomPadding', 100),
-                min_plate_width: getInt('testMinPlateWidth', 60),
-                min_plate_height: getInt('testMinPlateHeight', 15),
-                plate_aspect_ratio_min: getNum('testAspectMin', 2.0),
-                plate_aspect_ratio_max: getNum('testAspectMax', 6.5),
-                plate_ocr_padding_px: getInt('testPlateOcrPaddingPx', 8),
-                plate_ocr_padding_percent: getNum('testPlateOcrPaddingPercent', 0.10),
-                max_detections_per_frame: getInt('testMaxDetections', 8),
-                annotate_frames: getChecked('testAnnotate', true),
-                scan_full_frame_when_vehicle_found: getChecked('testScanFullFrame', false),
-                ocr_fallback_scan_enabled: getChecked('testOcrFallbackScan', false),
-                ocr_fallback_max_regions: 4,
-                crop_before_detection: getChecked('testCropBefore', false),
-                mask_before_detection: getChecked('testMaskBefore', false),
-                save_detected_plates: getChecked('testSavePlateImage', true),
-                save_detected_vehicles: getChecked('testSaveVehicleImage', true),
-                save_full_frame: getChecked('testSaveFullFrame', true),
-            },
-            ocr: {
-                engine: 'easyocr',
-                text_mode: getText('testOcrTextMode', 'auto_country'),
-                min_confidence: getNum('testOcrMinConfidence', 0.25),
-                allowed_characters: getText('testAllowedChars', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- ÄÖÜ'),
-                decoder: getText('testDecoder', 'greedy'),
-                rotation_variants: getChecked('testRotationVariants', true),
-                early_stop_confidence: getNum('testEarlyStop', 0.85),
-                max_variants_to_read: getInt('testMaxVariants', 8),
-                merge_fragments: getChecked('testMergeFragments', true),
-                uppercase_output: true,
-                use_allowlist: getChecked('testUseAllowlist', true),
-                tesseract_lang: getText('testTessLang', 'eng+deu'),
-                tesseract_psm: getInt('testTessPsm', 7),
-                tesseract_oem: 3,
-                tesseract_min_confidence: getNum('testTessMinConfidence', 0.20),
-                paddleocr_enabled: false,
-                paddleocr_lang: getText('testPaddleLang', 'en'),
-                paddleocr_use_angle_cls: getChecked('testPaddleAngleCls', false),
-                paddleocr_min_confidence: getNum('testPaddleMinConfidence', 0.18),
-                paddleocr_max_variants: getInt('testPaddleMaxVariants', 8),
-                prefer_country_format: true,
-                accept_raw_ocr_fallback: getChecked('testRawFallback', true),
-                raw_fallback_on_no_match: getChecked('testRawFallback', true),
-                raw_fallback_min_confidence: getNum('testRawFallbackMinConfidence', 0.03),
-                auto_country_priority: ['DE', 'CH', 'FL', 'AT', 'CZ', 'EU', 'NL'],
-                test_save_to_history_default: getChecked('testSaveHistory', false),
-                preprocessing: {
-                    enabled: getChecked('testPreEnabled', true),
-                    resize_factor: getNum('testResizeFactor', 4.0),
-                    target_height: getInt('testTargetHeight', 120),
-                    min_width: getInt('testMinWidth', 200),
-                    border_padding: getInt('testBorderPadding', 6),
-                    clahe_clip_limit: getNum('testClaheClip', 3.0),
-                    denoise_strength: getInt('testDenoiseStrength', 10),
-                    threshold_block_size: thresholdBlock % 2 === 0 ? thresholdBlock + 1 : thresholdBlock,
-                    threshold_c: getInt('testThresholdC', 2),
-                    denoise: getChecked('testDenoise', true),
-                    sharpen: getChecked('testSharpen', true),
-                    contrast_enhance: getChecked('testContrast', true),
-                    adaptive_threshold: getChecked('testAdaptive', true),
-                    morphology: getChecked('testMorphology', true),
-                    invert_variant: getChecked('testInvert', true),
-                    bilateral_filter: getChecked('testBilateral', false)
-                }
-            },
-            history: {
-                min_confidence_to_save: getNum('testHistoryMinConfidence', 0.35),
-                save_plate_image: getChecked('testSavePlateImage', true),
-                save_vehicle_image: getChecked('testSaveVehicleImage', true)
-            },
-            plate_recognition: {
-                country_hint: getText('testCountryHint', 'auto'),
-                smart_ocr_correction: getChecked('testSmartCorrection', true),
-                format_pretty_output: getChecked('testPrettyOutput', true)
-            },
-            vehicle_color: {
-                enabled: getChecked('testColorEnabled', true),
-                method: getText('testColorMethod', 'robust'),
-                min_confidence: getNum('testColorMinConfidence', 0.22),
-                sample_top_percent: getNum('testColorTop', 0.16),
-                sample_bottom_percent: getNum('testColorBottom', 0.82),
-                sample_side_margin_percent: getNum('testColorSide', 0.08),
-                exclude_plate_area: getChecked('testColorExcludePlate', true),
-                exclude_windows: getChecked('testColorExcludeWindows', true),
-                exclude_tires_bottom: getChecked('testColorExcludeTires', true),
-                exclude_bright_reflections: getChecked('testColorExcludeReflections', true),
-                kmeans_enabled: getChecked('testColorKmeans', true),
-                kmeans_clusters: getInt('testColorKmeansClusters', 4),
-                show_confidence_in_label: getChecked('testColorShowConfidence', false),
-                return_unknown_on_low_confidence: getChecked('testColorUnknownLow', false),
-                min_color_pixel_ratio: getNum('testColorMinPixelRatio', 0.08)
-            }
-        };
-    }
-
-    async function saveCalibrationSettings() {
-        const config = collectCalibrationSettings();
-        try {
-            const response = await fetch('/api/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(config)
-            });
-            const data = await response.json();
-            if (data.success) {
-                showToast('Gespeichert', 'Die Test-Einstellungen wurden dauerhaft übernommen.', 'success');
-                const status = byId('calibrationStatus');
-                if (status) status.textContent = 'Gespeichert. Der nächste RTSP-/Upload-Scan nutzt diese Werte.';
-            } else {
-                showToast('Fehler', data.error || 'Speichern fehlgeschlagen', 'danger');
-            }
-        } catch (error) {
-            showToast('Fehler', 'Speichern fehlgeschlagen: ' + error.message, 'danger');
-        }
-    }
-
-    // ============================================
     // PROCESSING
     // ============================================
     
@@ -1281,14 +856,86 @@
     // ============================================
     // IMAGE PROCESSING
     // ============================================
+
+    function getNumberValue(id, fallback = null) {
+        const el = document.getElementById(id);
+        if (!el || el.value === '') return fallback;
+        const value = Number(el.value);
+        return Number.isFinite(value) ? value : fallback;
+    }
+
+    function isChecked(id) {
+        return !!document.getElementById(id)?.checked;
+    }
+
+    function gatherRecognitionSettings() {
+        return {
+            detection: {
+                confidence_threshold: getNumberValue('recConf', 0.5),
+                plate_detector_confidence_factor: getNumberValue('recPlateFactor', 0.6),
+                car_detection_enabled: isChecked('recCarDetection'),
+                zoom_enabled: isChecked('recZoomEnabled'),
+                zoom_factor: getNumberValue('recZoomFactor', 2.5),
+                zoom_padding: getNumberValue('recZoomPadding', 100),
+                scan_full_frame_when_vehicle_found: isChecked('recFullFrame'),
+                vehicle_context_fallback_enabled: isChecked('recVehicleFallback'),
+                vehicle_context_width_factor: getNumberValue('recContextWidth', 7.0),
+                vehicle_context_height_factor: 5.0,
+                vehicle_plate_match_margin: 35
+            },
+            ocr: {
+                min_confidence: getNumberValue('recOcrConf', 0.25),
+                decoder: document.getElementById('recDecoder')?.value || 'greedy',
+                use_allowlist: isChecked('recAllowlist'),
+                rotation_variants: isChecked('recRotation'),
+                merge_fragments: true,
+                return_debug: true,
+                max_variants_to_read: getNumberValue('recMaxVariants', 8),
+                preprocessing: {
+                    enabled: isChecked('recPreEnabled'),
+                    resize_factor: getNumberValue('recResizeFactor', 4.0),
+                    target_height: getNumberValue('recTargetHeight', 120),
+                    min_width: 200,
+                    denoise: isChecked('recDenoise'),
+                    sharpen: isChecked('recSharpen'),
+                    contrast_enhance: isChecked('recContrast'),
+                    adaptive_threshold: isChecked('recAdaptive'),
+                    threshold_block_size: 11,
+                    threshold_c: 2,
+                    morphology: true,
+                    invert_variant: true,
+                    bilateral_filter: false,
+                    border_padding: 6
+                }
+            },
+            history: {
+                min_confidence_to_save: getNumberValue('recSaveConf', 0.35)
+            },
+            plate_recognition: {
+                country_hint: document.getElementById('recCountryHint')?.value || 'CH',
+                min_length: 3,
+                max_length: 12,
+                smart_ocr_correction: true,
+                format_pretty_output: true
+            }
+        };
+    }
     
     function processImage() {
-        showProcessing('Bild wird analysiert...', 'Erkenne Fahrzeuge und Kennzeichen...');
+        if (!selectedFile) {
+            showToast('Hinweis', 'Bitte zuerst ein Bild auswählen.', 'warning');
+            return;
+        }
+        if (!selectedFile.type.startsWith('image/')) {
+            showToast('Hinweis', 'Die OCR-Schnellparameter sind für Bild-Uploads gedacht. Für Videos bitte „Erkennung starten“ verwenden.', 'warning');
+            return;
+        }
+        showProcessing('Bild wird analysiert...', 'Erkenne Fahrzeuge, Kennzeichen und OCR-Kandidaten...');
         
         const formData = new FormData();
         formData.append('file', selectedFile);
-        formData.append('test_config', JSON.stringify(collectCalibrationSettings()));
-        formData.append('save_history', document.getElementById('testSaveHistory')?.checked ? 'true' : 'false');
+        formData.append('settings_json', JSON.stringify(gatherRecognitionSettings()));
+        formData.append('save_to_history', isChecked('recSaveHistory') ? 'true' : 'false');
         
         fetch('/api/process/image', {
             method: 'POST',
@@ -1300,8 +947,7 @@
             
             if (data.success) {
                 displayImageResults(data);
-                const historyInfo = data.history_saved ? ' · gespeichert' : ' · nur Test';
-                showToast('Erfolg', `${data.detections ? data.detections.length : 0} Kennzeichen und ${data.people ? data.people.length : 0} Personen erkannt${historyInfo}`, 'success');
+                showToast('Erfolg', `${data.detections ? data.detections.length : 0} Kennzeichen und ${data.people ? data.people.length : 0} Personen erkannt`, 'success');
             } else {
                 showError(data.error || 'Verarbeitung fehlgeschlagen');
             }
@@ -1339,6 +985,36 @@
         displayPeopleList(data.people);
     }
     
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'}[ch]));
+    }
+
+    function renderOcrCandidates(det) {
+        const candidates = det?.ocr_details?.candidates || [];
+        if (!candidates.length) return '';
+        const rows = candidates.slice(0, 5).map((c, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td><code>${escapeHtml(c.pretty || c.corrected || c.raw)}</code></td>
+                <td>${escapeHtml(c.format || '-')}</td>
+                <td>${c.valid ? '<span class="text-success">ja</span>' : '<span class="text-secondary">nein</span>'}</td>
+                <td>${Math.round((c.confidence || 0) * 100)}%</td>
+                <td>${Number(c.score || 0).toFixed(2)}</td>
+            </tr>
+        `).join('');
+        return `
+            <details class="mt-2 small">
+                <summary class="text-info" style="cursor:pointer;">OCR-Kandidaten anzeigen</summary>
+                <div class="table-responsive mt-2">
+                    <table class="table table-sm table-dark table-striped align-middle mb-0">
+                        <thead><tr><th>#</th><th>Kandidat</th><th>Format</th><th>gültig</th><th>OCR</th><th>Score</th></tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </details>
+        `;
+    }
+
     function displayDetectionsList(detections) {
         const listEl = document.getElementById('detectionsList');
         
@@ -1346,51 +1022,52 @@
             listEl.innerHTML = `
                 <div class="alert alert-warning mb-0">
                     <i class="fas fa-exclamation-triangle me-2"></i>
-                    Keine Kennzeichen erkannt. Versuchen Sie ein anderes Bild oder passen Sie die Einstellungen an.
+                    Keine Kennzeichen erkannt. Passe links die OCR-/Erkennungsparameter an und klicke auf „Erneut scannen“.
                 </div>
             `;
             return;
         }
         
         listEl.innerHTML = detections.map((det, index) => `
-            <div class="detection-result">
+            <div class="detection-result flex-wrap">
                 ${det.plate_image_base64 
-                    ? `<img src="data:image/jpeg;base64,${det.plate_image_base64}" alt="Kennzeichen ${index + 1}">`
+                    ? `<img src="data:image/jpeg;base64,${det.plate_image_base64}" alt="Kennzeichen ${index + 1}" onclick="showImageModal(this.src, 'Kennzeichen')" style="cursor:pointer;">`
                     : `<div class="detection-result-placeholder"><i class="fas fa-id-card text-secondary"></i></div>`
                 }
-                <div class="detection-result-info">
+                <div class="detection-result-info" style="min-width: 220px;">
                     <div class="plate-badge mb-2" style="display: inline-block;">
-                        ${det.plate_text || 'Nicht lesbar'}
+                        ${escapeHtml(det.plate_text || 'Nicht lesbar')}
                     </div>
                     <div class="d-flex flex-wrap gap-2 align-items-center" style="font-size: 0.8rem;">
                         <span class="text-secondary">
-                            <i class="fas fa-car me-1"></i>${det.vehicle_type || 'Unbekannt'}
+                            <i class="fas fa-car me-1"></i>${escapeHtml(det.vehicle_type || 'Unbekannt')}
                         </span>
+                        ${det.vehicle_crop_source === 'plate_context' ? `
+                            <span class="badge bg-warning text-dark" title="Fahrzeug wurde nicht sicher erkannt, es wird ein Kontextausschnitt gespeichert.">Kontextbild</span>
+                        ` : ''}
                         ${det.vehicle_color && det.vehicle_color !== 'Unbekannt' ? `
                             <span class="text-secondary">
-                                <i class="fas fa-palette me-1"></i>${det.vehicle_color}${det.vehicle_color_confidence ? ` ${Math.round(det.vehicle_color_confidence * 100)}%` : ''}
+                                <i class="fas fa-palette me-1"></i>${escapeHtml(det.vehicle_color)}
                             </span>
                         ` : ''}
                         <span class="confidence-badge ${getConfidenceClass(det.confidence)}">
                             ${det.confidence ? Math.round(det.confidence * 100) : 0}%
                         </span>
+                        <span class="text-secondary">YOLO Schild: ${det.plate_score ? Math.round(det.plate_score * 100) : 0}%</span>
                     </div>
-                    ${det.ocr_candidates && det.ocr_candidates.length ? `
-                        <div class="small text-secondary mt-1">
-                            OCR Kandidaten: ${det.ocr_candidates.slice(0, 4).map(c => `${c.text || c.normalized || ''} (${c.engine || 'ocr'} ${Math.round((c.score || 0) * 100) / 100})`).join(' · ')}
-                        </div>
-                    ` : ''}
+                    ${renderOcrCandidates(det)}
                 </div>
                 ${det.vehicle_image_base64 ? `
                     <img src="data:image/jpeg;base64,${det.vehicle_image_base64}" 
                          alt="Fahrzeug" 
-                         style="width: 80px; height: 60px; object-fit: cover; border-radius: 6px; cursor: pointer;"
+                         style="width: 96px; height: 72px; object-fit: cover; border-radius: 6px; cursor: pointer;"
                          onclick="showImageModal(this.src, 'Fahrzeug')"
                          title="Fahrzeugbild anzeigen">
-                ` : ''}
+                ` : `<div class="detection-result-placeholder" title="Kein Fahrzeugbild"><i class="fas fa-car text-secondary"></i></div>`}
             </div>
         `).join('');
     }
+
     
 
 

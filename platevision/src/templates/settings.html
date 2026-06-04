@@ -712,9 +712,9 @@
                                     <div>
                                         <label class="form-label">OCR Engine</label>
                                         <select class="form-select" id="ocrEngine">
-                                            <option value="easyocr" selected>EasyOCR</option>
+                                            {% set ocr_engine = config.ocr.engine if config.ocr.engine is defined else 'easyocr' %}
+                                            <option value="easyocr" {% if ocr_engine == 'easyocr' %}selected{% endif %}>EasyOCR</option>
                                         </select>
-                                        <small class="text-secondary">Ab Version 0.8.17 wird nur noch EasyOCR verwendet.</small>
                                     </div>
                                     <div>
                                         <label class="form-label">Decoder</label>
@@ -737,11 +737,6 @@
                                         <label class="form-label">Min. Textlänge</label>
                                         <input type="number" class="form-control" id="ocrMinTextLength" min="1" max="10" value="{{ config.ocr.min_text_length if config.ocr.min_text_length is defined else 2 }}">
                                     </div>
-                                    <input type="hidden" id="paddleOcrLang" value="en">
-                                    <input type="hidden" id="paddleOcrMinConfidence" value="0.18">
-                                    <input type="hidden" id="paddleOcrMaxVariants" value="8">
-                                    <input type="checkbox" id="paddleOcrEnabled" class="d-none">
-                                    <input type="checkbox" id="paddleOcrAngleCls" class="d-none">
                                 </div>
                                 <div class="row g-3 mt-2">
                                     {% set bools = [
@@ -749,8 +744,7 @@
                                         ('rotationVariants', 'rotation_variants', '180°-Varianten prüfen'),
                                         ('mergeFragments', 'merge_fragments', 'OCR-Fragmente zusammenführen'),
                                         ('uppercaseOutput', 'uppercase_output', 'Großschreibung erzwingen'),
-                                        ('useAllowlist', 'use_allowlist', 'Zeichenfilter als OCR-Allowlist nutzen'),
-                                        ('rawFallbackOnNoMatch', 'raw_fallback_on_no_match', 'Wenn normal nichts gefunden wird: Rohtext lesen')
+                                        ('useAllowlist', 'use_allowlist', 'Zeichenfilter als EasyOCR-Allowlist nutzen')
                                     ] %}
                                     {% for el_id, key, label in bools %}
                                     <div class="col-md-6">
@@ -2044,7 +2038,7 @@
                                 <table class="table table-sm text-start">
                                     <tr>
                                         <td class="text-secondary">Version</td>
-                                        <td class="fw-bold">0.8.16 ProTraffic OCR Color Lab</td>
+                                        <td class="fw-bold">0.8.5 ProTraffic People Image History</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">YOLO Version</td>
@@ -2052,7 +2046,7 @@
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">OCR Engine</td>
-                                        <td>EasyOCR + Rohtext-Fallback</td>
+                                        <td>EasyOCR</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">Backend</td>
@@ -2270,7 +2264,7 @@
             active_mode: document.getElementById('ocrMode').value,
             retry_on_fail: document.getElementById('retryOnFail').checked,
             max_retries: parseInt(document.getElementById('maxRetries').value),
-            engine: 'easyocr',
+            engine: pvStr('ocrEngine', 'easyocr'),
             decoder: pvStr('ocrDecoder', 'greedy'),
             paragraph_mode: pvBool('paragraphMode'),
             rotation_variants: pvBool('rotationVariants'),
@@ -2279,14 +2273,7 @@
             min_text_length: pvNum('ocrMinTextLength', 2),
             merge_fragments: pvBool('mergeFragments'),
             uppercase_output: pvBool('uppercaseOutput'),
-            use_allowlist: pvBool('useAllowlist'),
-            raw_fallback_on_no_match: pvBool('rawFallbackOnNoMatch'),
-            accept_raw_ocr_fallback: pvBool('rawFallbackOnNoMatch'),
-            paddleocr_enabled: false,
-            paddleocr_lang: pvStr('paddleOcrLang', 'en'),
-            paddleocr_use_angle_cls: pvBool('paddleOcrAngleCls'),
-            paddleocr_min_confidence: pvNum('paddleOcrMinConfidence', 0.18),
-            paddleocr_max_variants: pvNum('paddleOcrMaxVariants', 8)
+            use_allowlist: pvBool('useAllowlist')
         };
         
         saveConfig('/api/config/ocr', data, 'OCR-Einstellungen');
@@ -2501,7 +2488,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.8.16-protraffic-ocr-color-lab',
+                    version: '0.8.5-protraffic-people-image-history',
                     config: config
                 };
                 
@@ -2579,9 +2566,7 @@
                     </div>
                     <div class="model-status">
                         <span class="model-status-dot ${data.ocr_reader ? 'loaded' : 'not-loaded'}"></span>
-                        <span>EasyOCR: <strong class="${data.ocr_reader ? 'text-success' : 'text-danger'}">${data.ocr_reader ? 'Geladen' : 'Nicht geladen'}</strong></span>
-                        <span>OCR-Modus: <strong class="text-success">EasyOCR only</strong></span>
-                        <span>Rohtext-Fallback: <strong class="text-success">aktivierbar</strong></span>
+                        <span>OCR Engine (EasyOCR): <strong class="${data.ocr_reader ? 'text-success' : 'text-danger'}">${data.ocr_reader ? 'Geladen' : 'Nicht geladen'}</strong></span>
                     </div>
                     <div class="model-status mt-2">
                         <span class="text-secondary">Gesamtstatus:</span>

@@ -1,13 +1,5 @@
 FROM python:3.10-slim
 
-ARG BUILD_VERSION=0.8.17
-ARG BUILD_ARCH=amd64
-LABEL io.hass.version="${BUILD_VERSION}" \
-      io.hass.type="app" \
-      io.hass.arch="${BUILD_ARCH}" \
-      io.hass.name="PlateVision" \
-      io.hass.description="Lokale Kennzeichenerkennung mit RTSP, Test-Upload und EasyOCR-Labor"
-
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1

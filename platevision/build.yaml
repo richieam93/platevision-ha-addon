@@ -1,5 +1,0 @@
-build_from:
-  amd64: python:3.10-slim
-args:
-  BUILD_VERSION: "0.8.17"
-  BUILD_ARCH: amd64
