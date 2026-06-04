@@ -697,9 +697,15 @@ class ConfigManager:
         """
         try:
             ocr_cfg = config.setdefault('ocr', {})
+            migration_cfg = config.setdefault('migration', {})
             old_engine = str(ocr_cfg.get('engine') or '').strip().lower()
-            if old_engine in ('', 'easyocr'):
-                ocr_cfg['engine'] = 'fast_plate_ocr'
+            # Apply the new 0.8.21 default once for old installations. After the
+            # flag is stored, a user can switch back to EasyOCR in the settings
+            # and the next restart will keep that explicit choice.
+            if not migration_cfg.get('fast_plate_ocr_default_applied'):
+                if old_engine in ('', 'easyocr'):
+                    ocr_cfg['engine'] = 'fast_plate_ocr'
+                migration_cfg['fast_plate_ocr_default_applied'] = True
             ocr_cfg.setdefault('easyocr_backup_enabled', True)
             ocr_cfg.setdefault('fast_plate_model', 'cct-s-v2-global-model')
             ocr_cfg.setdefault('fast_plate_device', 'auto')
@@ -2390,10 +2396,14 @@ class LicensePlateDetector:
                     "hex": self._rgb_to_hex(rgb),
                 })
 
-            best = palette[0]
+            # IMPORTANT: never attach the original palette list to palette[0].
+            # That creates a self-reference: best -> palette -> best, and Flask's
+            # jsonify/json.dumps then fails with "Circular reference detected".
+            best = dict(palette[0])
+            palette_preview = [dict(item) for item in palette[:5]]
             best["method"] = "dominant vehicle paint swatch + RGB-based color naming; heuristic"
             best["note"] = "Schätzung aus Pixeln, kein spezialisiertes Lackfarben-Modell. HEX/RGB ist die wichtigste Messung."
-            best["palette"] = palette[:5]
+            best["palette"] = palette_preview
             return best
         except Exception as e:
             logger.debug(f"Farb-Ermittlung fehlgeschlagen: {e}")
@@ -4335,18 +4345,22 @@ def api_process_image():
                 if saved_person_event:
                     person.update({k: saved_person_event.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved_person_event})
         
+        safe_detections = _json_safe(result.get('detections', []))
+        safe_vehicles = _json_safe([{k: v for k, v in v.items() if k != 'crop'} for v in result.get('vehicles', [])])
+        safe_people = _json_safe(result.get('people', []))
+
         return jsonify({
             'success': True,
             'result_image': result_image_b64,
-            'detections': result['detections'],
-            'vehicles': [{k: v for k, v in v.items() if k != 'crop'} for v in result['vehicles']],
-            'people': result.get('people', []),
+            'detections': safe_detections,
+            'vehicles': safe_vehicles,
+            'people': safe_people,
             'people_counted': sum(1 for p in result.get('people', []) if p.get('counted')),
-            'processing_time': result['processing_time']
+            'processing_time': _json_safe(result.get('processing_time', 0))
         })
         
     except Exception as e:
-        logger.error(f"Bildverarbeitung Fehler: {e}")
+        logger.exception(f"Bildverarbeitung Fehler: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -4620,6 +4634,55 @@ def _bool_from_request(value, default=False):
     if value is None:
         return bool(default)
     return str(value).strip().lower() in ('1', 'true', 'yes', 'on', 'ja', 'y')
+
+
+def _json_safe(value, _seen=None):
+    """Convert detector results into plain JSON-safe values.
+
+    The live detector keeps OpenCV crops as numpy arrays and some nested helper
+    dicts for debugging. Flask cannot serialize numpy objects, and a bug in the
+    first 0.8.21 build created a color palette self-reference. This helper also
+    protects future API responses against circular references.
+    """
+    if _seen is None:
+        _seen = set()
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, np.generic):
+        return value.item()
+
+    if isinstance(value, np.ndarray):
+        return None
+
+    if isinstance(value, (datetime,)):
+        return value.isoformat()
+
+    if isinstance(value, dict):
+        obj_id = id(value)
+        if obj_id in _seen:
+            return None
+        _seen.add(obj_id)
+        out = {}
+        for k, v in value.items():
+            key = str(k)
+            if key in {'crop', 'annotated_frame'}:
+                continue
+            out[key] = _json_safe(v, _seen)
+        _seen.remove(obj_id)
+        return out
+
+    if isinstance(value, (list, tuple, set)):
+        obj_id = id(value)
+        if obj_id in _seen:
+            return None
+        _seen.add(obj_id)
+        out = [_json_safe(v, _seen) for v in value]
+        _seen.remove(obj_id)
+        return out
+
+    return str(value)
 
 
 def _allowed_model_extensions():
