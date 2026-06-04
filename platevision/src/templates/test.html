@@ -851,7 +851,18 @@
                         </span>
                         ${det.vehicle_color && det.vehicle_color !== 'Unbekannt' ? `
                             <span class="text-secondary">
-                                <i class="fas fa-palette me-1"></i>${det.vehicle_color}
+                                ${det.vehicle_color_hex ? `<span style="display:inline-block;width:12px;height:12px;border-radius:3px;border:1px solid rgba(255,255,255,.45);background:${det.vehicle_color_hex};vertical-align:-1px;margin-right:4px;"></span>` : `<i class="fas fa-palette me-1"></i>`}
+                                ${det.vehicle_color}${det.vehicle_color_hex ? ` / ${det.vehicle_color_hex}` : ''}
+                            </span>
+                        ` : ''}
+                        ${(det.plate_country_display || det.plate_country) ? `
+                            <span class="text-secondary">
+                                <i class="fas fa-globe-europe me-1"></i>${det.plate_country_display || det.plate_country}${det.plate_country_prob ? ` / ${(det.plate_country_prob * 100).toFixed(1)}%` : ''}
+                            </span>
+                        ` : ''}
+                        ${det.ocr_engine ? `
+                            <span class="text-secondary">
+                                <i class="fas fa-font me-1"></i>${det.ocr_engine}
                             </span>
                         ` : ''}
                         <span class="confidence-badge ${getConfidenceClass(det.confidence)}">

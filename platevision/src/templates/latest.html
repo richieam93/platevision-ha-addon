@@ -590,7 +590,17 @@ cards:
                         </div>
                         <div class="latest-detail-content">
                             <div class="latest-detail-label">Fahrzeugfarbe</div>
-                            <div class="latest-detail-value">${data.vehicle_color || 'Unbekannt'}</div>
+                            <div class="latest-detail-value">${data.vehicle_color_hex ? `<span style="display:inline-block;width:14px;height:14px;border-radius:4px;border:1px solid rgba(255,255,255,.45);background:${data.vehicle_color_hex};vertical-align:-2px;margin-right:6px;"></span>` : ''}${data.vehicle_color || 'Unbekannt'}${data.vehicle_color_hex ? ` / ${data.vehicle_color_hex}` : ''}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="latest-detail-item">
+                        <div class="latest-detail-icon info">
+                            <i class="fas fa-globe-europe"></i>
+                        </div>
+                        <div class="latest-detail-content">
+                            <div class="latest-detail-label">Kennzeichen-Land</div>
+                            <div class="latest-detail-value">${data.plate_country_display || data.plate_country || 'Unbekannt'}${data.plate_country_prob ? ` / ${(data.plate_country_prob * 100).toFixed(1)}%` : ''}</div>
                         </div>
                     </div>
                     

@@ -479,9 +479,9 @@
                                 </div>
                                 <div class="mt-3">
                                     <label class="form-label">Fahrzeugklassen</label>
-                                    {% set class_filter = config.detection.vehicle_class_filter if config.detection.vehicle_class_filter is defined else ['car','truck','bus','motorcycle'] %}
+                                    {% set class_filter = config.detection.vehicle_class_filter if config.detection.vehicle_class_filter is defined else ['car','truck','bus','motorcycle','bicycle'] %}
                                     <div class="settings-pill-row">
-                                        {% for value, label in [('car','PKW'), ('truck','LKW'), ('bus','Bus'), ('motorcycle','Motorrad')] %}
+                                        {% for value, label in [('car','Auto / PKW'), ('truck','LKW'), ('bus','Bus'), ('motorcycle','Motorrad'), ('bicycle','Fahrrad')] %}
                                         <div class="form-check form-check-inline">
                                             <input class="form-check-input vehicle-class-filter" type="checkbox" id="vehicleClass{{ value|capitalize }}" value="{{ value }}" {% if value in class_filter %}checked{% endif %}>
                                             <label class="form-check-label" for="vehicleClass{{ value|capitalize }}">{{ label }}</label>
@@ -712,9 +712,32 @@
                                     <div>
                                         <label class="form-label">OCR Engine</label>
                                         <select class="form-select" id="ocrEngine">
-                                            {% set ocr_engine = config.ocr.engine if config.ocr.engine is defined else 'easyocr' %}
-                                            <option value="easyocr" {% if ocr_engine == 'easyocr' %}selected{% endif %}>EasyOCR</option>
+                                            {% set ocr_engine = config.ocr.engine if config.ocr.engine is defined else 'fast_plate_ocr' %}
+                                            <option value="fast_plate_ocr" {% if ocr_engine in ['fast_plate_ocr', 'fast-plate-ocr'] %}selected{% endif %}>fast-plate-ocr (Standard)</option>
+                                            <option value="easyocr" {% if ocr_engine == 'easyocr' %}selected{% endif %}>EasyOCR Backup/Alt</option>
                                         </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">fast-plate-ocr Hub-Modell</label>
+                                        <select class="form-select" id="fastPlateModel">
+                                            {% set fast_model = config.ocr.fast_plate_model if config.ocr.fast_plate_model is defined else 'cct-s-v2-global-model' %}
+                                            {% for m in ['cct-s-v2-global-model', 'cct-xs-v2-global-model', 'cct-s-v1-global-model', 'cct-xs-v1-global-model'] %}
+                                            <option value="{{ m }}" {% if fast_model == m %}selected{% endif %}>{{ m }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">fast-plate-ocr Device</label>
+                                        {% set fast_device = config.ocr.fast_plate_device if config.ocr.fast_plate_device is defined else 'auto' %}
+                                        <select class="form-select" id="fastPlateDevice">
+                                            {% for d in ['auto', 'cpu', 'cuda'] %}
+                                            <option value="{{ d }}" {% if fast_device == d %}selected{% endif %}>{{ d }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">ONNX Provider Override</label>
+                                        <input type="text" class="form-control" id="fastPlateProviders" value="{{ config.ocr.fast_plate_providers if config.ocr.fast_plate_providers is defined else '' }}" placeholder="z.B. CPUExecutionProvider">
                                     </div>
                                     <div>
                                         <label class="form-label">Decoder</label>
@@ -2264,7 +2287,13 @@
             active_mode: document.getElementById('ocrMode').value,
             retry_on_fail: document.getElementById('retryOnFail').checked,
             max_retries: parseInt(document.getElementById('maxRetries').value),
-            engine: pvStr('ocrEngine', 'easyocr'),
+            engine: pvStr('ocrEngine', 'fast_plate_ocr'),
+            fast_plate_model: pvStr('fastPlateModel', 'cct-s-v2-global-model'),
+            fast_plate_device: pvStr('fastPlateDevice', 'auto'),
+            fast_plate_providers: pvStr('fastPlateProviders', ''),
+            easyocr_backup_enabled: pvBool('easyocrBackupEnabled'),
+            fast_plate_remove_pad_char: pvBool('fastPlateRemovePadChar'),
+            fast_plate_return_confidence: pvBool('fastPlateReturnConfidence'),
             decoder: pvStr('ocrDecoder', 'greedy'),
             paragraph_mode: pvBool('paragraphMode'),
             rotation_variants: pvBool('rotationVariants'),
@@ -2488,7 +2517,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.8.20-protraffic-roi-safe-detection',
+                    version: '0.8.5-protraffic-people-image-history',
                     config: config
                 };
                 
@@ -2566,7 +2595,7 @@
                     </div>
                     <div class="model-status">
                         <span class="model-status-dot ${data.ocr_reader ? 'loaded' : 'not-loaded'}"></span>
-                        <span>OCR Engine (EasyOCR): <strong class="${data.ocr_reader ? 'text-success' : 'text-danger'}">${data.ocr_reader ? 'Geladen' : 'Nicht geladen'}</strong></span>
+                        <span>OCR Engine (fast-plate-ocr/EasyOCR): <strong class="${data.ocr_reader ? 'text-success' : 'text-danger'}">${data.ocr_reader ? 'Geladen' : 'Nicht geladen'}</strong></span>
                     </div>
                     <div class="model-status mt-2">
                         <span class="text-secondary">Gesamtstatus:</span>
@@ -2792,6 +2821,8 @@
         document.getElementById('ocrMinConfidence').value = 25;
         document.getElementById('ocrConfDisplay').textContent = '25%';
         document.getElementById('ocrMode').value = 'enhanced';
+        if (document.getElementById('ocrEngine')) document.getElementById('ocrEngine').value = 'fast_plate_ocr';
+        if (document.getElementById('fastPlateModel')) document.getElementById('fastPlateModel').value = 'cct-s-v2-global-model';
         document.getElementById('retryOnFail').checked = true;
         document.getElementById('maxRetries').value = 3;
         document.getElementById('gpuEnabled').checked = false;

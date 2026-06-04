@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.20 ProTraffic ROI Safe Detection
+Version 0.8.21 FastPlateOCR Vehicle Intelligence
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -366,16 +366,12 @@ class ConfigManager:
             'min_plate_height': 15,
             'plate_aspect_ratio_min': 2.0,
             'plate_aspect_ratio_max': 6.5,
-            'vehicle_class_filter': ['car', 'truck', 'bus', 'motorcycle'],
+            'vehicle_class_filter': ['car', 'truck', 'bus', 'motorcycle', 'bicycle'],
             'max_detections_per_frame': 8,
             'plate_detector_confidence_factor': 0.6,
             'annotate_frames': True,
             'draw_confidence': True,
             'scan_full_frame_when_vehicle_found': False,
-            'plate_crop_padding_px': 6,
-            'fallback_vehicle_context_image': True,
-            'vehicle_roi_min_overlap_percent': 5,
-            'plate_roi_min_overlap_percent': 15,
             'min_vehicle_width': 80,
             'min_vehicle_height': 60,
             'duplicate_cooldown_per_frame': True,
@@ -411,7 +407,13 @@ class ConfigManager:
             'active_mode': 'enhanced',
             'retry_on_fail': True,
             'max_retries': 3,
-            'engine': 'easyocr',
+            'engine': 'fast_plate_ocr',
+            'easyocr_backup_enabled': True,
+            'fast_plate_model': 'cct-s-v2-global-model',
+            'fast_plate_device': 'auto',
+            'fast_plate_providers': '',
+            'fast_plate_remove_pad_char': True,
+            'fast_plate_return_confidence': True,
             'decoder': 'greedy',
             'paragraph_mode': False,
             'rotation_variants': True,
@@ -679,12 +681,48 @@ class ConfigManager:
                 with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
                     saved_config = json.load(f)
                 merged = self._merge_configs(self.DEFAULT_CONFIG, saved_config)
+                merged = self._migrate_config_for_0821(merged, saved_config)
                 return self._normalize_analysis_area(merged)
             except Exception as e:
                 logger.error(f"Fehler beim Laden der Konfiguration: {e}")
                 return self._normalize_analysis_area(json.loads(json.dumps(self.DEFAULT_CONFIG)))
         return self._normalize_analysis_area(json.loads(json.dumps(self.DEFAULT_CONFIG)))
     
+    def _migrate_config_for_0821(self, config, saved_config=None):
+        """Apply safe defaults for the 0.8.21 OCR/vehicle pipeline.
+
+        This keeps EasyOCR available, but makes fast-plate-ocr the default OCR
+        engine for both RTSP and upload analysis. Existing configs from older
+        versions may contain engine=easyocr because that was the only option.
+        """
+        try:
+            ocr_cfg = config.setdefault('ocr', {})
+            old_engine = str(ocr_cfg.get('engine') or '').strip().lower()
+            if old_engine in ('', 'easyocr'):
+                ocr_cfg['engine'] = 'fast_plate_ocr'
+            ocr_cfg.setdefault('easyocr_backup_enabled', True)
+            ocr_cfg.setdefault('fast_plate_model', 'cct-s-v2-global-model')
+            ocr_cfg.setdefault('fast_plate_device', 'auto')
+            ocr_cfg.setdefault('fast_plate_providers', '')
+            ocr_cfg.setdefault('fast_plate_remove_pad_char', True)
+            ocr_cfg.setdefault('fast_plate_return_confidence', True)
+
+            models = config.setdefault('models', {})
+            models.setdefault('license_plate_detector', 'models/license_plate_detector.pt')
+            models.setdefault('vehicle_detector', 'models/yolov8n.pt')
+
+            detection = config.setdefault('detection', {})
+            classes = detection.get('vehicle_class_filter') or []
+            if 'bicycle' not in classes:
+                detection['vehicle_class_filter'] = list(classes) + ['bicycle']
+
+            area = config.setdefault('rtsp', {}).setdefault('analysis_area', {})
+            area.setdefault('crop_before_detection', False)
+            area.setdefault('mask_before_detection', False)
+        except Exception as exc:
+            logger.warning(f"0.8.21 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
+        return config
+
     def _normalize_analysis_area(self, config):
         """Keep one canonical RTSP analysis area: the road polygon.
 
@@ -2068,8 +2106,38 @@ class PersonHistoryManager:
 class LicensePlateDetector:
     """Haupt-Erkennungsklasse"""
     
-    VEHICLE_CLASSES = {2: 'PKW', 3: 'Motorrad', 5: 'Bus', 7: 'LKW'}
-    VEHICLE_CLASSES_EN = {2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
+    VEHICLE_CLASSES = {1: 'Fahrrad', 2: 'Auto / PKW', 3: 'Motorrad', 5: 'Bus', 7: 'LKW'}
+    VEHICLE_CLASSES_EN = {1: 'bicycle', 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
+    COUNTRY_LABELS_DE = {
+        'Unknown': 'Unbekannt',
+        'Switzerland': 'Schweiz',
+        'Germany': 'Deutschland',
+        'Austria': 'Österreich',
+        'France': 'Frankreich',
+        'Italy': 'Italien',
+        'Liechtenstein': 'Liechtenstein',
+        'Netherlands': 'Niederlande',
+        'Belgium': 'Belgien',
+        'Luxembourg': 'Luxemburg',
+        'United Kingdom': 'Vereinigtes Königreich',
+        'United States': 'Vereinigte Staaten',
+        'Spain': 'Spanien',
+        'Portugal': 'Portugal',
+        'Poland': 'Polen',
+        'Czech Republic': 'Tschechien',
+        'Slovakia': 'Slowakei',
+        'Slovenia': 'Slowenien',
+        'Croatia': 'Kroatien',
+        'Hungary': 'Ungarn',
+        'Romania': 'Rumänien',
+        'Bulgaria': 'Bulgarien',
+        'Denmark': 'Dänemark',
+        'Sweden': 'Schweden',
+        'Norway': 'Norwegen',
+        'Finland': 'Finnland',
+        'Ireland': 'Irland',
+        'Czechia': 'Tschechien',
+    }
     
     def __init__(self, config_manager):
         self.config_manager = config_manager
@@ -2077,6 +2145,8 @@ class LicensePlateDetector:
         self.license_model = None
         self.human_model = None
         self.ocr_reader = None
+        self.fast_plate_recognizer = None
+        self.fast_plate_cache_key = None
         self.models_loaded = False
         self.load_lock = threading.Lock()
         self.recent_plates = {}
@@ -2123,10 +2193,19 @@ class LicensePlateDetector:
                     else:
                         logger.warning(f"Personen-Modell nicht gefunden: {human_path}; Fallback auf COCO-Personenklasse")
                 
-                languages = self.config_manager.get('ocr', 'languages') or ['en']
-                gpu_enabled = self.config_manager.get('ocr', 'gpu_enabled') or False
-                self.ocr_reader = easyocr.Reader(languages, gpu=gpu_enabled)
-                logger.info(f"OCR geladen mit Sprachen: {languages}")
+                ocr_engine = str(self.config_manager.get('ocr', 'engine') or 'fast_plate_ocr').lower()
+                easyocr_backup = bool(self.config_manager.get('ocr', 'easyocr_backup_enabled'))
+                self.ocr_reader = None
+                if ocr_engine == 'easyocr' or easyocr_backup:
+                    try:
+                        languages = self.config_manager.get('ocr', 'languages') or ['en']
+                        gpu_enabled = self.config_manager.get('ocr', 'gpu_enabled') or False
+                        self.ocr_reader = easyocr.Reader(languages, gpu=gpu_enabled)
+                        logger.info(f"EasyOCR geladen mit Sprachen: {languages}")
+                    except Exception as exc:
+                        logger.warning(f"EasyOCR konnte nicht geladen werden: {exc}")
+                if ocr_engine == 'fast_plate_ocr':
+                    logger.info(f"fast-plate-ocr ist als Standard-OCR aktiv: {self.config_manager.get('ocr', 'fast_plate_model') or 'cct-s-v2-global-model'}")
                 
                 self.models_loaded = True
                 return True
@@ -2175,129 +2254,170 @@ class LicensePlateDetector:
         self.recent_plates[normalized] = current_time
         return False
     
-    def _estimate_vehicle_color(self, vehicle_crop):
+    def _rgb_to_hex(self, rgb):
+        return "#" + "".join(f"{max(0, min(255, int(v))):02X}" for v in rgb)
+
+    def _neutral_gray_name(self, val):
+        if val < 45:
+            return "Schwarz", "black"
+        if val < 90:
+            return "Dunkelgrau", "dark_gray"
+        if val < 155:
+            return "Grau", "gray"
+        if val < 215:
+            return "Silber / Hellgrau", "silver"
+        return "Weiss", "white"
+
+    def _classify_rgb_color(self, rgb):
+        """Vehicle-paint color name from RGB.
+
+        Metallic cars often have a blue/green camera tint. This classifier uses
+        saturation/chroma first, so muted paint is named Blaugrau/Silber/Grau
+        instead of plain Blau.
+        """
+        r, g, b = [max(0, min(255, int(v))) for v in rgb]
+        maxc = max(r, g, b)
+        minc = min(r, g, b)
+        chroma = maxc - minc
+        hsv_pixel = cv2.cvtColor(np.array([[[b, g, r]]], dtype=np.uint8), cv2.COLOR_BGR2HSV)[0, 0]
+        hue = int(hsv_pixel[0]) * 2
+        sat = int(hsv_pixel[1])
+        val = int(hsv_pixel[2])
+
+        if val < 42:
+            return "Schwarz", "black"
+        if sat < 38 or chroma < 22:
+            return self._neutral_gray_name(val)
+        if sat < 115 and chroma < 70:
+            if 165 <= hue < 255:
+                return ("Dunkles Blaugrau", "dark_blue_gray") if val < 125 else ("Blaugrau / Silber", "blue_gray")
+            if 65 <= hue < 165:
+                return ("Dunkles Graugrün", "dark_green_gray") if val < 125 else ("Graugrün", "green_gray")
+            if 35 <= hue < 65:
+                return ("Beige / Champagner", "beige") if val > 145 else ("Braungrau", "brown_gray")
+            if 15 <= hue < 35:
+                return ("Braun / Beige", "brown_beige") if val > 120 else ("Dunkelbraun", "dark_brown")
+            if hue < 15 or hue >= 330:
+                return ("Bordeaux / Rotbraun", "red_brown") if val < 150 else ("Rotgrau", "red_gray")
+            if 255 <= hue < 300:
+                return "Violettgrau", "purple_gray"
+
+        if hue < 15 or hue >= 345:
+            return "Rot", "red"
+        if 15 <= hue < 35:
+            return ("Braun", "brown") if val < 140 else ("Orange", "orange")
+        if 35 <= hue < 65:
+            return ("Gold / Gelb", "yellow") if val > 115 else ("Braun", "brown")
+        if 65 <= hue < 170:
+            return ("Dunkelgrün", "dark_green") if val < 95 else ("Grün", "green")
+        if 170 <= hue < 255:
+            return ("Dunkelblau", "dark_blue") if val < 95 else ("Blau", "blue")
+        if 255 <= hue < 290:
+            return "Violett", "purple"
+        if 290 <= hue < 345:
+            return "Rot", "red"
+        return "Unbekannt", "unknown"
+
+    def _classify_hsv_color(self, h, s, v):
+        bgr = cv2.cvtColor(np.array([[[int(h), int(s), int(v)]]], dtype=np.uint8), cv2.COLOR_HSV2BGR)[0, 0]
+        rgb = [int(bgr[2]), int(bgr[1]), int(bgr[0])]
+        return self._classify_rgb_color(rgb)
+
+    def _estimate_vehicle_color(self, vehicle_crop, plate_box_relative=None):
+        """Return detailed dominant vehicle color info.
+
+        The returned dict contains the display name plus HEX/RGB swatch. The
+        public/history fields still keep a plain vehicle_color string for
+        compatibility, while HEX/RGB are stored separately.
+        """
         try:
             if vehicle_crop is None or vehicle_crop.size == 0:
-                return "unbekannt"
-            
-            hsv = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2HSV)
-            
-            center_y = vehicle_crop.shape[0] // 2
-            center_x = vehicle_crop.shape[1] // 2
-            roi_size = min(vehicle_crop.shape[0], vehicle_crop.shape[1]) // 4
-            
-            roi = hsv[
-                max(0, center_y - roi_size):center_y + roi_size,
-                max(0, center_x - roi_size):center_x + roi_size
-            ]
-            
-            if roi.size == 0:
-                return "unbekannt"
-            
-            avg_h = np.mean(roi[:, :, 0])
-            avg_s = np.mean(roi[:, :, 1])
-            avg_v = np.mean(roi[:, :, 2])
-            
-            if avg_s < 30:
-                if avg_v < 50:
-                    return "Schwarz"
-                elif avg_v > 200:
-                    return "Weiß"
-                else:
-                    return "Grau"
-            elif avg_s < 80:
-                return "Silber"
-            else:
-                if avg_h < 15 or avg_h > 165:
-                    return "Rot"
-                elif avg_h < 25:
-                    return "Orange"
-                elif avg_h < 35:
-                    return "Gelb"
-                elif avg_h < 85:
-                    return "Grün"
-                elif avg_h < 130:
-                    return "Blau"
-                else:
-                    return "Lila"
-                    
+                return None
+
+            h, w = vehicle_crop.shape[:2]
+            mask = np.zeros((h, w), dtype=np.uint8)
+            mx = max(1, int(w * 0.08))
+            my = max(1, int(h * 0.12))
+            mask[my:max(my + 1, h - my), mx:max(mx + 1, w - mx)] = 1
+
+            if plate_box_relative:
+                try:
+                    px1, py1, px2, py2 = [int(v) for v in plate_box_relative]
+                    pad_x = int(w * 0.03)
+                    pad_y = int(h * 0.03)
+                    rx1 = max(0, px1 - pad_x)
+                    ry1 = max(0, py1 - pad_y)
+                    rx2 = min(w, px2 + pad_x)
+                    ry2 = min(h, py2 + pad_y)
+                    if rx2 > rx1 and ry2 > ry1:
+                        mask[ry1:ry2, rx1:rx2] = 0
+                except Exception:
+                    pass
+
+            pixels = vehicle_crop[mask.astype(bool)]
+            if pixels.size == 0:
+                pixels = vehicle_crop.reshape(-1, 3)
+            if len(pixels) > 60000:
+                step = max(1, len(pixels) // 60000)
+                pixels = pixels[::step]
+
+            hsv = cv2.cvtColor(pixels.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)
+            buckets = {}
+            for bgr, hsv_pixel in zip(pixels, hsv):
+                name_de, name_en = self._classify_hsv_color(int(hsv_pixel[0]), int(hsv_pixel[1]), int(hsv_pixel[2]))
+                if name_en not in buckets:
+                    buckets[name_en] = {"name": name_de, "english": name_en, "count": 0, "bgr_sum": np.zeros(3, dtype=np.float64)}
+                buckets[name_en]["count"] += 1
+                buckets[name_en]["bgr_sum"] += bgr.astype(np.float64)
+
+            if not buckets:
+                return None
+
+            total = sum(int(item["count"]) for item in buckets.values())
+            palette = []
+            for item in sorted(buckets.values(), key=lambda value: int(value["count"]), reverse=True):
+                count = int(item["count"])
+                avg_bgr = item["bgr_sum"] / max(1, count)
+                rgb = [int(round(avg_bgr[2])), int(round(avg_bgr[1])), int(round(avg_bgr[0]))]
+                display_name, display_key = self._classify_rgb_color(rgb)
+                palette.append({
+                    "name": display_name,
+                    "english": display_key,
+                    "raw_bucket_name": item["name"],
+                    "raw_bucket_english": item["english"],
+                    "coverage": round(count / max(1, total), 4),
+                    "rgb": rgb,
+                    "hex": self._rgb_to_hex(rgb),
+                })
+
+            best = palette[0]
+            best["method"] = "dominant vehicle paint swatch + RGB-based color naming; heuristic"
+            best["note"] = "Schätzung aus Pixeln, kein spezialisiertes Lackfarben-Modell. HEX/RGB ist die wichtigste Messung."
+            best["palette"] = palette[:5]
+            return best
         except Exception as e:
-            return "unbekannt"
-
-    def _clamp_bbox(self, bbox, frame_w, frame_h):
-        try:
-            x1, y1, x2, y2 = [int(round(float(v))) for v in bbox]
-            x1 = max(0, min(frame_w - 1, x1))
-            y1 = max(0, min(frame_h - 1, y1))
-            x2 = max(x1 + 1, min(frame_w, x2))
-            y2 = max(y1 + 1, min(frame_h, y2))
-            return [x1, y1, x2, y2]
-        except Exception:
-            return [0, 0, max(1, frame_w), max(1, frame_h)]
-
-    def _crop_bbox(self, frame, bbox):
-        if frame is None or frame.size == 0:
+            logger.debug(f"Farb-Ermittlung fehlgeschlagen: {e}")
             return None
-        frame_h, frame_w = frame.shape[:2]
-        x1, y1, x2, y2 = self._clamp_bbox(bbox, frame_w, frame_h)
-        crop = frame[y1:y2, x1:x2]
-        return crop.copy() if crop is not None and crop.size > 0 else None
 
-    def _plate_context_crop(self, frame, plate_bbox):
-        """Fallback-Fahrzeugbild aus dem Vollbild, falls YOLO kein Fahrzeug liefert.
+    def _apply_vehicle_color_fields(self, vehicle_info, color_info):
+        if not color_info:
+            vehicle_info.update({
+                'color': 'Unbekannt',
+                'color_hex': None,
+                'color_rgb': None,
+                'color_coverage': None,
+                'color_info': None,
+            })
+            return vehicle_info
+        vehicle_info.update({
+            'color': color_info.get('name') or 'Unbekannt',
+            'color_hex': color_info.get('hex'),
+            'color_rgb': color_info.get('rgb'),
+            'color_coverage': color_info.get('coverage'),
+            'color_info': color_info,
+        })
+        return vehicle_info
 
-        Nach ROI-Änderungen kann die Kennzeichenerkennung ein Schild finden, ohne
-        dass gleichzeitig eine Fahrzeugbox vorhanden ist. Damit /latest trotzdem
-        ein Fahrzeug-/Kontextbild bekommt, wird rund um das Kennzeichen ein
-        großzügiger Bereich aus dem unveränderten Vollbild gespeichert.
-        """
-        if frame is None or frame.size == 0 or not plate_bbox:
-            return None
-        frame_h, frame_w = frame.shape[:2]
-        x1, y1, x2, y2 = self._clamp_bbox(plate_bbox, frame_w, frame_h)
-        pw = max(1, x2 - x1)
-        ph = max(1, y2 - y1)
-        cx = (x1 + x2) / 2.0
-        cy = (y1 + y2) / 2.0
-        context_w = max(pw * 10, 240)
-        context_h = max(ph * 12, 180)
-        nx1 = int(round(cx - context_w / 2.0))
-        nx2 = int(round(cx + context_w / 2.0))
-        ny1 = int(round(cy - context_h * 0.62))
-        ny2 = int(round(cy + context_h * 0.38))
-        return self._crop_bbox(frame, [nx1, ny1, nx2, ny2])
-
-    def _match_vehicle_for_plate(self, plate_bbox, vehicles):
-        """Findet die plausibelste Fahrzeugbox zu einem Kennzeichen."""
-        if not plate_bbox or not vehicles:
-            return None
-        try:
-            px1, py1, px2, py2 = [float(v) for v in plate_bbox]
-            pcx = (px1 + px2) / 2.0
-            pcy = (py1 + py2) / 2.0
-            best_vehicle = None
-            best_score = -1e18
-            for vehicle in vehicles:
-                bbox = vehicle.get('bbox') or []
-                if len(bbox) != 4:
-                    continue
-                vx1, vy1, vx2, vy2 = [float(v) for v in bbox]
-                vw = max(1.0, vx2 - vx1)
-                vh = max(1.0, vy2 - vy1)
-                vcx = (vx1 + vx2) / 2.0
-                vcy = (vy1 + vy2) / 2.0
-                contains = vx1 <= pcx <= vx2 and vy1 <= pcy <= vy2
-                distance = ((pcx - vcx) ** 2 + (pcy - vcy) ** 2) ** 0.5
-                normalized_distance = distance / max(vw, vh)
-                area_bonus = min(2.0, (vw * vh) / max(1.0, (px2 - px1) * (py2 - py1) * 80.0))
-                score = (1000.0 if contains else 0.0) + area_bonus - normalized_distance
-                if score > best_score:
-                    best_score = score
-                    best_vehicle = vehicle
-            return best_vehicle
-        except Exception:
-            return None
-    
     def _preprocess_plate_image(self, plate_image):
         if plate_image is None or plate_image.size == 0:
             return None, []
@@ -2463,6 +2583,207 @@ class LicensePlateDetector:
             logger.error(f"OCR Fehler: {e}")
             return None, 0
     
+    def _parse_fast_plate_providers(self):
+        raw = self.config_manager.get('ocr', 'fast_plate_providers') or ''
+        providers = [item.strip() for item in str(raw).split(',') if item.strip()]
+        return providers or None
+
+    def _get_fast_plate_recognizer(self):
+        model_name = self.config_manager.get('ocr', 'fast_plate_model') or 'cct-s-v2-global-model'
+        device = self.config_manager.get('ocr', 'fast_plate_device') or self.config_manager.get('models', 'device') or 'auto'
+        providers = self._parse_fast_plate_providers()
+        cache_key = (model_name, device, tuple(providers or []))
+        if self.fast_plate_recognizer is not None and self.fast_plate_cache_key == cache_key:
+            return self.fast_plate_recognizer
+        try:
+            from fast_plate_ocr import LicensePlateRecognizer
+        except ModuleNotFoundError as exc:
+            raise RuntimeError('fast-plate-ocr ist nicht installiert. Installiere: pip install fast-plate-ocr[onnx]') from exc
+        self.fast_plate_recognizer = LicensePlateRecognizer(
+            hub_ocr_model=model_name,
+            device=device,
+            providers=providers,
+        )
+        self.fast_plate_cache_key = cache_key
+        logger.info(f"fast-plate-ocr geladen: {model_name} / device={device} / providers={providers or 'auto'}")
+        return self.fast_plate_recognizer
+
+    def _prediction_to_plate_meta(self, prediction, recognizer):
+        cfg = getattr(recognizer, 'config', None)
+        pad_char = getattr(cfg, 'pad_char', '_') if cfg is not None else '_'
+        remove_pad = self.config_manager.get('ocr', 'fast_plate_remove_pad_char') is not False
+        raw_plate = getattr(prediction, 'plate', None) or ''
+        plate_text = raw_plate.replace(pad_char, '') if remove_pad and pad_char else raw_plate
+        plate_text = PlateUtils.normalize(plate_text, compact=True)
+
+        char_probs = getattr(prediction, 'char_probs', None)
+        char_prob_list = None
+        mean_all = None
+        mean_visible = None
+        if char_probs is not None:
+            try:
+                char_prob_list = [float(x) for x in np.asarray(char_probs).ravel()]
+                mean_all = float(np.mean(char_prob_list)) if char_prob_list else None
+                visible = []
+                for idx, prob in enumerate(char_prob_list):
+                    char = raw_plate[idx] if idx < len(raw_plate) else ''
+                    if not pad_char or char != pad_char:
+                        visible.append(float(prob))
+                mean_visible = float(np.mean(visible)) if visible else None
+            except Exception:
+                char_prob_list = None
+
+        region = getattr(prediction, 'region', None)
+        region_prob = getattr(prediction, 'region_prob', None)
+        try:
+            region_prob = float(region_prob) if region_prob is not None else None
+        except Exception:
+            region_prob = None
+        country_display = self.COUNTRY_LABELS_DE.get(region, region) if region else None
+        only_padding = bool(raw_plate and pad_char and raw_plate.replace(pad_char, '') == '')
+        confidence = mean_visible if mean_visible is not None else (mean_all if mean_all is not None else (region_prob or 0.0))
+        return {
+            'plate_text': plate_text,
+            'raw_plate': raw_plate,
+            'only_padding': only_padding,
+            'pad_char': pad_char,
+            'char_probs': char_prob_list,
+            'mean_char_prob_all': mean_all,
+            'mean_char_prob_visible': mean_visible,
+            'plate_country': region,
+            'plate_country_display': country_display,
+            'plate_country_prob': region_prob,
+            'plate_region': region,
+            'plate_region_prob': region_prob,
+            'ocr_engine': 'fast_plate_ocr',
+            'ocr_model': self.config_manager.get('ocr', 'fast_plate_model') or 'cct-s-v2-global-model',
+            'ocr_confidence': confidence or 0.0,
+        }
+
+    def _read_plate_fast_plate_ocr(self, plate_image):
+        if plate_image is None or plate_image.size == 0:
+            return None, 0, {'ocr_engine': 'fast_plate_ocr'}
+        recognizer = self._get_fast_plate_recognizer()
+        cfg = getattr(recognizer, 'config', None)
+        color_mode = getattr(cfg, 'image_color_mode', 'rgb') if cfg is not None else 'rgb'
+        if color_mode == 'rgb' and plate_image.ndim == 3:
+            ocr_input = cv2.cvtColor(plate_image, cv2.COLOR_BGR2RGB)
+        else:
+            ocr_input = plate_image
+        started = time.perf_counter()
+        predictions = recognizer.run(
+            ocr_input,
+            return_confidence=self.config_manager.get('ocr', 'fast_plate_return_confidence') is not False,
+            remove_pad_char=False,
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        if not predictions:
+            return None, 0, {'ocr_engine': 'fast_plate_ocr', 'ocr_elapsed_ms': round(elapsed_ms, 3), 'error': 'Keine Prediction'}
+        meta = self._prediction_to_plate_meta(predictions[0], recognizer)
+        meta['ocr_elapsed_ms'] = round(elapsed_ms, 3)
+        plate_text = meta.get('plate_text') or ''
+        if meta.get('only_padding') or not plate_text:
+            return None, 0, meta
+        confidence = float(meta.get('ocr_confidence') or 0)
+        return plate_text, confidence, meta
+
+    def _read_plate_ocr(self, plate_image):
+        engine = str(self.config_manager.get('ocr', 'engine') or 'fast_plate_ocr').lower().replace('-', '_')
+        if engine in ('fast_plate_ocr', 'fastplateocr', 'fast'):
+            try:
+                text, confidence, meta = self._read_plate_fast_plate_ocr(plate_image)
+                min_conf = float(self.config_manager.get('ocr', 'min_confidence') or 0.0)
+                if text and confidence >= min_conf:
+                    return text, confidence, meta
+                if self.config_manager.get('ocr', 'easyocr_backup_enabled') and self.ocr_reader is not None:
+                    easy_text, easy_conf = self._read_plate_enhanced(plate_image)
+                    if easy_text and easy_conf > confidence:
+                        easy_meta = dict(meta or {})
+                        easy_meta.update({'ocr_engine': 'easyocr_backup', 'ocr_confidence': easy_conf, 'fast_plate_failed_text': text})
+                        return easy_text, easy_conf, easy_meta
+                return text, confidence, meta
+            except Exception as exc:
+                logger.warning(f"fast-plate-ocr Fehler, versuche EasyOCR-Backup: {exc}")
+                if self.config_manager.get('ocr', 'easyocr_backup_enabled') and self.ocr_reader is not None:
+                    easy_text, easy_conf = self._read_plate_enhanced(plate_image)
+                    return easy_text, easy_conf, {'ocr_engine': 'easyocr_backup', 'ocr_confidence': easy_conf, 'fast_plate_error': str(exc)}
+                return None, 0, {'ocr_engine': 'fast_plate_ocr', 'error': str(exc)}
+
+        easy_text, easy_conf = self._read_plate_enhanced(plate_image)
+        return easy_text, easy_conf, {'ocr_engine': 'easyocr', 'ocr_confidence': easy_conf}
+
+    def _bbox_center(self, box):
+        x1, y1, x2, y2 = [float(v) for v in box]
+        return (x1 + x2) / 2.0, (y1 + y2) / 2.0
+
+    def _bbox_area(self, box):
+        x1, y1, x2, y2 = [int(v) for v in box]
+        return max(0, x2 - x1) * max(0, y2 - y1)
+
+    def _intersection_area(self, a, b):
+        ax1, ay1, ax2, ay2 = [int(v) for v in a]
+        bx1, by1, bx2, by2 = [int(v) for v in b]
+        x1, y1 = max(ax1, bx1), max(ay1, by1)
+        x2, y2 = min(ax2, bx2), min(ay2, by2)
+        return max(0, x2 - x1) * max(0, y2 - y1)
+
+    def _match_vehicle_for_plate(self, plate_box, vehicles):
+        if not plate_box or not vehicles:
+            return None
+        pcx, pcy = self._bbox_center(plate_box)
+        containing = []
+        for vehicle in vehicles:
+            box = vehicle.get('bbox')
+            if not box:
+                continue
+            x1, y1, x2, y2 = [int(v) for v in box]
+            if x1 <= pcx <= x2 and y1 <= pcy <= y2:
+                containing.append((self._bbox_area(box), vehicle))
+        if containing:
+            _, vehicle = min(containing, key=lambda item: item[0])
+            vehicle['match_reason'] = 'plate_center_inside_vehicle'
+            return vehicle
+        best = None
+        for vehicle in vehicles:
+            box = vehicle.get('bbox')
+            if not box:
+                continue
+            inter = self._intersection_area(plate_box, box)
+            if inter > 0 and (best is None or inter > best[0]):
+                best = (inter, vehicle)
+        if best is not None:
+            _, vehicle = best
+            vehicle['match_reason'] = 'bbox_intersection'
+            return vehicle
+        nearest = None
+        for vehicle in vehicles:
+            box = vehicle.get('bbox')
+            if not box:
+                continue
+            vcx, vcy = self._bbox_center(box)
+            dist = ((pcx - vcx) ** 2 + (pcy - vcy) ** 2) ** 0.5
+            if nearest is None or dist < nearest[0]:
+                nearest = (dist, vehicle)
+        if nearest is None:
+            return None
+        _, vehicle = nearest
+        vehicle['match_reason'] = 'nearest_vehicle'
+        return vehicle
+
+    def _refresh_vehicle_color_excluding_plate(self, frame, vehicle, plate_box):
+        if not vehicle or not plate_box:
+            return vehicle
+        try:
+            vx1, vy1, vx2, vy2 = [int(v) for v in vehicle.get('bbox')]
+            px1, py1, px2, py2 = [int(v) for v in plate_box]
+            rel_plate = [px1 - vx1, py1 - vy1, px2 - vx1, py2 - vy1]
+            vehicle_crop = frame[vy1:vy2, vx1:vx2].copy()
+            color_info = self._estimate_vehicle_color(vehicle_crop, rel_plate)
+            self._apply_vehicle_color_fields(vehicle, color_info)
+        except Exception:
+            pass
+        return vehicle
+
     def _process_ocr_results(self, results, min_confidence, allowed_chars):
         if not results:
             return None, 0
@@ -2788,7 +3109,7 @@ class LicensePlateDetector:
             zoom_factor = self.config_manager.get('detection', 'zoom_factor') or 2.5
             zoom_padding = self.config_manager.get('detection', 'zoom_padding') or 100
             max_detections_per_frame = int(self.config_manager.get('detection', 'max_detections_per_frame') or 0)
-            allowed_vehicle_names = set(self.config_manager.get('detection', 'vehicle_class_filter') or ['car', 'truck', 'bus', 'motorcycle'])
+            allowed_vehicle_names = set(self.config_manager.get('detection', 'vehicle_class_filter') or ['car', 'truck', 'bus', 'motorcycle', 'bicycle'])
             min_vehicle_width = int(self.config_manager.get('detection', 'min_vehicle_width') or 0)
             min_vehicle_height = int(self.config_manager.get('detection', 'min_vehicle_height') or 0)
             annotate_frames = self.config_manager.get('detection', 'annotate_frames') is not False
@@ -2815,21 +3136,21 @@ class LicensePlateDetector:
                             continue
                         
                         vehicle_crop = frame[y1:y2, x1:x2].copy()
-                        vehicle_color = self._estimate_vehicle_color(vehicle_crop)
+                        vehicle_color_info = self._estimate_vehicle_color(vehicle_crop)
                         
                         vehicle_info = {
                             'bbox': [x1, y1, x2, y2],
                             'confidence': score,
                             'type': self.VEHICLE_CLASSES[class_id],
                             'type_en': self.VEHICLE_CLASSES_EN[class_id],
-                            'color': vehicle_color,
                             'crop': vehicle_crop
                         }
+                        self._apply_vehicle_color_fields(vehicle_info, vehicle_color_info)
                         detected_vehicles.append(vehicle_info)
                         
                         if annotate_frames:
                             cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                            label = f"{self.VEHICLE_CLASSES[class_id]} ({vehicle_color})"
+                            label = f"{self.VEHICLE_CLASSES[class_id]} ({vehicle_info.get('color', 'Unbekannt')})"
                             if draw_confidence:
                                 label += f" {score:.2f}"
                             cv2.putText(annotated, label, (x1, y1 - 10),
@@ -2907,15 +3228,7 @@ class LicensePlateDetector:
                         orig_px2 = int(px2 / scale + off_x)
                         orig_py2 = int(py2 / scale + off_y)
                         
-                        # OCR nicht auf einer zu eng geschnittenen Box ausführen.
-                        # Ein kleiner Rand hilft EasyOCR deutlich, besonders wenn das
-                        # Kennzeichen vom Detektor sehr knapp begrenzt wurde.
-                        plate_padding = int(self.config_manager.get('detection', 'plate_crop_padding_px') or 0)
-                        sx1 = max(0, int(px1) - plate_padding)
-                        sy1 = max(0, int(py1) - plate_padding)
-                        sx2 = min(proc_frame.shape[1], int(px2) + plate_padding)
-                        sy2 = min(proc_frame.shape[0], int(py2) + plate_padding)
-                        plate_crop_scaled = proc_frame[sy1:sy2, sx1:sx2]
+                        plate_crop_scaled = proc_frame[int(py1):int(py2), int(px1):int(px2)]
                         
                         if plate_crop_scaled.size == 0:
                             continue
@@ -2933,7 +3246,8 @@ class LicensePlateDetector:
                         if max_detections_per_frame and len(result['detections']) >= max_detections_per_frame:
                             break
                         
-                        plate_text, ocr_confidence = self._read_plate_enhanced(plate_crop_scaled)
+                        plate_text, ocr_confidence, ocr_meta = self._read_plate_ocr(plate_crop_scaled)
+                        ocr_meta = ocr_meta or {}
                         
                         min_save_conf = self.config_manager.get('history', 'min_confidence_to_save') or 0.35
                         
@@ -2945,21 +3259,23 @@ class LicensePlateDetector:
                         if self._is_duplicate(plate_text):
                             continue
                         
+                        if vehicle is None:
+                            vehicle = self._match_vehicle_for_plate([orig_px1, orig_py1, orig_px2, orig_py2], detected_vehicles)
+                        if vehicle is not None:
+                            self._refresh_vehicle_color_excluding_plate(frame, vehicle, [orig_px1, orig_py1, orig_px2, orig_py2])
+
                         if annotate_frames:
                             cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), (0, 255, 0), 3)
-                            label_text = f"{plate_text} {ocr_confidence:.2f}" if draw_confidence else plate_text
+                            country_label = ocr_meta.get('plate_country_display') or ''
+                            plate_label = f"{plate_text} ({country_label})" if country_label and country_label != 'Unbekannt' else plate_text
+                            label_text = f"{plate_label} {ocr_confidence:.2f}" if draw_confidence else plate_label
                             text_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
                             cv2.rectangle(annotated, (orig_px1, orig_py1 - text_size[1] - 15),
                                          (orig_px1 + text_size[0] + 10, orig_py1), (0, 255, 0), -1)
                             cv2.putText(annotated, label_text, (orig_px1 + 5, orig_py1 - 8),
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
                         
-                        # Bilder speichern. Wenn das Schild ohne zugeordnete Fahrzeugbox
-                        # erkannt wurde, wird nachträglich das plausibelste Fahrzeug gesucht.
-                        # Falls auch das fehlt, speichern wir zumindest einen großen
-                        # Vollbild-Kontextausschnitt rund um das Kennzeichen.
-                        plate_bbox = [orig_px1, orig_py1, orig_px2, orig_py2]
-                        associated_vehicle = vehicle or self._match_vehicle_for_plate(plate_bbox, detected_vehicles)
+                        # Bilder speichern
                         plate_image_b64 = None
                         vehicle_image_b64 = None
                         
@@ -2968,12 +3284,8 @@ class LicensePlateDetector:
                             _, buffer = cv2.imencode('.jpg', plate_crop_scaled, [cv2.IMWRITE_JPEG_QUALITY, plate_quality])
                             plate_image_b64 = base64.b64encode(buffer).decode('utf-8')
                         
-                        if self.config_manager.get('detection', 'save_detected_vehicles'):
-                            vehicle_crop = associated_vehicle.get('crop') if associated_vehicle else None
-                            if (vehicle_crop is None or vehicle_crop.size == 0) and associated_vehicle:
-                                vehicle_crop = self._crop_bbox(frame, associated_vehicle.get('bbox'))
-                            if (vehicle_crop is None or vehicle_crop.size == 0) and self.config_manager.get('detection', 'fallback_vehicle_context_image') is not False:
-                                vehicle_crop = self._plate_context_crop(frame, plate_bbox)
+                        if self.config_manager.get('detection', 'save_detected_vehicles') and vehicle:
+                            vehicle_crop = vehicle.get('crop')
                             if vehicle_crop is not None and vehicle_crop.size > 0:
                                 vehicle_quality = int(self.config_manager.get('storage', 'jpeg_quality_vehicle') or 90)
                                 _, buffer = cv2.imencode('.jpg', vehicle_crop, [cv2.IMWRITE_JPEG_QUALITY, vehicle_quality])
@@ -2982,22 +3294,39 @@ class LicensePlateDetector:
                         detection_info = {
                             'plate_text': plate_text,
                             'confidence': ocr_confidence,
-                            'plate_bbox': plate_bbox,
+                            'plate_bbox': [orig_px1, orig_py1, orig_px2, orig_py2],
                             'plate_center_x': round((orig_px1 + orig_px2) / 2, 2),
                             'plate_center_y': round((orig_py1 + orig_py2) / 2, 2),
                             'frame_width': frame_w,
                             'frame_height': frame_h,
-                            'vehicle_bbox': associated_vehicle['bbox'] if associated_vehicle else None,
-                            'vehicle_center_x': round((associated_vehicle['bbox'][0] + associated_vehicle['bbox'][2]) / 2, 2) if associated_vehicle else None,
-                            'vehicle_center_y': round((associated_vehicle['bbox'][1] + associated_vehicle['bbox'][3]) / 2, 2) if associated_vehicle else None,
+                            'vehicle_bbox': vehicle['bbox'] if vehicle else None,
+                            'vehicle_center_x': round((vehicle['bbox'][0] + vehicle['bbox'][2]) / 2, 2) if vehicle else None,
+                            'vehicle_center_y': round((vehicle['bbox'][1] + vehicle['bbox'][3]) / 2, 2) if vehicle else None,
                             'plate_score': plate_score,
                             'plate_image_base64': plate_image_b64,
                             'vehicle_image_base64': vehicle_image_b64,
-                            'vehicle_type': associated_vehicle['type'] if associated_vehicle else 'Unbekannt',
-                            'vehicle_type_en': associated_vehicle['type_en'] if associated_vehicle else 'unknown',
-                            'vehicle_color': associated_vehicle['color'] if associated_vehicle else 'Unbekannt',
+                            'vehicle_type': vehicle['type'] if vehicle else 'Unbekannt',
+                            'vehicle_type_en': vehicle['type_en'] if vehicle else 'unknown',
+                            'vehicle_confidence': vehicle.get('confidence') if vehicle else None,
+                            'vehicle_match_reason': vehicle.get('match_reason') if vehicle else None,
+                            'vehicle_color': vehicle.get('color') if vehicle else 'Unbekannt',
+                            'vehicle_color_hex': vehicle.get('color_hex') if vehicle else None,
+                            'vehicle_color_rgb': vehicle.get('color_rgb') if vehicle else None,
+                            'vehicle_color_coverage': vehicle.get('color_coverage') if vehicle else None,
+                            'vehicle_color_info': vehicle.get('color_info') if vehicle else None,
                             'plate_text_normalized': PlateUtils.normalize(plate_text, compact=True),
                             'plate_format': PlateUtils.detect_format(plate_text),
+                            'plate_country': ocr_meta.get('plate_country'),
+                            'plate_country_display': ocr_meta.get('plate_country_display'),
+                            'plate_country_prob': ocr_meta.get('plate_country_prob'),
+                            'plate_region': ocr_meta.get('plate_region'),
+                            'plate_region_prob': ocr_meta.get('plate_region_prob'),
+                            'ocr_engine': ocr_meta.get('ocr_engine'),
+                            'ocr_model': ocr_meta.get('ocr_model'),
+                            'ocr_raw_plate': ocr_meta.get('raw_plate'),
+                            'ocr_elapsed_ms': ocr_meta.get('ocr_elapsed_ms'),
+                            'mean_char_prob_all': ocr_meta.get('mean_char_prob_all'),
+                            'mean_char_prob_visible': ocr_meta.get('mean_char_prob_visible'),
                             'is_valid_plate': PlateUtils.is_valid(plate_text),
                             'watchlist_match': watchlist_manager.check(plate_text) if self.config_manager.get('plate_recognition', 'watchlist_enabled') else None,
                         }
@@ -3524,6 +3853,8 @@ def api_save_ocr_config():
         config_manager.save_config()
         
         detector.ocr_reader = None
+        detector.fast_plate_recognizer = None
+        detector.fast_plate_cache_key = None
         detector.models_loaded = False
         threading.Thread(target=detector.load_models, daemon=True).start()
         
@@ -3668,7 +3999,7 @@ def api_history_export():
     filters['limit'] = int(filters.get('limit') or 100000)
     rows = history_manager.search_advanced(filters)['entries']
     filename = f"platevision_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    fields = ['timestamp', 'plate_text', 'plate_text_normalized', 'confidence', 'source', 'vehicle_type', 'vehicle_color', 'plate_format', 'is_valid_plate', 'filename']
+    fields = ['timestamp', 'plate_text', 'plate_text_normalized', 'confidence', 'source', 'vehicle_type', 'vehicle_color', 'vehicle_color_hex', 'plate_country_display', 'plate_country', 'plate_country_prob', 'ocr_engine', 'ocr_model', 'plate_format', 'is_valid_plate', 'filename']
     if fmt == 'json':
         return Response(json.dumps(rows, indent=2, ensure_ascii=False), mimetype='application/json', headers={'Content-Disposition': f'attachment; filename={filename}.json'})
     output = io.StringIO()
@@ -3983,7 +4314,16 @@ def api_process_image():
                     'plate_image': detection.get('plate_image_base64'),
                     'vehicle_image': detection.get('vehicle_image_base64'),
                     'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
+                    'vehicle_type_en': detection.get('vehicle_type_en', 'unknown'),
                     'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
+                    'vehicle_color_hex': detection.get('vehicle_color_hex'),
+                    'vehicle_color_rgb': detection.get('vehicle_color_rgb'),
+                    'vehicle_color_coverage': detection.get('vehicle_color_coverage'),
+                    'plate_country': detection.get('plate_country'),
+                    'plate_country_display': detection.get('plate_country_display'),
+                    'plate_country_prob': detection.get('plate_country_prob'),
+                    'ocr_engine': detection.get('ocr_engine'),
+                    'ocr_model': detection.get('ocr_model'),
                 }
                 history_manager.add_entry(entry)
 
@@ -4031,6 +4371,11 @@ def api_latest_plate_text():
             'confidence': entry.get('confidence', 0),
             'vehicle_type': entry.get('vehicle_type', 'unknown'),
             'vehicle_color': entry.get('vehicle_color', 'unknown'),
+            'vehicle_color_hex': entry.get('vehicle_color_hex'),
+            'vehicle_color_rgb': entry.get('vehicle_color_rgb'),
+            'plate_country': entry.get('plate_country'),
+            'plate_country_display': entry.get('plate_country_display'),
+            'plate_country_prob': entry.get('plate_country_prob'),
             'timestamp': entry.get('timestamp', ''),
             'source': entry.get('source', '')
         })
@@ -4070,6 +4415,11 @@ def api_latest_vehicle():
             'vehicle_type': entry.get('vehicle_type', 'unknown'),
             'vehicle_type_en': entry.get('vehicle_type_en', 'unknown'),
             'vehicle_color': entry.get('vehicle_color', 'unknown'),
+            'vehicle_color_hex': entry.get('vehicle_color_hex'),
+            'vehicle_color_rgb': entry.get('vehicle_color_rgb'),
+            'plate_country': entry.get('plate_country'),
+            'plate_country_display': entry.get('plate_country_display'),
+            'plate_country_prob': entry.get('plate_country_prob'),
             'timestamp': entry.get('timestamp', ''),
             'source': entry.get('source', ''),
             'has_vehicle_image': entry.get('vehicle_image') is not None,
@@ -4118,6 +4468,11 @@ def api_latest_full():
             'vehicle_type': entry.get('vehicle_type', 'unknown'),
             'vehicle_type_en': entry.get('vehicle_type_en', 'unknown'),
             'vehicle_color': entry.get('vehicle_color', 'unknown'),
+            'vehicle_color_hex': entry.get('vehicle_color_hex'),
+            'vehicle_color_rgb': entry.get('vehicle_color_rgb'),
+            'plate_country': entry.get('plate_country'),
+            'plate_country_display': entry.get('plate_country_display'),
+            'plate_country_prob': entry.get('plate_country_prob'),
             'timestamp': entry.get('timestamp', ''),
             'source': entry.get('source', ''),
             'plate_image_base64': entry.get('plate_image', None),
@@ -4828,7 +5183,9 @@ def api_models_status():
         'human_model': detector.human_model is not None,
         'person_detection_enabled': bool(config_manager.get('people', 'enabled')),
         'person_model_mode': config_manager.get('people', 'model_mode'),
-        'ocr_reader': detector.ocr_reader is not None
+        'ocr_reader': detector.ocr_reader is not None,
+        'fast_plate_ocr': detector.fast_plate_recognizer is not None,
+        'ocr_engine': config_manager.get('ocr', 'engine') or 'fast_plate_ocr'
     })
 
 @app.route('/api/models/reload', methods=['POST'])
@@ -4838,6 +5195,8 @@ def api_reload_models():
     detector.license_model = None
     detector.human_model = None
     detector.ocr_reader = None
+    detector.fast_plate_recognizer = None
+    detector.fast_plate_cache_key = None
     threading.Thread(target=detector.load_models, daemon=True).start()
     return jsonify({'success': True, 'message': 'Modelle werden neu geladen...'})
 
@@ -4925,7 +5284,16 @@ def process_video_job(job_id, video_path, original_filename):
                                 'plate_image': detection.get('plate_image_base64'),
                                 'vehicle_image': detection.get('vehicle_image_base64'),
                                 'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
+                                'vehicle_type_en': detection.get('vehicle_type_en', 'unknown'),
                                 'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
+                                'vehicle_color_hex': detection.get('vehicle_color_hex'),
+                                'vehicle_color_rgb': detection.get('vehicle_color_rgb'),
+                                'vehicle_color_coverage': detection.get('vehicle_color_coverage'),
+                                'plate_country': detection.get('plate_country'),
+                                'plate_country_display': detection.get('plate_country_display'),
+                                'plate_country_prob': detection.get('plate_country_prob'),
+                                'ocr_engine': detection.get('ocr_engine'),
+                                'ocr_model': detection.get('ocr_model'),
                             }
                             history_manager.add_entry(entry)
                             all_detections.append(entry)
@@ -5168,8 +5536,8 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.20',
-        'edition': 'ProTraffic ROI Safe Detection Fix',
+        'version': '0.8.21',
+        'edition': 'FastPlateOCR + YOLO Vehicle Intelligence',
         'features': [
             'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
             'Statistik', 'Suche', 'Watchlist', 'Mehrsprachige Einstellungen',
@@ -5902,7 +6270,7 @@ def api_system_health():
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.20'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.21'})
 
 
 @app.route('/api/system/audit')
@@ -5999,7 +6367,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.20 ProTraffic ROI Safe Detection                                    ║
+    ║     Version 0.8.21 FastPlateOCR Vehicle Intelligence                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

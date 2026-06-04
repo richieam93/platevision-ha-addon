@@ -2,7 +2,7 @@
 """
 RTSP Stream Handler
 Verwaltet RTSP Videostreams im Hintergrund
-Version 2.3 - ROI filtert nach der Erkennung, kein Vorab-Zuschnitt
+Version 2.2 - Einheitliche ROI-Geometrie für Live und Einstellungen
 """
 
 import cv2
@@ -328,42 +328,41 @@ class RTSPHandler:
         }
 
     def _apply_analysis_mask(self, frame, area_info):
-        """Bereitet das Frame für die Modelle vor.
-
-        Fix ab 0.8.20: Die Analysezone darf das Bild vor YOLO nicht mehr
-        automatisch zuschneiden. Der Detektor braucht das komplette Fahrzeug als
-        Kontext; sonst verschwinden Fahrzeugboxen und damit auch Fahrzeugbilder.
-        Standard ist daher: Vollbild erkennen, danach per ROI filtern.
-
-        Alte Installationen können das frühere Verhalten nur explizit über
-        rtsp.analysis_area.crop_before_detection=true reaktivieren.
         """
-        if frame is None or frame.size == 0 or not area_info.get('enabled'):
+        Gibt standardmäßig das komplette Frame an YOLO weiter.
+
+        Fix 0.8.21: Der Analysebereich darf nicht vor der YOLO-Erkennung
+        ausgeschnitten werden, sonst sieht das Fahrzeugmodell nicht mehr das
+        komplette Auto/LKW/Motorrad und es wird später kein Fahrzeugbild
+        gespeichert. Der ROI wird deshalb nach der Erkennung gefiltert.
+
+        Optionales Legacy-Verhalten:
+        - rtsp.analysis_area.crop_before_detection = true  -> alter Crop
+        - rtsp.analysis_area.mask_before_detection = true  -> Vollbild maskieren
+        """
+        if not area_info.get('enabled'):
             return frame, 0, 0
 
         crop_before = bool(self.config_manager.get('rtsp', 'analysis_area', 'crop_before_detection'))
         mask_before = bool(self.config_manager.get('rtsp', 'analysis_area', 'mask_before_detection'))
 
-        if not crop_before:
-            if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('polygon') or []) >= 3:
-                process_frame = frame.copy()
+        if crop_before:
+            ax = area_info['x']; ay = area_info['y']; aw = area_info['width']; ah = area_info['height']
+            process_frame = frame[ay:ay + ah, ax:ax + aw].copy()
+            if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('crop_polygon') or []) >= 3:
                 mask = np.zeros(process_frame.shape[:2], dtype=np.uint8)
-                pts = np.array(area_info['polygon'], dtype=np.int32)
+                pts = np.array(area_info['crop_polygon'], dtype=np.int32)
                 cv2.fillPoly(mask, [pts], 255)
                 process_frame = cv2.bitwise_and(process_frame, process_frame, mask=mask)
-                return process_frame, 0, 0
-            return frame, 0, 0
+            return process_frame, ax, ay
 
-        ax = area_info['x']; ay = area_info['y']; aw = area_info['width']; ah = area_info['height']
-        process_frame = frame[ay:ay + ah, ax:ax + aw].copy()
-
-        if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('crop_polygon') or []) >= 3:
+        process_frame = frame.copy()
+        if mask_before and area_info.get('mode') == 'polygon' and len(area_info.get('polygon') or []) >= 3:
             mask = np.zeros(process_frame.shape[:2], dtype=np.uint8)
-            pts = np.array(area_info['crop_polygon'], dtype=np.int32)
+            pts = np.array(area_info['polygon'], dtype=np.int32)
             cv2.fillPoly(mask, [pts], 255)
             process_frame = cv2.bitwise_and(process_frame, process_frame, mask=mask)
-
-        return process_frame, ax, ay
+        return process_frame, 0, 0
 
     def _draw_analysis_area(self, frame, area_info):
         """Zeichnet die eine verbindliche Straßen-Analyse-Zone auf das Livebild."""
@@ -455,20 +454,8 @@ class RTSPHandler:
                 if cfg.get('reject_partial_outside_roi') and min_overlap > 0:
                     return self._bbox_roi_overlap_percent([x1, y1, x2, y2], area_info) >= min_overlap
                 return True
-            center_ok = self._point_inside_analysis_area(cx, cy, area_info)
-            foot_ok = self._point_inside_analysis_area(foot_x, foot_y, area_info)
-            if center_ok or foot_ok:
-                return True
-
-            overlap = self._bbox_roi_overlap_percent([x1, y1, x2, y2], area_info)
-            detection_cfg = self.config_manager.get('detection') or {}
-            if kind == 'vehicle':
-                min_overlap = float(detection_cfg.get('vehicle_roi_min_overlap_percent') or 5)
-            elif kind == 'plate':
-                min_overlap = float(detection_cfg.get('plate_roi_min_overlap_percent') or 15)
-            else:
-                min_overlap = 1.0
-            return overlap >= min_overlap
+            # Vehicles/plates: center must be inside the road polygon.
+            return self._point_inside_analysis_area(cx, cy, area_info)
         except Exception:
             return True
 
@@ -579,14 +566,12 @@ class RTSPHandler:
                         area_info = self._get_analysis_area(frame_h, frame_w)
                         area_enabled = area_info.get('enabled', False)
                         process_frame, offset_x, offset_y = self._apply_analysis_mask(frame, area_info)
-                        roi_on_processed_frame = None
-                        if area_enabled:
-                            same_size = getattr(process_frame, 'shape', None) is not None and process_frame.shape[:2] == frame.shape[:2]
-                            roi_on_processed_frame = area_info.get('polygon') if same_size else area_info.get('crop_polygon')
                         
-                        # Erkennung standardmäßig auf dem Vollbild. Die ROI filtert erst danach,
-                        # damit Fahrzeuge nicht durch einen Vorab-Zuschnitt abgeschnitten werden.
-                        results = self.detector.process_frame(process_frame, apply_analysis_area=False, runtime_roi_polygon=roi_on_processed_frame)
+                        # Erkennung auf Vollbild; ROI wird danach gefiltert. Nur im Legacy-Crop-Modus werden Crop-Koordinaten genutzt.
+                        runtime_polygon = None
+                        if area_enabled:
+                            runtime_polygon = area_info.get('crop_polygon') if (offset_x or offset_y) else area_info.get('polygon')
+                        results = self.detector.process_frame(process_frame, apply_analysis_area=False, runtime_roi_polygon=runtime_polygon)
                         
                         # Annotiertes Frame erstellen
                         annotated = frame.copy()
@@ -762,7 +747,16 @@ class RTSPHandler:
             "vehicle_image": detection.get('vehicle_image_base64'),
             "full_frame": detection.get('full_frame_base64'),
             "vehicle_type": detection.get('vehicle_type', 'Unbekannt'),
+            "vehicle_type_en": detection.get('vehicle_type_en', 'unknown'),
             "vehicle_color": detection.get('vehicle_color', 'Unbekannt'),
+            "vehicle_color_hex": detection.get('vehicle_color_hex'),
+            "vehicle_color_rgb": detection.get('vehicle_color_rgb'),
+            "vehicle_color_coverage": detection.get('vehicle_color_coverage'),
+            "plate_country": detection.get('plate_country'),
+            "plate_country_display": detection.get('plate_country_display'),
+            "plate_country_prob": detection.get('plate_country_prob'),
+            "ocr_engine": detection.get('ocr_engine'),
+            "ocr_model": detection.get('ocr_model'),
             "plate_bbox": detection.get('plate_bbox'),
             "vehicle_bbox": detection.get('vehicle_bbox'),
             "plate_center_x": detection.get('plate_center_x'),
@@ -787,6 +781,8 @@ class RTSPHandler:
                     'confidence': detection.get('confidence', 0),
                     'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
                     'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
+                    'vehicle_color_hex': detection.get('vehicle_color_hex'),
+                    'plate_country_display': detection.get('plate_country_display'),
                     'timestamp': datetime.now().isoformat()
                 }, broadcast=True, namespace='/')
             except:
