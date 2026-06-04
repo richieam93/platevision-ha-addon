@@ -262,6 +262,28 @@ function cleanupPeopleHistory() {
 }
 
 
+
+function personCropSrc(row) {
+    if (!row) return '';
+    if (row.person_image_base64) return `data:image/jpeg;base64,${row.person_image_base64}`;
+    if (row.crop_image_base64) return `data:image/jpeg;base64,${row.crop_image_base64}`;
+    const urls = row.image_urls || row.images || {};
+    if (urls.crop && String(urls.crop).startsWith('/')) return urls.crop;
+    if (urls.crop) return `/api/people/images/${urls.crop}`;
+    return '';
+}
+function peopleCropGalleryFromRows(rows) {
+    rows = rows || [];
+    if (!rows.length) return '<div class="alert alert-secondary mb-0">Keine Personen erkannt.</div>';
+    return `<div class="people-image-gallery">${rows.map((row, idx) => {
+        const src = personCropSrc(row);
+        return `<div class="people-image-card">
+            ${src ? `<img src="${src}" alt="Person ${idx + 1}">` : '<div class="people-image-placeholder">Kein Personen-Crop</div>'}
+            <div class="people-image-meta"><strong>Person ${row.track_id ?? idx + 1}</strong><br>${dirText(row.direction || 'unknown')} · ${pct(row.confidence || 0)}</div>
+        </div>`;
+    }).join('')}</div>`;
+}
+
 function loadPeopleImageHistory() {
     const params = queryParams();
     params.set('limit', '24');
@@ -269,15 +291,15 @@ function loadPeopleImageHistory() {
         const gallery = document.getElementById('peopleImageGallery');
         const entries = data.entries || [];
         if (!entries.length) {
-            gallery.innerHTML = '<div class="alert alert-secondary mb-0">Noch keine Personenbilder gespeichert. Aktiviere in den Einstellungen die Bild-History und Personen-Crops/annotierte Bilder.</div>';
+            gallery.innerHTML = '<div class="alert alert-secondary mb-0">Noch keine Personen-Crops gespeichert. Aktiviere Bild-History und Personen-Crops im Test & Upload Profil.</div>';
             return;
         }
         gallery.innerHTML = entries.map(row => {
             const urls = row.image_urls || {};
-            const main = urls.crop || urls.annotated || urls.full_frame || '';
-            const links = Object.entries(urls).map(([k, v]) => `<a href="${v}" target="_blank">${k}</a>`).join(' · ');
+            const main = urls.crop || '';
+            const links = urls.crop ? `<a href="${urls.crop}" target="_blank">Personen-Crop</a>` : '<span class="text-secondary">Kein Personen-Crop</span>';
             return `<div class="people-image-card">
-                ${main ? `<img src="${main}" alt="Personenbild">` : '<div class="people-image-placeholder">Kein Bild</div>'}
+                ${main ? `<img src="${main}" alt="Erkannte Person">` : '<div class="people-image-placeholder">Kein Personen-Crop</div>'}
                 <div class="people-image-meta"><strong>${formatDate(row.timestamp)}</strong><br>Track ${row.track_id ?? '-'} · ${dirText(row.direction || 'unknown')} · ${pct(row.confidence || 0)}<br>${links}</div>
                 <button class="btn btn-sm btn-outline-danger w-100 mt-2" onclick="deletePeopleEvent('${row.id}')"><i class="fas fa-trash me-1"></i>Eintrag + Bilder löschen</button>
             </div>`;
@@ -315,8 +337,8 @@ function runSnapshotTest() {
     box.innerHTML = '<div class="alert alert-info"><i class="fas fa-spinner fa-spin me-2"></i>Analysiere Snapshot...</div>';
     fetch('/api/people/test/snapshot', {method:'POST'}).then(r=>r.json()).then(data => {
         if (!data.success) { box.innerHTML = `<div class="alert alert-warning">${data.error || 'Analyse nicht möglich'}</div>`; return; }
-        box.innerHTML = `<div class="alert alert-success">${data.people?.length || 0} Personen erkannt, ${data.people_counted || 0} gezählt.</div>` +
-            (data.result_image ? `<img class="img-fluid rounded border border-secondary" src="data:image/jpeg;base64,${data.result_image}">` : '');
+        box.innerHTML = `<div class="alert alert-success">${data.people?.length || 0} Personen erkannt, ${data.people_counted || 0} gezählt. Angezeigt werden nur Personen-Crops.</div>` +
+            peopleCropGalleryFromRows(data.people || []);
         loadPeopleStats(); loadPeoplePresence(); loadPeopleModels(); loadPeopleImageHistory();
     }).catch(() => box.innerHTML = '<div class="alert alert-danger">Test fehlgeschlagen.</div>');
 }

@@ -985,7 +985,7 @@
                     <div>Erkennungs-, OCR-, YOLO- und Personen-Zählwerte werden jetzt zentral im Menü <strong>Test & Upload</strong> getestet und mit <strong>Speichern & RTSP anwenden</strong> für den Live-Stream übernommen. Diese Seite enthält nur noch globale App-, Historie-, Speicher-, Modell-, Suche-, Statistik-, Datenschutz- und Layout-Werte.</div>
                 </div>
                 <div class="d-flex flex-wrap gap-2 mb-3">
-                    <a class="btn btn-sm btn-outline-primary" data-bs-toggle="pill" href="#storage"><i class="fas fa-database me-1"></i>Speicher öffnen</a>
+                    <a class="btn btn-sm btn-outline-primary" href="#storageEmbeddedInHistory"><i class="fas fa-database me-1"></i>Speicher öffnen</a>
                     <a class="btn btn-sm btn-outline-info" href="/test"><i class="fas fa-flask me-1"></i>Erkennung im Testmodus einstellen</a>
                 </div>
                 <div class="card">
@@ -1429,7 +1429,7 @@
                     <div>YOLO-Modelle für Kennzeichen, Fahrzeug und Personen wählst du im Menü <strong>Test & Upload</strong>. Neue Modelldateien kannst du weiterhin hier hochladen.</div>
                 </div>
                 <div class="d-flex flex-wrap gap-2 mb-3">
-                    <a class="btn btn-sm btn-outline-primary" data-bs-toggle="pill" href="#modelUpload"><i class="fas fa-cloud-arrow-up me-1"></i>Modelle hochladen</a>
+                    <a class="btn btn-sm btn-outline-primary" href="#modelUploadEmbeddedInModels"><i class="fas fa-cloud-arrow-up me-1"></i>Modelle hochladen</a>
                     <a class="btn btn-sm btn-outline-info" href="/test"><i class="fas fa-sliders me-1"></i>YOLO-Auswahl testen</a>
                 </div>
                 <div class="card">
@@ -2869,6 +2869,42 @@
     // INITIALIZATION
     // ============================================
     
+
+    function embedCombinedSettingsPanels() {
+        // 0.8.22 Fix: Die linke Navigation zeigt bewusst nur wenige sinnvolle Gruppen.
+        // Deshalb werden die früher separaten Tabs "Speicher" und "Modelle hochladen"
+        // sichtbar in die Gruppen "Historie + Speicher" und "Modelle + Modelle hochladen" eingebettet.
+        const historyPane = document.getElementById('historySettings');
+        const storagePane = document.getElementById('storage');
+        if (historyPane && storagePane && !document.getElementById('storageEmbeddedInHistory')) {
+            const wrapper = document.createElement('div');
+            wrapper.id = 'storageEmbeddedInHistory';
+            wrapper.className = 'mt-4';
+            const title = document.createElement('div');
+            title.className = 'layout-upgrade-banner mb-3';
+            title.innerHTML = '<i class="fas fa-database me-2"></i>Speicher-Einstellungen';
+            wrapper.appendChild(title);
+            while (storagePane.firstElementChild) wrapper.appendChild(storagePane.firstElementChild);
+            historyPane.appendChild(wrapper);
+            storagePane.remove();
+        }
+
+        const modelsPane = document.getElementById('models');
+        const uploadPane = document.getElementById('modelUpload');
+        if (modelsPane && uploadPane && !document.getElementById('modelUploadEmbeddedInModels')) {
+            const wrapper = document.createElement('div');
+            wrapper.id = 'modelUploadEmbeddedInModels';
+            wrapper.className = 'mt-4';
+            const title = document.createElement('div');
+            title.className = 'layout-upgrade-banner mb-3';
+            title.innerHTML = '<i class="fas fa-cloud-arrow-up me-2"></i>Eigene Modelle hochladen';
+            wrapper.appendChild(title);
+            while (uploadPane.firstElementChild) wrapper.appendChild(uploadPane.firstElementChild);
+            modelsPane.appendChild(wrapper);
+            uploadPane.remove();
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
         loadModelStatus();
         loadStorageInfo();
@@ -3462,11 +3498,50 @@
             .catch(() => { if (auditBox) auditBox.innerHTML = '<div class="alert alert-danger">Audit konnte nicht geladen werden.</div>'; });
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
-        if (window.location.hash === '#diagnosticsAudit') {
-            const diagTab = document.querySelector('.settings-nav a[href="#diagnosticsAudit"]');
-            if (diagTab && window.bootstrap) bootstrap.Tab.getOrCreateInstance(diagTab).show();
+
+    function embedCombinedSettingsPanels() {
+        // 0.8.22 Fix: Die linke Navigation zeigt bewusst nur wenige sinnvolle Gruppen.
+        // Deshalb werden die früher separaten Tabs "Speicher" und "Modelle hochladen"
+        // sichtbar in die Gruppen "Historie + Speicher" und "Modelle + Modelle hochladen" eingebettet.
+        const historyPane = document.getElementById('historySettings');
+        const storagePane = document.getElementById('storage');
+        if (historyPane && storagePane && !document.getElementById('storageEmbeddedInHistory')) {
+            const wrapper = document.createElement('div');
+            wrapper.id = 'storageEmbeddedInHistory';
+            wrapper.className = 'mt-4';
+            const title = document.createElement('div');
+            title.className = 'layout-upgrade-banner mb-3';
+            title.innerHTML = '<i class="fas fa-database me-2"></i>Speicher-Einstellungen';
+            wrapper.appendChild(title);
+            while (storagePane.firstElementChild) wrapper.appendChild(storagePane.firstElementChild);
+            historyPane.appendChild(wrapper);
+            storagePane.remove();
         }
+
+        const modelsPane = document.getElementById('models');
+        const uploadPane = document.getElementById('modelUpload');
+        if (modelsPane && uploadPane && !document.getElementById('modelUploadEmbeddedInModels')) {
+            const wrapper = document.createElement('div');
+            wrapper.id = 'modelUploadEmbeddedInModels';
+            wrapper.className = 'mt-4';
+            const title = document.createElement('div');
+            title.className = 'layout-upgrade-banner mb-3';
+            title.innerHTML = '<i class="fas fa-cloud-arrow-up me-2"></i>Eigene Modelle hochladen';
+            wrapper.appendChild(title);
+            while (uploadPane.firstElementChild) wrapper.appendChild(uploadPane.firstElementChild);
+            modelsPane.appendChild(wrapper);
+            uploadPane.remove();
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        embedCombinedSettingsPanels();
+        const hashMap = {'#diagnosticsAudit':'#diagnosticsAudit', '#storage':'#historySettings', '#storageEmbeddedInHistory':'#historySettings', '#modelUpload':'#models', '#modelUploadEmbeddedInModels':'#models'};
+        const targetHash = hashMap[window.location.hash] || (window.location.hash || '#historySettings');
+        const targetTab = document.querySelector(`.settings-nav a[href="${targetHash}"]`);
+        if (targetTab && window.bootstrap) bootstrap.Tab.getOrCreateInstance(targetTab).show();
+        if (window.location.hash === '#storage' || window.location.hash === '#storageEmbeddedInHistory') setTimeout(() => document.getElementById('storageEmbeddedInHistory')?.scrollIntoView({behavior:'smooth', block:'start'}), 150);
+        if (window.location.hash === '#modelUpload' || window.location.hash === '#modelUploadEmbeddedInModels') setTimeout(() => document.getElementById('modelUploadEmbeddedInModels')?.scrollIntoView({behavior:'smooth', block:'start'}), 150);
         if (document.getElementById('settingsHealthRows')) loadSettingsDiagnostics();
     });
 

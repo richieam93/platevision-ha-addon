@@ -584,7 +584,7 @@ class ConfigManager:
             'person_recount_position_tolerance_percent': 12,
             'image_history_enabled': True,
             'image_history_store_crop': True,
-            'image_history_store_annotated': True,
+            'image_history_store_annotated': False,
             'image_history_store_full_frame': False,
             'image_history_jpeg_quality': 85,
             'image_history_retention_days': 90,
@@ -769,10 +769,20 @@ class ConfigManager:
                 people_cfg['image_history_enabled'] = True
                 people_cfg['save_person_crops'] = True
                 people_cfg['image_history_store_crop'] = True
-                people_cfg['image_history_store_annotated'] = True
+                people_cfg['image_history_store_annotated'] = False
+                people_cfg['save_full_frame'] = False
+                people_cfg['image_history_store_full_frame'] = False
                 people_cfg['save_all_detections'] = True
                 people_cfg.setdefault('enabled', True)
                 migration_cfg['people_images_default_applied_v1'] = True
+            if not migration_cfg.get('people_crop_only_display_applied_v1'):
+                people_cfg['image_history_enabled'] = True
+                people_cfg['save_person_crops'] = True
+                people_cfg['image_history_store_crop'] = True
+                people_cfg['image_history_store_annotated'] = False
+                people_cfg['save_full_frame'] = False
+                people_cfg['image_history_store_full_frame'] = False
+                migration_cfg['people_crop_only_display_applied_v1'] = True
         except Exception as exc:
             logger.warning(f"0.8.22 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
         return config
@@ -4473,6 +4483,7 @@ def api_process_image():
                 if saved_person_event:
                     person.update({k: saved_person_event.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved_person_event})
         
+        _attach_person_crop_previews(result.get('people', []), image)
         safe_detections = _json_safe(result.get('detections', []))
         safe_vehicles = _json_safe([{k: v for k, v in v.items() if k != 'crop'} for v in result.get('vehicles', [])])
         safe_people = _json_safe(result.get('people', []))
@@ -4879,6 +4890,46 @@ def _safe_image_upload(file_storage):
         return None, 'Ungültiges oder beschädigtes Bild'
     return {'filename': filename, 'data': data, 'image': image, 'suffix': suffix}, None
 
+
+
+def _attach_person_crop_previews(people, frame, quality=88):
+    """Attach JPEG/base64 previews containing only detected persons.
+
+    This is used by Test & Upload and people snapshot APIs so the UI can show
+    person crops instead of the full camera frame. Stored history images still
+    use PersonHistoryManager, but this helper gives an immediate preview even
+    before/without history persistence.
+    """
+    if frame is None or not people:
+        return people
+    try:
+        h, w = frame.shape[:2]
+    except Exception:
+        return people
+    for person in people:
+        try:
+            bbox = person.get('bbox') or []
+            if len(bbox) != 4:
+                continue
+            x1, y1, x2, y2 = [int(float(v)) for v in bbox]
+            pad = 8
+            try:
+                pad = int((config_manager.get('people') or {}).get('image_history_crop_padding_px') or 8)
+            except Exception:
+                pass
+            x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
+            x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            crop = frame[y1:y2, x1:x2].copy()
+            ok, buffer = cv2.imencode('.jpg', crop, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
+            if ok:
+                b64 = base64.b64encode(buffer).decode('utf-8')
+                person['person_image_base64'] = b64
+                person['crop_image_base64'] = b64
+        except Exception as exc:
+            logger.debug(f'Personen-Crop Preview konnte nicht erstellt werden: {exc}')
+    return people
 
 
 def _people_config_with_overrides(overrides=None):
@@ -6405,11 +6456,12 @@ def api_people_test_snapshot():
         result = detector.process_frame(frame)
         annotated = _draw_people_calibration_overlay(result.get('annotated_frame'), config_manager.get('people') or {}, source_label='RTSP Live-Frame')
         _, buffer = cv2.imencode('.jpg', annotated)
+        _attach_person_crop_previews(result.get('people', []), frame)
         return jsonify({
             'success': True,
-            'people': result.get('people', []),
+            'people': _json_safe(result.get('people', [])),
             'people_counted': sum(1 for p in result.get('people', []) if p.get('counted')),
-            'result_image': base64.b64encode(buffer).decode('utf-8'),
+            'result_image': '',
             'processing_time': result.get('processing_time', 0)
         })
     finally:
@@ -6478,13 +6530,13 @@ def _handle_people_image_analysis(source_name='people_upload'):
                         person.update({k: saved_person_event.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved_person_event})
                         history_saved += 1
 
-        ok, buffer = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 88])
-        result_image_b64 = base64.b64encode(buffer).decode('utf-8') if ok else ''
         people = result.get('people', []) or []
+        _attach_person_crop_previews(people, payload['image'])
+        result_image_b64 = ''
         return jsonify({
             'success': True,
             'filename': saved_filename,
-            'people': people,
+            'people': _json_safe(people),
             'people_count': len(people),
             'people_counted': sum(1 for p in people if p.get('counted')),
             'history_saved': history_saved,

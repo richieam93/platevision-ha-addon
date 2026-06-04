@@ -909,7 +909,8 @@
                 image_history_enabled: true,
                 save_person_crops: boolVal('testPeopleSaveCrop'),
                 image_history_store_crop: boolVal('testPeopleSaveCrop'),
-                image_history_store_annotated: true,
+                image_history_store_annotated: false,
+                save_full_frame: false,
                 image_history_store_full_frame: false
             },
             traffic: {
@@ -1175,6 +1176,30 @@
         }
     }
 
+
+    function personCropSrc(p) {
+        if (!p) return '';
+        if (p.person_image_base64) return `data:image/jpeg;base64,${p.person_image_base64}`;
+        if (p.crop_image_base64) return `data:image/jpeg;base64,${p.crop_image_base64}`;
+        const imgs = p.images || {};
+        return imgs.crop ? `/api/people/images/${imgs.crop}` : '';
+    }
+
+    function peopleCropGalleryHtml(people) {
+        const rows = people || [];
+        if (!rows.length) return '<div class="alert alert-secondary mb-0">Keine Personen erkannt.</div>';
+        return `<div class="row g-3 mb-3">${rows.map((p, i) => {
+            const src = personCropSrc(p);
+            return `<div class="col-sm-6 col-lg-4"><div class="detection-result h-100 flex-column align-items-stretch">
+                ${src ? `<img src="${src}" alt="Person ${i + 1}" onclick="showImageModal(this.src, 'Person ${i + 1}')" style="cursor:pointer;width:100%;height:220px;object-fit:cover;">` : `<div class="detection-result-placeholder"><i class="fas fa-person-walking text-info"></i></div>`}
+                <div class="detection-result-info mt-2">
+                    <div class="fw-bold">Person ${p.track_id ? '#' + p.track_id : i + 1} ${p.counted ? '<span class="badge bg-success ms-2">gezählt</span>' : ''}</div>
+                    <div class="small text-secondary">${p.event_type || 'person_detected'} · ${p.direction || 'unknown'} · ${(p.confidence || 0).toFixed(2)}</div>
+                </div>
+            </div></div>`;
+        }).join('')}</div>`;
+    }
+
     async function runPeopleImageUploadTest() {
         const input = document.getElementById('peopleTestImageInput');
         const box = document.getElementById('peopleUploadTestResult');
@@ -1207,7 +1232,7 @@
                         ${data.history_saved ? `<br><strong>${data.history_saved}</strong> Einträge in Personen-Historie gespeichert.` : ''}
                         <br><small>Modus: ${data.model_mode || '-'} · Modell: ${data.selected_model || '-'}</small><br><small>Angewendet: Linie ${data.applied_settings?.movement_axis || '-'} ${data.applied_settings?.virtual_line_position_percent ?? '-'}% · Konfidenz ${data.applied_settings?.confidence_threshold ?? '-'}</small>
                     </div>
-                    ${data.result_image ? `<img class="img-fluid rounded border border-secondary mb-3" src="data:image/jpeg;base64,${data.result_image}" alt="Personen-Test-Ergebnis">` : ''}
+                    ${peopleCropGalleryHtml(data.people || [])}
                     <div class="table-responsive"><table class="table table-sm table-dark table-striped align-middle mb-0"><thead><tr><th>#</th><th>Konf.</th><th>Track</th><th>Ereignis</th><th>Richtung</th></tr></thead><tbody>${peopleRows || '<tr><td colspan="5" class="text-secondary">Keine Personen erkannt</td></tr>'}</tbody></table></div>`;
             }
             showToast('Erfolg', `${data.people_count || 0} Personen erkannt`, 'success');
@@ -1225,8 +1250,7 @@
             return;
         }
         listEl.innerHTML = people.map((p, index) => {
-            const imgs = p.images || {};
-            const imgUrl = imgs.crop ? `/api/people/images/${imgs.crop}` : (imgs.annotated ? `/api/people/images/${imgs.annotated}` : '');
+            const imgUrl = personCropSrc(p);
             return `
             <div class="detection-result">
                 ${imgUrl ? `<img src="${imgUrl}" alt="Person ${index + 1}" onclick="showImageModal(this.src, 'Person')" style="cursor:pointer;">` : `<div class="detection-result-placeholder"><i class="fas fa-person-walking text-info"></i></div>`}

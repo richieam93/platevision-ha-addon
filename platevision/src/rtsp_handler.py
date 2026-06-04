@@ -822,11 +822,16 @@ class RTSPHandler:
                 pass
             try:
                 from flask_socketio import emit
+                imgs = saved.get('images') or {}
+                crop_url = f"/api/people/images/{imgs.get('crop')}" if imgs.get('crop') else None
                 emit('person_detected', {
                     'counted': saved.get('counted'),
                     'direction': saved.get('direction'),
                     'track_id': saved.get('track_id'),
                     'confidence': saved.get('confidence'),
+                    'event_type': saved.get('event_type'),
+                    'image_url': crop_url,
+                    'images': {'crop': imgs.get('crop')} if imgs.get('crop') else {},
                     'timestamp': saved.get('timestamp')
                 }, broadcast=True, namespace='/')
             except Exception:
