@@ -303,18 +303,121 @@
         border-radius: 2px;
         transition: width 0.3s ease;
     }
-
-    .recognition-settings-panel { border: 1px solid rgba(34,211,238,.20); background: rgba(15,23,42,.35); }
-    .recognition-settings-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap:.75rem; }
-    .recognition-settings-panel .form-label { font-size:.82rem; color: var(--text-secondary); margin-bottom:.25rem; }
-    .recognition-settings-panel .accordion-button { background: rgba(15,23,42,.75); color: var(--text-primary); }
-    .recognition-settings-panel .accordion-button:not(.collapsed) { color: var(--secondary-color); background: rgba(34,211,238,.10); }
-    .recognition-note { background: rgba(16,185,129,.08); border-left:3px solid var(--success-color); border-radius: 0 8px 8px 0; padding:.75rem; }
+    .test-settings-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: .9rem;
+    }
+    .test-settings-section {
+        background: rgba(15, 23, 42, .45);
+        border: 1px solid var(--card-border);
+        border-radius: 14px;
+        padding: 1rem;
+    }
+    .test-settings-section h6 {
+        margin-bottom: .75rem;
+        color: var(--text-primary);
+    }
+    .form-help-small {
+        color: var(--text-secondary);
+        font-size: .78rem;
+    }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="layout-upgrade-banner mb-3"><i class="fas fa-wand-magic-sparkles me-2"></i>Test-Erkennungen fließen in Historie und Statistik ein, wenn sie gespeichert werden.</div>
+<div class="card mb-4" id="recognitionTestSettingsCard">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h5 class="card-title mb-0"><i class="fas fa-sliders me-2"></i>Erkennungs-Einstellungen für Test & RTSP</h5>
+            <small class="text-secondary">Diese Werte gelten für Foto-Upload, Video-Upload und nach dem Speichern auch für den RTSP-Stream.</small>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <button class="btn btn-outline-info btn-sm" type="button" onclick="applyDemoRecognitionDefaults()"><i class="fas fa-wand-magic-sparkles me-1"></i>Demo-Werte</button>
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveTestRecognitionSettings(true)"><i class="fas fa-save me-1"></i>Speichern & RTSP anwenden</button>
+            <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadTestRecognitionSettings()"><i class="fas fa-rotate me-1"></i>Laden</button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="testSettingsStatus" class="alert alert-secondary py-2 small mb-3">Lade aktuelle Einstellungen...</div>
+        <div class="test-settings-grid">
+            <div class="test-settings-section">
+                <h6><i class="fas fa-id-card text-success me-2"></i>YOLO Nummernschild-Detector</h6>
+                <label class="form-label">Kennzeichen YOLO .pt/.onnx/.engine Modell</label>
+                <select class="form-select mb-2" id="testPlateModel"></select>
+                <div class="row g-2">
+                    <div class="col-4"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testPlateConf"></div>
+                    <div class="col-4"><label class="form-label">IoU</label><input class="form-control" type="number" min="0.05" max="0.95" step="0.01" id="testPlateIou"></div>
+                    <div class="col-4"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testPlateImgsz"></div>
+                    <div class="col-6"><label class="form-label">Crop Padding %</label><input class="form-control" type="number" min="0" max="40" step="0.5" id="testPlatePadding"></div>
+                    <div class="col-6"><label class="form-label">Max Det.</label><input class="form-control" type="number" min="1" max="50" step="1" id="testPlateMaxDet"></div>
+                </div>
+                <div class="form-help-small mt-2">Funktionierende Demo-Werte: conf 0.25, IoU 0.45, imgsz 960, Padding 8%.</div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-car-side text-primary me-2"></i>YOLO Fahrzeug-Erkennung</h6>
+                <label class="form-label">Fahrzeug YOLO Modell</label>
+                <select class="form-select mb-2" id="testVehicleModel"></select>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testVehicleConf"></div>
+                    <div class="col-6"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testVehicleImgsz"></div>
+                </div>
+                <div class="form-help-small mt-2">yolov8n.pt erkennt Fahrzeugtyp; Farbe wird aus dem Fahrzeugbild berechnet.</div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-font text-warning me-2"></i>OCR / Texterkennung</h6>
+                <label class="form-label">OCR Engine</label>
+                <select class="form-select mb-2" id="testOcrEngine">
+                    <option value="fast_plate_ocr">fast-plate-ocr Standard</option>
+                    <option value="easyocr">EasyOCR Backup</option>
+                </select>
+                <label class="form-label">fast-plate-ocr Hub-Modell</label>
+                <select class="form-select mb-2" id="testFastPlateModel">
+                    <option value="cct-s-v2-global-model">cct-s-v2-global-model</option>
+                    <option value="cct-xs-v2-global-model">cct-xs-v2-global-model</option>
+                    <option value="cct-s-v1-global-model">cct-s-v1-global-model</option>
+                    <option value="cct-xs-v1-global-model">cct-xs-v1-global-model</option>
+                </select>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Device</label><select class="form-select" id="testFastPlateDevice"><option>auto</option><option>cpu</option><option>cuda</option></select></div>
+                    <div class="col-6"><label class="form-label">Min. OCR</label><input class="form-control" type="number" min="0" max="1" step="0.01" id="testOcrMinConf"></div>
+                </div>
+                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testEasyBackup"><label class="form-check-label" for="testEasyBackup">EasyOCR als Backup verwenden</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRemovePad"><label class="form-check-label" for="testRemovePad">Padding-Zeichen entfernen</label></div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-person-walking text-info me-2"></i>Personenanalyse & Personenzählung</h6>
+                <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" id="testPeopleEnabled"><label class="form-check-label" for="testPeopleEnabled">Personenanalyse aktiv</label></div>
+                <label class="form-label">Personen YOLO Modell</label>
+                <select class="form-select mb-2" id="testPersonModel"></select>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testPeopleConf"></div>
+                    <div class="col-6"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testPeopleImgsz"></div>
+                    <div class="col-6"><label class="form-label">Zähllinie %</label><input class="form-control" type="number" min="1" max="99" step="1" id="testPeopleLine"></div>
+                    <div class="col-6"><label class="form-label">Achse</label><select class="form-select" id="testPeopleAxis"><option value="y">horizontal / Kommen-Gehen oben-unten</option><option value="x">vertikal / links-rechts</option></select></div>
+                    <div class="col-12"><label class="form-label">Richtung zählen</label><select class="form-select" id="testPeopleDirection"><option value="both">beide Richtungen</option><option value="positive">positive Richtung</option><option value="negative">negative Richtung</option></select></div>
+                </div>
+                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testPeopleSaveAll"><label class="form-check-label" for="testPeopleSaveAll">Alle Personen mit Bild speichern</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleSaveCrop"><label class="form-check-label" for="testPeopleSaveCrop">Personen-Crop speichern</label></div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-road text-danger me-2"></i>Durchfahrten, Wiederkehrer, Kommen & Gehen</h6>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Besuchslücke min</label><input class="form-control" type="number" min="1" max="1440" step="1" id="testVisitGap"></div>
+                    <div class="col-6"><label class="form-label">Gehen nach min</label><input class="form-control" type="number" min="1" max="1440" step="1" id="testActiveTimeout"></div>
+                    <div class="col-6"><label class="form-label">Fahrzeug-Achse</label><select class="form-select" id="testTrafficAxis"><option value="x">links/rechts</option><option value="y">oben/unten</option></select></div>
+                    <div class="col-6"><label class="form-label">Bewegung %</label><input class="form-control" type="number" min="1" max="80" step="1" id="testTrafficMove"></div>
+                </div>
+                <div class="form-help-small mt-2">Fahrzeug-Durchfahrten basieren auf Kennzeichen-Sessions. Personen werden über die Zähllinie gezählt.</div>
+            </div>
+        </div>
+    </div>
+</div>
 <div class="row g-4">
     <!-- Upload Section -->
     <div class="col-lg-6">
@@ -326,90 +429,6 @@
                 </h5>
             </div>
             <div class="card-body">
-                <div class="recognition-settings-panel rounded p-3 mb-4">
-                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
-                        <div>
-                            <h5 class="mb-1"><i class="fas fa-sliders-h me-2 text-info"></i>Test-Einstellungen für RTSP</h5>
-                            <div class="text-secondary small">Diese Werte werden vor dem Test gespeichert und danach auch für den RTSP-Stream verwendet.</div>
-                        </div>
-                        <div class="d-flex gap-2 flex-wrap">
-                            <button type="button" class="btn btn-sm btn-outline-info" onclick="applyDemoRecognitionDefaults()"><i class="fas fa-wand-magic-sparkles me-1"></i>Demo-Werte</button>
-                            <button type="button" class="btn btn-sm btn-success" onclick="saveTestRecognitionSettings(true)"><i class="fas fa-save me-1"></i>Speichern & RTSP</button>
-                        </div>
-                    </div>
-                    <div class="recognition-note small mb-3"><i class="fas fa-circle-info me-1"></i>Empfohlener Standard: <code>license_plate_detector.pt</code> + <code>yolov8n.pt</code> + <code>fast-plate-ocr cct-s-v2-global-model</code>.</div>
-                    <div class="accordion" id="recognitionSettingsAccordion">
-                        <div class="accordion-item bg-transparent border-secondary">
-                            <h2 class="accordion-header"><button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#plateSettingsCollapse">YOLO Nummernschild-Detector</button></h2>
-                            <div id="plateSettingsCollapse" class="accordion-collapse collapse show" data-bs-parent="#recognitionSettingsAccordion"><div class="accordion-body">
-                                <div class="recognition-settings-grid">
-                                    <div><label class="form-label">YOLO .pt Modell</label><input class="form-control" id="testPlateModel" value="{{ config.models.license_plate_detector if config.models.license_plate_detector is defined else 'models/license_plate_detector.pt' }}"></div>
-                                    <div><label class="form-label">Confidence</label><input type="number" class="form-control" id="testPlateConf" min="0.01" max="1" step="0.01" value="{{ config.detection.plate_detector_confidence if config.detection.plate_detector_confidence is defined else 0.25 }}"></div>
-                                    <div><label class="form-label">IoU</label><input type="number" class="form-control" id="testPlateIou" min="0.01" max="1" step="0.01" value="{{ config.detection.plate_detector_iou if config.detection.plate_detector_iou is defined else 0.45 }}"></div>
-                                    <div><label class="form-label">Bildgröße</label><input type="number" class="form-control" id="testPlateImgsz" min="320" max="1920" step="32" value="{{ config.detection.plate_detector_imgsz if config.detection.plate_detector_imgsz is defined else 960 }}"></div>
-                                    <div><label class="form-label">Max. Kennzeichen</label><input type="number" class="form-control" id="testPlateMaxDet" min="1" max="50" value="{{ config.detection.plate_detector_max_det if config.detection.plate_detector_max_det is defined else 8 }}"></div>
-                                    <div><label class="form-label">Crop Padding %</label><input type="number" class="form-control" id="testPlatePadding" min="0" max="50" step="0.5" value="{{ config.detection.plate_crop_padding_percent if config.detection.plate_crop_padding_percent is defined else 8.0 }}"></div>
-                                    <div><label class="form-label">Min. Breite</label><input type="number" class="form-control" id="testMinPlateW" min="0" max="300" value="{{ config.detection.min_plate_width if config.detection.min_plate_width is defined else 20 }}"></div>
-                                    <div><label class="form-label">Min. Höhe</label><input type="number" class="form-control" id="testMinPlateH" min="0" max="150" value="{{ config.detection.min_plate_height if config.detection.min_plate_height is defined else 8 }}"></div>
-                                    <div><label class="form-label">Aspect min</label><input type="number" class="form-control" id="testPlateAspectMin" min="0.5" max="10" step="0.1" value="{{ config.detection.plate_aspect_ratio_min if config.detection.plate_aspect_ratio_min is defined else 1.2 }}"></div>
-                                    <div><label class="form-label">Aspect max</label><input type="number" class="form-control" id="testPlateAspectMax" min="1" max="15" step="0.1" value="{{ config.detection.plate_aspect_ratio_max if config.detection.plate_aspect_ratio_max is defined else 8.0 }}"></div>
-                                </div>
-                            </div></div>
-                        </div>
-                        <div class="accordion-item bg-transparent border-secondary">
-                            <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#vehicleSettingsCollapse">YOLO Fahrzeug-Erkennung</button></h2>
-                            <div id="vehicleSettingsCollapse" class="accordion-collapse collapse" data-bs-parent="#recognitionSettingsAccordion"><div class="accordion-body">
-                                <div class="recognition-settings-grid">
-                                    <div><label class="form-label">Fahrzeug YOLO .pt Modell</label><input class="form-control" id="testVehicleModel" value="{{ config.models.vehicle_detector if config.models.vehicle_detector is defined else 'models/yolov8n.pt' }}"></div>
-                                    <div><label class="form-label">Fahrzeug Confidence</label><input type="number" class="form-control" id="testVehicleConf" min="0.01" max="1" step="0.01" value="{{ config.detection.confidence_threshold if config.detection.confidence_threshold is defined else 0.5 }}"></div>
-                                    <div><label class="form-label">Max. Erkennungen</label><input type="number" class="form-control" id="testMaxDetections" min="0" max="50" value="{{ config.detection.max_detections_per_frame if config.detection.max_detections_per_frame is defined else 8 }}"></div>
-                                    <div><label class="form-label">Zoom-Faktor</label><input type="number" class="form-control" id="testZoomFactor" min="1" max="5" step="0.1" value="{{ config.detection.zoom_factor if config.detection.zoom_factor is defined else 2.5 }}"></div>
-                                    <div><label class="form-label">Zoom Padding px</label><input type="number" class="form-control" id="testZoomPadding" min="0" max="500" value="{{ config.detection.zoom_padding if config.detection.zoom_padding is defined else 100 }}"></div>
-                                    <div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testVehicleEnabled" {% if config.detection.car_detection_enabled is not defined or config.detection.car_detection_enabled %}checked{% endif %}><label class="form-check-label" for="testVehicleEnabled">Fahrzeugtyp/Farbe analysieren</label></div>
-                                    <div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testZoomEnabled" {% if config.detection.zoom_enabled is not defined or config.detection.zoom_enabled %}checked{% endif %}><label class="form-check-label" for="testZoomEnabled">Zusätzlicher Fahrzeug-Zoom</label></div>
-                                    <div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testDetailedLogging" {% if config.detection.detailed_logging is not defined or config.detection.detailed_logging %}checked{% endif %}><label class="form-check-label" for="testDetailedLogging">Detail-Logging im Log</label></div>
-                                </div>
-                                {% set class_filter = config.detection.vehicle_class_filter if config.detection.vehicle_class_filter is defined else ['car','truck','bus','motorcycle','bicycle'] %}
-                                <div class="mt-3 d-flex flex-wrap gap-3 small">
-                                    {% for value,label in [('car','Auto / PKW'),('truck','LKW'),('bus','Bus'),('motorcycle','Motorrad'),('bicycle','Fahrrad')] %}
-                                    <div class="form-check"><input class="form-check-input testVehicleClass" type="checkbox" value="{{ value }}" id="testClass{{ value }}" {% if value in class_filter %}checked{% endif %}><label class="form-check-label" for="testClass{{ value }}">{{ label }}</label></div>
-                                    {% endfor %}
-                                </div>
-                            </div></div>
-                        </div>
-                        <div class="accordion-item bg-transparent border-secondary">
-                            <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ocrSettingsCollapse">OCR / Texterkennung</button></h2>
-                            <div id="ocrSettingsCollapse" class="accordion-collapse collapse" data-bs-parent="#recognitionSettingsAccordion"><div class="accordion-body">
-                                <div class="recognition-settings-grid">
-                                    {% set ocr_engine = config.ocr.engine if config.ocr.engine is defined else 'fast_plate_ocr' %}
-                                    <div><label class="form-label">OCR Engine</label><select class="form-select" id="testOcrEngine"><option value="fast_plate_ocr" {% if ocr_engine in ['fast_plate_ocr','fast-plate-ocr'] %}selected{% endif %}>fast-plate-ocr Standard</option><option value="easyocr" {% if ocr_engine == 'easyocr' %}selected{% endif %}>EasyOCR Backup/Alt</option></select></div>
-                                    <div><label class="form-label">fast-plate-ocr Hub-Modell</label><select class="form-select" id="testFastPlateModel">{% set fm = config.ocr.fast_plate_model if config.ocr.fast_plate_model is defined else 'cct-s-v2-global-model' %}{% for model in ['cct-s-v2-global-model','cct-xs-v2-global-model','cct-s-v1-global-model','cct-xs-v1-global-model'] %}<option value="{{ model }}" {% if fm == model %}selected{% endif %}>{{ model }}</option>{% endfor %}</select></div>
-                                    <div><label class="form-label">Device</label>{% set fd = config.ocr.fast_plate_device if config.ocr.fast_plate_device is defined else 'auto' %}<select class="form-select" id="testFastPlateDevice"><option value="auto" {% if fd == 'auto' %}selected{% endif %}>auto</option><option value="cpu" {% if fd == 'cpu' %}selected{% endif %}>cpu</option><option value="cuda" {% if fd == 'cuda' %}selected{% endif %}>cuda</option></select></div>
-                                    <div><label class="form-label">ONNX Provider</label><input class="form-control" id="testFastPlateProviders" value="{{ config.ocr.fast_plate_providers if config.ocr.fast_plate_providers is defined else '' }}" placeholder="leer = auto"></div>
-                                    <div><label class="form-label">OCR Min. Konfidenz</label><input type="number" class="form-control" id="testOcrMinConf" min="0" max="1" step="0.01" value="{{ config.ocr.min_confidence if config.ocr.min_confidence is defined else 0.25 }}"></div>
-                                    <div><label class="form-label">Speichern ab Konfidenz</label><input type="number" class="form-control" id="testMinSaveConf" min="0" max="1" step="0.01" value="{{ config.history.min_confidence_to_save if config.history.min_confidence_to_save is defined else 0.35 }}"></div>
-                                    <div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testEasyOcrBackup" {% if config.ocr.easyocr_backup_enabled is not defined or config.ocr.easyocr_backup_enabled %}checked{% endif %}><label class="form-check-label" for="testEasyOcrBackup">EasyOCR Backup erlaubt</label></div>
-                                    <div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testRemovePad" {% if config.ocr.fast_plate_remove_pad_char is not defined or config.ocr.fast_plate_remove_pad_char %}checked{% endif %}><label class="form-check-label" for="testRemovePad">Padding-Zeichen entfernen</label></div>
-                                    <div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testPreprocessEnabled" {% if config.ocr.preprocessing is not defined or config.ocr.preprocessing.enabled is not defined or config.ocr.preprocessing.enabled %}checked{% endif %}><label class="form-check-label" for="testPreprocessEnabled">EasyOCR-Bildvorverarbeitung</label></div>
-                                </div>
-                            </div></div>
-                        </div>
-                        <div class="accordion-item bg-transparent border-secondary">
-                            <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#peopleSettingsCollapse">Personenanalyse</button></h2>
-                            <div id="peopleSettingsCollapse" class="accordion-collapse collapse" data-bs-parent="#recognitionSettingsAccordion"><div class="accordion-body">
-                                <div class="recognition-settings-grid">
-                                    <div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testPeopleEnabled" {% if config.people.enabled %}checked{% endif %}><label class="form-check-label" for="testPeopleEnabled">Personenanalyse im RTSP aktivieren</label></div>
-                                    <div><label class="form-label">Personen Confidence</label><input type="number" class="form-control" id="testPeopleConf" min="0.01" max="1" step="0.01" value="{{ config.people.confidence_threshold if config.people.confidence_threshold is defined else 0.55 }}"></div>
-                                    <div><label class="form-label">Personen Bildgröße</label><input type="number" class="form-control" id="testPeopleImgsz" min="320" max="1280" step="32" value="{{ config.people.image_size if config.people.image_size is defined else 640 }}"></div>
-                                    <div><label class="form-label">Max. Personen/Frame</label><input type="number" class="form-control" id="testPeopleMax" min="0" max="100" value="{{ config.people.max_persons_per_frame if config.people.max_persons_per_frame is defined else 30 }}"></div>
-                                    <div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testPeopleHistory" {% if config.people.history_enabled is not defined or config.people.history_enabled %}checked{% endif %}><label class="form-check-label" for="testPeopleHistory">Personen-Historie speichern</label></div>
-                                    <div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testPeopleBlur" {% if config.people.privacy_blur_people %}checked{% endif %}><label class="form-check-label" for="testPeopleBlur">Personen weichzeichnen</label></div>
-                                </div>
-                            </div></div>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Upload Zone -->
                 <div class="upload-zone" id="uploadZone" onclick="triggerFileInput()">
                     <i class="fas fa-cloud-upload-alt upload-icon"></i>
@@ -472,13 +491,13 @@
                 <hr class="my-4">
 
                 <div class="people-test-panel p-3 rounded border border-secondary-subtle">
-                    <h6 class="mb-2"><i class="fas fa-person-walking me-2 text-info"></i>Personenanalyse Foto-Upload separat testen</h6>
-                    <p class="text-secondary small mb-3">Lade ein Bild hoch und analysiere Personen mit denselben Einstellungen wie im Register <strong>Personenanalyse</strong>. Linie, Zone, Modell, Konfidenz, History-Optionen und Datenschutz werden angewendet.</p>
+                    <h6 class="mb-2"><i class="fas fa-person-walking me-2 text-info"></i>Personenanalyse Foto-Upload</h6>
+                    <p class="text-secondary small mb-3">Lade ein Bild hoch und analysiere Personen mit denselben Einstellungen wie oben im Testprofil. Beim Speichern werden dieselben Werte auch im RTSP-Stream verwendet. Personen-Crops werden wie Fahrzeug-/Kennzeichenbilder abgelegt.</p>
                     <input type="file" class="form-control mb-2" id="peopleTestImageInput" accept="image/*">
                     <div class="row g-2 mb-2">
                         <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestUseSavedSettings" checked><label class="form-check-label" for="peopleTestUseSavedSettings">Gespeicherte Personen-Einstellungen anwenden</label></div></div>
                         <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestForceEnable" checked><label class="form-check-label" for="peopleTestForceEnable">Für diese Analyse temporär aktivieren</label></div></div>
-                        <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestSaveHistory"><label class="form-check-label" for="peopleTestSaveHistory">In Personen-Historie speichern</label></div></div>
+                        <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestSaveHistory" checked><label class="form-check-label" for="peopleTestSaveHistory">In Personen-Historie speichern</label></div></div>
                         <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestDrawBoxes" checked><label class="form-check-label" for="peopleTestDrawBoxes">Boxen, Linie und Zone zeichnen</label></div></div>
                     </div>
                     <div id="peopleAppliedSettingsBox" class="people-applied-settings small mb-3">Lade aktuelle Personen-Einstellungen...</div>
@@ -705,6 +724,7 @@
     // ============================================
     
     document.addEventListener('DOMContentLoaded', function() {
+        loadTestRecognitionSettings();
         loadPeopleSettingsForUpload();
         initDragAndDrop();
         refreshJobs();
@@ -756,6 +776,157 @@
         }
     }
     
+    // ============================================
+    // TEST SETTINGS / RTSP PROFILE
+    // ============================================
+    let availableYoloModels = [];
+    function setVal(id, value) { const el = document.getElementById(id); if (el) el.value = value ?? ''; }
+    function setChecked(id, value) { const el = document.getElementById(id); if (el) el.checked = !!value; }
+    function numVal(id, fallback) { const el = document.getElementById(id); const v = el ? Number(el.value) : NaN; return Number.isFinite(v) ? v : fallback; }
+    function boolVal(id) { const el = document.getElementById(id); return !!(el && el.checked); }
+    function selVal(id, fallback='') { const el = document.getElementById(id); return el && el.value ? el.value : fallback; }
+
+    function populateModelSelect(id, selected, preferredKind='') {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const models = availableYoloModels || [];
+        const sorted = models.slice().sort((a,b) => {
+            const ak = a.kind_guess === preferredKind ? 0 : 1;
+            const bk = b.kind_guess === preferredKind ? 0 : 1;
+            return ak - bk || String(a.name).localeCompare(String(b.name));
+        });
+        const opts = [];
+        if (selected && !sorted.some(m => m.path === selected)) opts.push(`<option value="${selected}">${selected}</option>`);
+        sorted.forEach(m => {
+            const badge = m.kind_guess ? ` · ${m.kind_guess}` : '';
+            opts.push(`<option value="${m.path}">${m.name}${badge}</option>`);
+        });
+        el.innerHTML = opts.join('') || '<option value="">Keine Modelle gefunden</option>';
+        if (selected) el.value = selected;
+    }
+
+    async function loadTestRecognitionSettings() {
+        const status = document.getElementById('testSettingsStatus');
+        try {
+            const response = await fetch('/api/test/settings');
+            const data = await response.json();
+            const cfg = data.config || {};
+            availableYoloModels = data.models || [];
+            const detection = cfg.detection || {};
+            const ocr = cfg.ocr || {};
+            const models = cfg.models || {};
+            const people = cfg.people || {};
+            const traffic = cfg.traffic || {};
+            populateModelSelect('testPlateModel', models.license_plate_detector || 'models/license_plate_detector.pt', 'plate');
+            populateModelSelect('testVehicleModel', models.vehicle_detector || 'models/yolov8n.pt', 'vehicle/general');
+            populateModelSelect('testPersonModel', people.selected_model_file || people.custom_model_path || models.person_detector || models.vehicle_detector || 'models/yolov8n.pt', 'people');
+            setVal('testPlateConf', detection.plate_detector_confidence ?? 0.25);
+            setVal('testPlateIou', detection.plate_detector_iou ?? 0.45);
+            setVal('testPlateImgsz', detection.plate_detector_imgsz ?? 960);
+            setVal('testPlatePadding', detection.plate_crop_padding_percent ?? 8);
+            setVal('testPlateMaxDet', detection.plate_detector_max_det ?? 8);
+            setVal('testVehicleConf', detection.confidence_threshold ?? 0.5);
+            setVal('testVehicleImgsz', detection.vehicle_detector_imgsz ?? 640);
+            setVal('testOcrEngine', (ocr.engine || 'fast_plate_ocr').replace('-', '_'));
+            setVal('testFastPlateModel', ocr.fast_plate_model || 'cct-s-v2-global-model');
+            setVal('testFastPlateDevice', ocr.fast_plate_device || 'auto');
+            setVal('testOcrMinConf', detection.ocr_min_confidence ?? 0.25);
+            setChecked('testEasyBackup', ocr.easyocr_backup_enabled !== false);
+            setChecked('testRemovePad', ocr.fast_plate_remove_pad_char !== false);
+            setChecked('testPeopleEnabled', people.enabled !== false);
+            setVal('testPeopleConf', people.confidence_threshold ?? 0.55);
+            setVal('testPeopleImgsz', people.image_size ?? 640);
+            setVal('testPeopleLine', people.virtual_line_position_percent ?? 50);
+            setVal('testPeopleAxis', people.movement_axis || 'y');
+            setVal('testPeopleDirection', people.crossing_direction || 'both');
+            setChecked('testPeopleSaveAll', people.save_all_detections !== false);
+            setChecked('testPeopleSaveCrop', people.save_person_crops !== false || people.image_history_store_crop !== false);
+            setVal('testVisitGap', traffic.visit_gap_minutes ?? 15);
+            setVal('testActiveTimeout', traffic.active_timeout_minutes ?? 30);
+            setVal('testTrafficAxis', traffic.movement_axis || 'x');
+            setVal('testTrafficMove', traffic.movement_threshold_percent ?? 8);
+            if (status) status.className = 'alert alert-success py-2 small mb-3', status.innerHTML = `<i class="fas fa-check me-1"></i>Aktive Werte geladen. Modelle gefunden: ${availableYoloModels.length}. OCR: <strong>${ocr.engine || 'fast_plate_ocr'}</strong>`;
+        } catch (e) {
+            if (status) status.className = 'alert alert-warning py-2 small mb-3', status.textContent = 'Einstellungen konnten nicht geladen werden.';
+        }
+    }
+
+    function applyDemoRecognitionDefaults() {
+        setVal('testPlateModel', 'models/license_plate_detector.pt');
+        setVal('testVehicleModel', 'models/yolov8n.pt');
+        setVal('testPlateConf', 0.25); setVal('testPlateIou', 0.45); setVal('testPlateImgsz', 960); setVal('testPlatePadding', 8); setVal('testPlateMaxDet', 8);
+        setVal('testVehicleConf', 0.5); setVal('testVehicleImgsz', 640);
+        setVal('testOcrEngine', 'fast_plate_ocr'); setVal('testFastPlateModel', 'cct-s-v2-global-model'); setVal('testFastPlateDevice', 'auto'); setVal('testOcrMinConf', 0.25);
+        setChecked('testEasyBackup', true); setChecked('testRemovePad', true);
+        setChecked('testPeopleEnabled', true); setVal('testPeopleConf', 0.55); setVal('testPeopleImgsz', 640); setVal('testPeopleLine', 50); setVal('testPeopleAxis', 'y'); setVal('testPeopleDirection', 'both');
+        setChecked('testPeopleSaveAll', true); setChecked('testPeopleSaveCrop', true);
+        setVal('testVisitGap', 15); setVal('testActiveTimeout', 30); setVal('testTrafficAxis', 'x'); setVal('testTrafficMove', 8);
+        showToast('Demo-Werte', 'Die funktionierenden Demo-Werte wurden eingetragen. Bitte speichern.', 'info');
+    }
+
+    async function saveTestRecognitionSettings(showMessage=true) {
+        const personModel = selVal('testPersonModel', selVal('testVehicleModel', 'models/yolov8n.pt'));
+        const payload = {
+            reload: true,
+            models: {
+                license_plate_detector: selVal('testPlateModel', 'models/license_plate_detector.pt'),
+                vehicle_detector: selVal('testVehicleModel', 'models/yolov8n.pt'),
+                person_detector: personModel
+            },
+            detection: {
+                plate_detector_confidence: numVal('testPlateConf', 0.25),
+                plate_detector_iou: numVal('testPlateIou', 0.45),
+                plate_detector_imgsz: numVal('testPlateImgsz', 960),
+                plate_crop_padding_percent: numVal('testPlatePadding', 8),
+                plate_detector_max_det: numVal('testPlateMaxDet', 8),
+                confidence_threshold: numVal('testVehicleConf', 0.5),
+                vehicle_detector_imgsz: numVal('testVehicleImgsz', 640),
+                ocr_min_confidence: numVal('testOcrMinConf', 0.25),
+                plate_scan_strategy: 'full_frame_first'
+            },
+            ocr: {
+                engine: selVal('testOcrEngine', 'fast_plate_ocr'),
+                fast_plate_model: selVal('testFastPlateModel', 'cct-s-v2-global-model'),
+                fast_plate_device: selVal('testFastPlateDevice', 'auto'),
+                easyocr_backup_enabled: boolVal('testEasyBackup'),
+                fast_plate_remove_pad_char: boolVal('testRemovePad'),
+                fast_plate_return_confidence: true
+            },
+            people: {
+                enabled: boolVal('testPeopleEnabled'),
+                history_enabled: true,
+                model_mode: 'model_file',
+                selected_model_file: personModel,
+                custom_model_path: personModel,
+                model_path: personModel,
+                confidence_threshold: numVal('testPeopleConf', 0.55),
+                image_size: numVal('testPeopleImgsz', 640),
+                line_crossing_enabled: true,
+                virtual_line_position_percent: numVal('testPeopleLine', 50),
+                movement_axis: selVal('testPeopleAxis', 'y'),
+                crossing_direction: selVal('testPeopleDirection', 'both'),
+                save_all_detections: boolVal('testPeopleSaveAll'),
+                image_history_enabled: true,
+                save_person_crops: boolVal('testPeopleSaveCrop'),
+                image_history_store_crop: boolVal('testPeopleSaveCrop'),
+                image_history_store_annotated: true,
+                image_history_store_full_frame: false
+            },
+            traffic: {
+                visit_gap_minutes: numVal('testVisitGap', 15),
+                active_timeout_minutes: numVal('testActiveTimeout', 30),
+                movement_axis: selVal('testTrafficAxis', 'x'),
+                movement_threshold_percent: numVal('testTrafficMove', 8)
+            }
+        };
+        const response = await fetch('/api/test/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error || 'Speichern fehlgeschlagen');
+        if (showMessage) showToast('Gespeichert', 'Test-Einstellungen wurden gespeichert und gelten nun für den RTSP-Stream.', 'success');
+        loadPeopleSettingsForUpload();
+        return data;
+    }
+
     // ============================================
     // FILE HANDLING
     // ============================================
@@ -837,121 +1008,6 @@
     }
     
     // ============================================
-    // RECOGNITION SETTINGS USED FOR TEST + RTSP
-    // ============================================
-    function tVal(id, fallback='') { const el = document.getElementById(id); return el ? el.value : fallback; }
-    function tNum(id, fallback=0) { const n = parseFloat(tVal(id)); return Number.isFinite(n) ? n : fallback; }
-    function tBool(id) { const el = document.getElementById(id); return !!(el && el.checked); }
-
-    function collectTestRecognitionSettings() {
-        const vehicleClasses = Array.from(document.querySelectorAll('.testVehicleClass:checked')).map(el => el.value);
-        return {
-            models: {
-                license_plate_detector: tVal('testPlateModel', 'models/license_plate_detector.pt'),
-                vehicle_detector: tVal('testVehicleModel', 'models/yolov8n.pt'),
-                device: 'auto'
-            },
-            detection: {
-                car_detection_enabled: tBool('testVehicleEnabled'),
-                confidence_threshold: tNum('testVehicleConf', 0.5),
-                max_detections_per_frame: tNum('testMaxDetections', 8),
-                vehicle_class_filter: vehicleClasses.length ? vehicleClasses : ['car', 'truck', 'bus', 'motorcycle', 'bicycle'],
-                plate_detector_confidence: tNum('testPlateConf', 0.25),
-                plate_detector_iou: tNum('testPlateIou', 0.45),
-                plate_detector_imgsz: tNum('testPlateImgsz', 960),
-                plate_detector_max_det: tNum('testPlateMaxDet', 8),
-                plate_crop_padding_percent: tNum('testPlatePadding', 8),
-                min_plate_width: tNum('testMinPlateW', 20),
-                min_plate_height: tNum('testMinPlateH', 8),
-                plate_aspect_ratio_min: tNum('testPlateAspectMin', 1.2),
-                plate_aspect_ratio_max: tNum('testPlateAspectMax', 8.0),
-                plate_scan_strategy: 'full_frame_first',
-                scan_full_frame_when_vehicle_found: true,
-                zoom_enabled: tBool('testZoomEnabled'),
-                zoom_factor: tNum('testZoomFactor', 2.5),
-                zoom_padding: tNum('testZoomPadding', 100),
-                annotate_frames: true,
-                draw_confidence: true,
-                save_detected_plates: true,
-                save_detected_vehicles: true,
-                detailed_logging: tBool('testDetailedLogging')
-            },
-            ocr: {
-                engine: tVal('testOcrEngine', 'fast_plate_ocr'),
-                fast_plate_model: tVal('testFastPlateModel', 'cct-s-v2-global-model'),
-                fast_plate_device: tVal('testFastPlateDevice', 'auto'),
-                fast_plate_providers: tVal('testFastPlateProviders', ''),
-                fast_plate_remove_pad_char: tBool('testRemovePad'),
-                fast_plate_return_confidence: true,
-                easyocr_backup_enabled: tBool('testEasyOcrBackup'),
-                min_confidence: tNum('testOcrMinConf', 0.25),
-                preprocessing: { enabled: tBool('testPreprocessEnabled') }
-            },
-            history: {
-                min_confidence_to_save: tNum('testMinSaveConf', 0.35)
-            },
-            people: {
-                enabled: tBool('testPeopleEnabled'),
-                history_enabled: tBool('testPeopleHistory'),
-                confidence_threshold: tNum('testPeopleConf', 0.55),
-                image_size: tNum('testPeopleImgsz', 640),
-                max_persons_per_frame: tNum('testPeopleMax', 30),
-                privacy_blur_people: tBool('testPeopleBlur')
-            }
-        };
-    }
-
-    async function saveTestRecognitionSettings(showMessage = true) {
-        const payload = collectTestRecognitionSettings();
-        const response = await fetch('/api/config/test-recognition', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        if (!data.success) {
-            if (showMessage) showToast('Fehler', data.error || 'Einstellungen konnten nicht gespeichert werden', 'danger');
-            throw new Error(data.error || 'Einstellungen konnten nicht gespeichert werden');
-        }
-        if (showMessage) showToast('Gespeichert', 'Test-Einstellungen gespeichert und für RTSP aktiviert', 'success');
-        return data;
-    }
-
-    function applyDemoRecognitionDefaults() {
-        const set = (id, value) => { const el = document.getElementById(id); if (el) el.value = value; };
-        const check = (id, value) => { const el = document.getElementById(id); if (el) el.checked = value; };
-        set('testPlateModel', 'models/license_plate_detector.pt');
-        set('testVehicleModel', 'models/yolov8n.pt');
-        set('testPlateConf', '0.25');
-        set('testPlateIou', '0.45');
-        set('testPlateImgsz', '960');
-        set('testPlateMaxDet', '8');
-        set('testPlatePadding', '8');
-        set('testMinPlateW', '20');
-        set('testMinPlateH', '8');
-        set('testPlateAspectMin', '1.2');
-        set('testPlateAspectMax', '8.0');
-        set('testVehicleConf', '0.5');
-        set('testMaxDetections', '8');
-        set('testZoomFactor', '2.5');
-        set('testZoomPadding', '100');
-        set('testOcrEngine', 'fast_plate_ocr');
-        set('testFastPlateModel', 'cct-s-v2-global-model');
-        set('testFastPlateDevice', 'auto');
-        set('testFastPlateProviders', '');
-        set('testOcrMinConf', '0.25');
-        set('testMinSaveConf', '0.35');
-        check('testVehicleEnabled', true);
-        check('testZoomEnabled', true);
-        check('testDetailedLogging', true);
-        check('testEasyOcrBackup', true);
-        check('testRemovePad', true);
-        check('testPreprocessEnabled', true);
-        document.querySelectorAll('.testVehicleClass').forEach(el => el.checked = true);
-        showToast('Demo-Werte', 'Die funktionierenden Demo-Werte wurden eingetragen. Bitte speichern oder direkt testen.', 'info');
-    }
-
-    // ============================================
     // PROCESSING
     // ============================================
     
@@ -975,21 +1031,20 @@
     // ============================================
     
     async function processImage() {
-        showProcessing('Bild wird analysiert...', 'Speichere Test-Einstellungen und starte Erkennung...');
-        try {
-            await saveTestRecognitionSettings(false);
-        } catch (error) {
-            hideProcessing();
-            showError('Einstellungen konnten nicht gespeichert werden: ' + error.message);
-            return;
-        }
-        showProcessing('Bild wird analysiert...', 'YOLO Nummernschild, Fahrzeuganalyse und OCR laufen...');
+        showProcessing('Bild wird analysiert...', 'Speichere Test-Einstellungen und erkenne Fahrzeuge, Personen und Kennzeichen...');
+        try { await saveTestRecognitionSettings(false); } catch (e) { console.warn('Test-Einstellungen konnten vor Analyse nicht gespeichert werden', e); }
+        
         const formData = new FormData();
         formData.append('file', selectedFile);
-        fetch('/api/process/image', { method: 'POST', body: formData })
+        
+        fetch('/api/process/image', {
+            method: 'POST',
+            body: formData
+        })
         .then(response => response.json())
         .then(data => {
             hideProcessing();
+            
             if (data.success) {
                 displayImageResults(data);
                 showToast('Erfolg', `${data.detections ? data.detections.length : 0} Kennzeichen und ${data.people ? data.people.length : 0} Personen erkannt`, 'success');
@@ -1169,9 +1224,12 @@
             listEl.innerHTML = `<div class="alert alert-secondary mb-0"><i class="fas fa-info-circle me-2"></i>Keine Personen erkannt oder Personenanalyse ist deaktiviert.</div>`;
             return;
         }
-        listEl.innerHTML = people.map((p, index) => `
+        listEl.innerHTML = people.map((p, index) => {
+            const imgs = p.images || {};
+            const imgUrl = imgs.crop ? `/api/people/images/${imgs.crop}` : (imgs.annotated ? `/api/people/images/${imgs.annotated}` : '');
+            return `
             <div class="detection-result">
-                <div class="detection-result-placeholder"><i class="fas fa-person-walking text-info"></i></div>
+                ${imgUrl ? `<img src="${imgUrl}" alt="Person ${index + 1}" onclick="showImageModal(this.src, 'Person')" style="cursor:pointer;">` : `<div class="detection-result-placeholder"><i class="fas fa-person-walking text-info"></i></div>`}
                 <div class="detection-result-info">
                     <div class="fw-bold">Person ${p.track_id ? '#' + p.track_id : index + 1} ${p.counted ? '<span class="badge bg-success ms-2">gezählt</span>' : ''}</div>
                     <div class="d-flex flex-wrap gap-2 align-items-center small text-secondary mt-2">
@@ -1181,7 +1239,7 @@
                     </div>
                 </div>
             </div>
-        `).join('');
+        `}).join('');
     }
 
     function getConfidenceClass(confidence) {
@@ -1196,7 +1254,7 @@
     // ============================================
     
     async function processVideo() {
-        try { await saveTestRecognitionSettings(false); } catch (error) { showToast('Fehler', 'Einstellungen konnten nicht gespeichert werden: ' + error.message, 'danger'); return; }
+        try { await saveTestRecognitionSettings(false); } catch (e) { console.warn('Test-Einstellungen konnten vor Video nicht gespeichert werden', e); }
         document.getElementById('emptyResult').style.display = 'none';
         document.getElementById('imageResult').style.display = 'none';
         document.getElementById('videoProgress').style.display = 'block';

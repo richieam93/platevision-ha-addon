@@ -15,7 +15,7 @@
             <p class="text-secondary mb-0">Tageswerte, Stundenverteilung, Richtung, Ereignis-Historie, Live-Kalibrierung und YOLO-Personenerkennung als fester Projektbestandteil.</p>
         </div>
         <div class="d-flex flex-wrap gap-2">
-            <a href="/settings#peopleSettings" class="btn btn-outline-info"><i class="fas fa-sliders me-2"></i>Einstellungen</a>
+            <a href="/test#recognitionTestSettingsCard" class="btn btn-outline-info"><i class="fas fa-flask me-2"></i>Test & Upload Einstellungen</a>
             <button class="btn btn-outline-success" onclick="runSnapshotTest()"><i class="fas fa-vial me-2"></i>Live analysieren</button>
             <button class="btn btn-outline-warning" onclick="simulatePeople()"><i class="fas fa-flask me-2"></i>Demo-Daten</button>
             <button class="btn btn-outline-danger" onclick="cleanupPeopleHistory()"><i class="fas fa-broom me-2"></i>Cleanup</button>
@@ -23,6 +23,11 @@
             <a href="/api/people/export?format=json" class="btn btn-outline-secondary"><i class="fas fa-file-code me-2"></i>JSON</a>
         </div>
     </div>
+</div>
+
+<div class="alert alert-info mb-4">
+    <i class="fas fa-circle-info me-2"></i>
+    Personen werden mit der Zähllinie aus <strong>Test & Upload</strong> gezählt. Jeder erkannte Personen-Crop und das annotierte Bild werden gespeichert, wenn die Personen-Historie aktiv ist. Dieselben Werte gelten für Foto-Upload und RTSP.
 </div>
 
 <div class="row g-3 mb-4" id="peopleSummary">
@@ -235,7 +240,7 @@ function loadPeopleActiveSettings() {
             <div class="people-summary-row"><span>Bild-History</span><strong>${onOff(s.image_history_enabled)} · ${s.image_history_retention_days ?? '-'} Tage</strong></div>
             <div class="people-summary-row"><span>Alle Detections</span><strong>${onOff(s.save_all_detections)}</strong></div>
             <div class="people-summary-row"><span>Aufbewahrung</span><strong>${s.retention_days ?? '-'} Tage</strong></div>
-            <a href="/settings#peopleSettings" class="btn btn-sm btn-outline-info w-100 mt-3"><i class="fas fa-sliders me-1"></i>Einstellungen öffnen</a>`;
+            <a href="/test#recognitionTestSettingsCard" class="btn btn-sm btn-outline-info w-100 mt-3"><i class="fas fa-flask me-1"></i>Test & Upload öffnen</a>`;
     });
 }
 function loadPeopleModels() {

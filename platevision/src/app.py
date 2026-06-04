@@ -381,7 +381,6 @@ class ConfigManager:
             'min_vehicle_width': 80,
             'min_vehicle_height': 60,
             'duplicate_cooldown_per_frame': True,
-            'detailed_logging': True,
         },
         'ocr': {
             'languages': ['en', 'de'],
@@ -524,7 +523,7 @@ class ConfigManager:
             'departure_label': 'gegangen'
         },
         'people': {
-            'enabled': False,
+            'enabled': True,
             'history_enabled': True,
             'show_on_live': True,
             'draw_boxes': True,
@@ -574,8 +573,8 @@ class ConfigManager:
             'present_timeout_minutes': 10,
             'presence_enabled': True,
             'occupancy_estimation': True,
-            'save_all_detections': False,
-            'save_person_crops': False,
+            'save_all_detections': True,
+            'save_person_crops': True,
             'save_full_frame': False,
             'privacy_blur_people': False,
             'blur_strength': 35,
@@ -584,7 +583,7 @@ class ConfigManager:
             'person_recount_identity_mode': 'track_or_position',
             'person_recount_position_tolerance_percent': 12,
             'image_history_enabled': True,
-            'image_history_store_crop': False,
+            'image_history_store_crop': True,
             'image_history_store_annotated': True,
             'image_history_store_full_frame': False,
             'image_history_jpeg_quality': 85,
@@ -596,7 +595,7 @@ class ConfigManager:
             'test_image_upload_enabled': True,
             'test_force_enable_people': True,
             'test_save_uploads': False,
-            'test_save_to_history_default': False,
+            'test_save_to_history_default': True,
             'simulation_enabled': True,
             'retention_days': 90,
             'auto_cleanup_enabled': False,
@@ -758,41 +757,22 @@ class ConfigManager:
                 detection.setdefault('plate_crop_padding_percent', 8.0)
                 detection.setdefault('plate_scan_strategy', 'full_frame_first')
 
-            # 0.8.21c: clean settings UI + exact demo-mode defaults. Older
-            # 0.8.21 configs may already have the v2 migration flag but still
-            # contain old thresholds from manual tests, so apply this one-time
-            # reset to the proven demo settings and keep detailed logs enabled
-            # until the user turns them off in Test & Upload.
-            if not migration_cfg.get('demo_yolo_plate_settings_applied_v3_test_ui'):
-                detection['car_detection_enabled'] = True
-                detection['confidence_threshold'] = 0.5
-                detection['scan_full_frame_when_vehicle_found'] = True
-                detection['plate_scan_strategy'] = 'full_frame_first'
-                detection['plate_detector_confidence'] = 0.25
-                detection['plate_detector_iou'] = 0.45
-                detection['plate_detector_imgsz'] = 960
-                detection['plate_detector_max_det'] = 8
-                detection['plate_crop_padding_percent'] = 8.0
-                detection['min_plate_width'] = 20
-                detection['min_plate_height'] = 8
-                detection['plate_aspect_ratio_min'] = 1.2
-                detection['plate_aspect_ratio_max'] = 8.0
-                detection['zoom_enabled'] = True
-                detection['zoom_factor'] = 2.5
-                detection['zoom_padding'] = 100
-                detection['detailed_logging'] = True
-                ocr_cfg['engine'] = 'fast_plate_ocr'
-                ocr_cfg['fast_plate_model'] = 'cct-s-v2-global-model'
-                ocr_cfg['min_confidence'] = 0.25
-                models['license_plate_detector'] = 'models/license_plate_detector.pt'
-                models['vehicle_detector'] = 'models/yolov8n.pt'
-                migration_cfg['demo_yolo_plate_settings_applied_v3_test_ui'] = True
-            else:
-                detection.setdefault('detailed_logging', True)
-
             area = config.setdefault('rtsp', {}).setdefault('analysis_area', {})
             area.setdefault('crop_before_detection', False)
             area.setdefault('mask_before_detection', False)
+
+            # 0.8.21c: persons should be stored with images like vehicle/plate detections.
+            # This is applied once to existing installations so the /people page gets
+            # useful image history from Test & Upload and from the RTSP loop.
+            people_cfg = config.setdefault('people', {})
+            if not migration_cfg.get('people_images_default_applied_v1'):
+                people_cfg['image_history_enabled'] = True
+                people_cfg['save_person_crops'] = True
+                people_cfg['image_history_store_crop'] = True
+                people_cfg['image_history_store_annotated'] = True
+                people_cfg['save_all_detections'] = True
+                people_cfg.setdefault('enabled', True)
+                migration_cfg['people_images_default_applied_v1'] = True
         except Exception as exc:
             logger.warning(f"0.8.21 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
         return config
@@ -2234,7 +2214,6 @@ class LicensePlateDetector:
             
             try:
                 logger.info("Lade ML-Modelle...")
-                logger.info(f"[Analyse] Konfiguration Modelle: license_plate_detector={self.config_manager.get('models', 'license_plate_detector')} vehicle_detector={self.config_manager.get('models', 'vehicle_detector')} ocr={self.config_manager.get('ocr', 'engine') or 'fast_plate_ocr'}")
                 
                 vehicle_model_path = _resolve_model_path(self.config_manager.get('models', 'vehicle_detector'))
                 license_model_path = _resolve_model_path(self.config_manager.get('models', 'license_plate_detector'))
@@ -2299,25 +2278,6 @@ class LicensePlateDetector:
         if self.config_manager.get('models', 'half_precision') and device not in ('cpu', 'auto'):
             kwargs['half'] = True
         return kwargs
-
-    def _pipeline_log(self, message, *args):
-        """Verbose recognition log that can be switched from Test & Upload."""
-        try:
-            enabled = bool(self.config_manager.get('detection', 'detailed_logging')) or bool(self.config_manager.get('general', 'debug_mode'))
-            if enabled:
-                logger.info('[Analyse] ' + str(message), *args)
-        except Exception:
-            pass
-
-    def _model_status_for_log(self):
-        return {
-            'vehicle_model_loaded': self.coco_model is not None,
-            'plate_model_loaded': self.license_model is not None,
-            'ocr_engine': self.config_manager.get('ocr', 'engine') or 'fast_plate_ocr',
-            'fast_plate_model': self.config_manager.get('ocr', 'fast_plate_model') or 'cct-s-v2-global-model',
-            'plate_model_path': self.config_manager.get('models', 'license_plate_detector'),
-            'vehicle_model_path': self.config_manager.get('models', 'vehicle_detector'),
-        }
 
     def _is_duplicate(self, plate_text):
         if not plate_text or len(plate_text) < 3:
@@ -3216,37 +3176,21 @@ class LicensePlateDetector:
             annotated = frame.copy()
             detected_vehicles = []
             frame_h, frame_w = frame.shape[:2]
-            self._pipeline_log("Start frame=%sx%s apply_analysis_area=%s duplicates=%s status=%s", frame_w, frame_h, apply_analysis_area, filter_duplicates, self._model_status_for_log())
-            self._pipeline_log("Aktive Demo-Werte: plate_model=%s vehicle_model=%s plate_conf=%s plate_iou=%s imgsz=%s crop_padding=%s ocr=%s/%s min_save_conf=%s",
-                               self.config_manager.get('models', 'license_plate_detector'),
-                               self.config_manager.get('models', 'vehicle_detector'),
-                               self.config_manager.get('detection', 'plate_detector_confidence'),
-                               self.config_manager.get('detection', 'plate_detector_iou'),
-                               self.config_manager.get('detection', 'plate_detector_imgsz'),
-                               self.config_manager.get('detection', 'plate_crop_padding_percent'),
-                               self.config_manager.get('ocr', 'engine'),
-                               self.config_manager.get('ocr', 'fast_plate_model'),
-                               self.config_manager.get('history', 'min_confidence_to_save'))
             
             # Fahrzeugerkennung
             if self.coco_model and self.config_manager.get('detection', 'car_detection_enabled'):
-                self._pipeline_log("Fahrzeug-YOLO startet: conf=%.3f allowed=%s device_kwargs=%s", float(confidence_threshold), sorted(allowed_vehicle_names), self._yolo_runtime_kwargs())
                 vehicle_results = self.coco_model(frame, conf=confidence_threshold, verbose=False, **self._yolo_runtime_kwargs())[0]
-                vehicle_boxes = vehicle_results.boxes.data.tolist() if getattr(vehicle_results, 'boxes', None) is not None else []
-                self._pipeline_log("Fahrzeug-YOLO Boxen roh: %s", len(vehicle_boxes))
                 
-                for detection in vehicle_boxes:
+                for detection in vehicle_results.boxes.data.tolist():
                     x1, y1, x2, y2, score, class_id = detection
                     class_id = int(class_id)
                     
                     if class_id in self.VEHICLE_CLASSES:
                         class_name_en = self.VEHICLE_CLASSES_EN.get(class_id, 'unknown')
                         if allowed_vehicle_names and class_name_en not in allowed_vehicle_names:
-                            self._pipeline_log("Fahrzeug verworfen: class=%s score=%.3f nicht in Filter %s", class_name_en, float(score), sorted(allowed_vehicle_names))
                             continue
                         x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
                         if (x2 - x1) < min_vehicle_width or (y2 - y1) < min_vehicle_height:
-                            self._pipeline_log("Fahrzeug verworfen: class=%s score=%.3f bbox=%s zu klein min=%sx%s", class_name_en, float(score), [x1, y1, x2, y2], min_vehicle_width, min_vehicle_height)
                             continue
                         
                         vehicle_crop = frame[y1:y2, x1:x2].copy()
@@ -3261,7 +3205,6 @@ class LicensePlateDetector:
                         }
                         self._apply_vehicle_color_fields(vehicle_info, vehicle_color_info)
                         detected_vehicles.append(vehicle_info)
-                        self._pipeline_log("Fahrzeug akzeptiert: type=%s score=%.3f bbox=%s farbe=%s %s", vehicle_info.get('type'), float(score), vehicle_info.get('bbox'), vehicle_info.get('color'), vehicle_info.get('color_hex'))
                         
                         if annotate_frames:
                             cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 0, 0), 2)
@@ -3271,12 +3214,7 @@ class LicensePlateDetector:
                             cv2.putText(annotated, label, (x1, y1 - 10),
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
             
-            elif not self.coco_model:
-                self._pipeline_log("Fahrzeug-YOLO übersprungen: Modell nicht geladen")
-            else:
-                self._pipeline_log("Fahrzeug-YOLO deaktiviert in Einstellungen")
             result['vehicles'] = detected_vehicles
-            self._pipeline_log("Fahrzeuge akzeptiert: %s", len(detected_vehicles))
             
             # Kennzeichenerkennung
             if self.license_model:
@@ -3334,7 +3272,6 @@ class LicensePlateDetector:
 
                 if scan_full and not any(item.get('source') == 'full_frame' for item in frames_to_process):
                     frames_to_process.append(full_frame_info)
-                self._pipeline_log("Kennzeichen-Scan Quellen: %s", [f"{item.get('source')}:{item.get('frame').shape[1]}x{item.get('frame').shape[0]} scale={item.get('scale')}" for item in frames_to_process if item.get('frame') is not None])
                 
                 for frame_info in frames_to_process:
                     proc_frame = frame_info['frame']
@@ -3359,18 +3296,14 @@ class LicensePlateDetector:
                         'verbose': False,
                     }
                     plate_kwargs.update(self._yolo_runtime_kwargs())
-                    self._pipeline_log("Kennzeichen-YOLO startet: source=%s shape=%sx%s kwargs=%s offset=%s scale=%s", frame_info.get('source'), proc_frame.shape[1], proc_frame.shape[0], plate_kwargs, (off_x, off_y), scale)
                     license_results = self.license_model.predict(proc_frame, **plate_kwargs)[0]
                     
                     if getattr(license_results, 'boxes', None) is None:
-                        self._pipeline_log("Kennzeichen-YOLO Ergebnis: keine boxes für source=%s", frame_info.get('source'))
                         continue
 
                     crop_padding_pct = float(self.config_manager.get('detection', 'plate_crop_padding_percent') or 0.0)
                     proc_h, proc_w = proc_frame.shape[:2]
-                    plate_boxes = license_results.boxes.data.tolist()
-                    self._pipeline_log("Kennzeichen-YOLO Boxen: source=%s count=%s boxes=%s", frame_info.get('source'), len(plate_boxes), [[round(float(v), 2) for v in box[:5]] for box in plate_boxes])
-                    for plate_detection in plate_boxes:
+                    for plate_detection in license_results.boxes.data.tolist():
                         px1, py1, px2, py2, plate_score, _ = plate_detection
 
                         # Use the raw YOLO box for geometry checks, but crop with
@@ -3385,7 +3318,6 @@ class LicensePlateDetector:
                         cpx2 = min(proc_w, int(round(float(px2) + pad_x)))
                         cpy2 = min(proc_h, int(round(float(py2) + pad_y)))
                         if cpx2 <= cpx1 or cpy2 <= cpy1:
-                            self._pipeline_log("Kennzeichen verworfen: ungültiger Crop raw=%s crop=%s source=%s", [round(float(px1),1), round(float(py1),1), round(float(px2),1), round(float(py2),1)], [cpx1, cpy1, cpx2, cpy2], frame_info.get('source'))
                             continue
 
                         orig_raw_px1 = int(px1 / scale + off_x)
@@ -3400,33 +3332,27 @@ class LicensePlateDetector:
                         plate_crop_scaled = proc_frame[cpy1:cpy2, cpx1:cpx2]
                         
                         if plate_crop_scaled.size == 0:
-                            self._pipeline_log("Kennzeichen verworfen: leerer Crop bbox=%s source=%s", [orig_px1, orig_py1, orig_px2, orig_py2], frame_info.get('source'))
                             continue
                         plate_w = max(1, orig_px2 - orig_px1)
                         plate_h = max(1, orig_py2 - orig_py1)
                         min_plate_w = self.config_manager.get('detection', 'min_plate_width') or 0
                         min_plate_h = self.config_manager.get('detection', 'min_plate_height') or 0
                         if plate_w < min_plate_w or plate_h < min_plate_h:
-                            self._pipeline_log("Kennzeichen verworfen: zu klein bbox=%s size=%sx%s min=%sx%s score=%.3f source=%s", [orig_px1, orig_py1, orig_px2, orig_py2], plate_w, plate_h, min_plate_w, min_plate_h, float(plate_score), frame_info.get('source'))
                             continue
                         aspect = plate_w / plate_h
                         aspect_min = float(self.config_manager.get('detection', 'plate_aspect_ratio_min') or 0)
                         aspect_max = float(self.config_manager.get('detection', 'plate_aspect_ratio_max') or 99)
                         if aspect < aspect_min or aspect > aspect_max:
-                            self._pipeline_log("Kennzeichen verworfen: Aspect %.2f ausserhalb %.2f..%.2f bbox=%s score=%.3f source=%s", aspect, aspect_min, aspect_max, [orig_px1, orig_py1, orig_px2, orig_py2], float(plate_score), frame_info.get('source'))
                             continue
                         if max_detections_per_frame and len(result['detections']) >= max_detections_per_frame:
                             break
                         
-                        self._pipeline_log("OCR startet: bbox=%s raw_bbox=%s crop=%sx%s yolo_score=%.3f source=%s vehicle_match=%s", [orig_px1, orig_py1, orig_px2, orig_py2], [orig_raw_px1, orig_raw_py1, orig_raw_px2, orig_raw_py2], plate_crop_scaled.shape[1], plate_crop_scaled.shape[0], float(plate_score), frame_info.get('source'), bool(vehicle))
                         plate_text, ocr_confidence, ocr_meta = self._read_plate_ocr(plate_crop_scaled)
                         ocr_meta = ocr_meta or {}
-                        self._pipeline_log("OCR Ergebnis: text=%r conf=%.4f raw=%r country=%s engine=%s elapsed_ms=%s", plate_text, float(ocr_confidence or 0), ocr_meta.get('raw_plate'), ocr_meta.get('plate_country_display'), ocr_meta.get('ocr_engine'), ocr_meta.get('ocr_elapsed_ms'))
                         
                         min_save_conf = self.config_manager.get('history', 'min_confidence_to_save') or 0.35
                         
                         if not plate_text or ocr_confidence < min_save_conf:
-                            self._pipeline_log("Kennzeichen nicht gespeichert: text=%r conf=%.4f min_save_conf=%.4f source=%s", plate_text, float(ocr_confidence or 0), float(min_save_conf), frame_info.get('source'))
                             if annotate_frames:
                                 cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), (0, 165, 255), 2)
                             continue
@@ -3435,7 +3361,6 @@ class LicensePlateDetector:
                         if filter_duplicates:
                             duplicate_detection = self._is_duplicate(plate_text)
                             if duplicate_detection:
-                                self._pipeline_log("Kennzeichen verworfen: Duplikat %s", plate_text)
                                 continue
                         
                         if vehicle is None:
@@ -3514,10 +3439,7 @@ class LicensePlateDetector:
                         }
                         
                         result['detections'].append(detection_info)
-                        logger.info(f"Erkannt: {plate_text} | Konfidenz: {ocr_confidence:.2f} | Land: {ocr_meta.get('plate_country_display') or '-'} | Fahrzeug: {vehicle.get('type') if vehicle else '-'} | Farbe: {vehicle.get('color') if vehicle else '-'}")
-            else:
-                self._pipeline_log("Kennzeichen-YOLO übersprungen: Modell nicht geladen")
-            self._pipeline_log("Kennzeichen akzeptiert: %s", len(result.get('detections', [])))
+                        logger.info(f"Erkannt: {plate_text} | Konfidenz: {ocr_confidence:.2f}")
             
             result['people'] = self._detect_people(frame, annotated, runtime_roi_polygon=runtime_roi_polygon)
             result['annotated_frame'] = annotated
@@ -3528,7 +3450,6 @@ class LicensePlateDetector:
             traceback.print_exc()
         
         result['processing_time'] = time.time() - start_time
-        self._pipeline_log("Fertig: detections=%s vehicles=%s people=%s time_ms=%s", len(result.get('detections', [])), len(result.get('vehicles', [])), len(result.get('people', [])), round(result['processing_time'] * 1000, 1))
         return result
     
     def process_image(self, image_path_or_array):
@@ -4469,68 +4390,6 @@ def api_clear_all_storage():
 # API ROUTEN - BILD VERARBEITUNG
 # ============================================================
 
-
-
-def _safe_update_section(section_name, payload):
-    if not isinstance(payload, dict):
-        return False
-    config_manager.config.setdefault(section_name, {})
-    for key, value in payload.items():
-        if isinstance(value, dict) and isinstance(config_manager.config[section_name].get(key), dict):
-            config_manager.config[section_name][key].update(value)
-        else:
-            config_manager.config[section_name][key] = value
-    return True
-
-
-@app.route('/api/config/test-recognition', methods=['POST'])
-def api_save_test_recognition_config():
-    """Save the settings from Test & Upload and use them for RTSP too."""
-    try:
-        data = request.get_json(silent=True) or {}
-        allowed_sections = ('detection', 'ocr', 'models', 'people', 'history', 'plate_recognition')
-        changed = []
-        for section in allowed_sections:
-            if section in data and _safe_update_section(section, data.get(section) or {}):
-                changed.append(section)
-
-        # Keep the exact demo-mode model choices as defaults if the UI sends empty values.
-        models_cfg = config_manager.config.setdefault('models', {})
-        if not models_cfg.get('license_plate_detector'):
-            models_cfg['license_plate_detector'] = 'models/license_plate_detector.pt'
-        if not models_cfg.get('vehicle_detector'):
-            models_cfg['vehicle_detector'] = 'models/yolov8n.pt'
-        ocr_cfg = config_manager.config.setdefault('ocr', {})
-        if not ocr_cfg.get('engine'):
-            ocr_cfg['engine'] = 'fast_plate_ocr'
-        if not ocr_cfg.get('fast_plate_model'):
-            ocr_cfg['fast_plate_model'] = 'cct-s-v2-global-model'
-
-        config_manager.save_config()
-        logger.info('[Analyse] Test-Einstellungen gespeichert und werden für RTSP verwendet: %s', changed)
-        logger.info('[Analyse] Aktive Werte: plate_model=%s vehicle_model=%s plate_conf=%s iou=%s imgsz=%s padding=%s ocr=%s/%s people_enabled=%s detailed_logging=%s',
-                    models_cfg.get('license_plate_detector'), models_cfg.get('vehicle_detector'),
-                    config_manager.get('detection', 'plate_detector_confidence'),
-                    config_manager.get('detection', 'plate_detector_iou'),
-                    config_manager.get('detection', 'plate_detector_imgsz'),
-                    config_manager.get('detection', 'plate_crop_padding_percent'),
-                    ocr_cfg.get('engine'), ocr_cfg.get('fast_plate_model'),
-                    config_manager.get('people', 'enabled'), config_manager.get('detection', 'detailed_logging'))
-
-        detector.models_loaded = False
-        detector.coco_model = None
-        detector.license_model = None
-        detector.human_model = None
-        detector.ocr_reader = None
-        detector.fast_plate_recognizer = None
-        detector.fast_plate_cache_key = None
-        threading.Thread(target=detector.load_models, daemon=True).start()
-
-        return jsonify({'success': True, 'config': _public_config(), 'changed': changed})
-    except Exception as e:
-        logger.exception('Test-Einstellungen konnten nicht gespeichert werden: %s', e)
-        return jsonify({'success': False, 'error': str(e)}), 400
-
 @app.route('/api/process/image', methods=['POST'])
 def api_process_image():
     if 'file' not in request.files:
@@ -4547,9 +4406,13 @@ def api_process_image():
         if image is None:
             return jsonify({'success': False, 'error': 'Ungültiges Bild'}), 400
         
-        logger.info(f"[Analyse] Foto-Upload gestartet: filename={file.filename} shape={image.shape[1]}x{image.shape[0]} config_plate_conf={config_manager.get('detection', 'plate_detector_confidence')} imgsz={config_manager.get('detection', 'plate_detector_imgsz')} ocr={config_manager.get('ocr', 'engine')}/{config_manager.get('ocr', 'fast_plate_model')}")
+        logger.info('[TestUpload] Bildanalyse gestartet: filename=%s shape=%s plate_model=%s vehicle_model=%s ocr=%s',
+                    file.filename, getattr(image, 'shape', None), config_manager.get('models', 'license_plate_detector'),
+                    config_manager.get('models', 'vehicle_detector'), config_manager.get('ocr', 'engine'))
         result = detector.process_frame(image, filter_duplicates=False)
-        logger.info(f"[Analyse] Foto-Upload fertig: filename={file.filename} detections={len(result.get('detections', []))} vehicles={len(result.get('vehicles', []))} people={len(result.get('people', []))} time_ms={round((result.get('processing_time') or 0) * 1000, 1)}")
+        logger.info('[TestUpload] Ergebnis: plates=%s vehicles=%s people=%s time=%.3fs',
+                    len(result.get('detections', []) or []), len(result.get('vehicles', []) or []),
+                    len(result.get('people', []) or []), float(result.get('processing_time') or 0))
         
         _, buffer = cv2.imencode('.jpg', result['annotated_frame'])
         result_image_b64 = base64.b64encode(buffer).decode('utf-8')
@@ -4578,7 +4441,8 @@ def api_process_image():
                 history_manager.add_entry(entry)
 
         for person in result.get('people', []):
-            if person.get('counted') or config_manager.get('people', 'save_all_detections'):
+            save_person_event = bool(person.get('counted') or config_manager.get('people', 'save_all_detections') or config_manager.get('people', 'image_history_enabled'))
+            if save_person_event:
                 event = dict(person)
                 event.update({'source': 'image_upload', 'filename': file.filename})
                 saved_person_event = person_history_manager.add_event(event, frame=image, annotated_frame=result.get('annotated_frame'))
@@ -5844,7 +5708,7 @@ def api_system_about():
         'features': [
             'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
             'Statistik', 'Suche', 'Watchlist', 'Mehrsprachige Einstellungen',
-            'Testbasierte Erkennungs-Einstellungen', 'Personenzählung und Personenanalyse'
+            'Erweiterte Original-Einstellungen', 'Personenzählung und Personenanalyse'
         ],
         'config': config_manager.get('about') or {},
         'models_loaded': detector.models_loaded,
@@ -5914,25 +5778,72 @@ def _public_config():
 
 
 def _setting_schema():
-    # Recognition/OCR/people tuning is now done from Test & Upload so the values
-    # can be verified with an image and then saved for RTSP. Keep this schema
-    # intentionally small for the global settings page.
     return {
         'general': {
-            'title': 'Allgemein',
+            'title': 'Allgemein & Sprache',
             'fields': {
                 'language': {'type': 'select', 'options': ['de', 'en', 'fr', 'it'], 'label': 'Sprache'},
                 'theme': {'type': 'select', 'options': ['dark', 'light', 'auto'], 'label': 'Design'},
                 'timezone': {'type': 'text', 'label': 'Zeitzone'},
+                'max_history_entries': {'type': 'number', 'label': 'Max. Historie'},
+                'notification_enabled': {'type': 'boolean', 'label': 'Benachrichtigungen'},
                 'debug_mode': {'type': 'boolean', 'label': 'Debug-Modus'}
             }
         },
-        'history': {
-            'title': 'Historie',
+        'ui': {
+            'title': 'Layout & Oberfläche',
             'fields': {
-                'filter_duplicates': {'type': 'boolean', 'label': 'Duplikate filtern'},
-                'duplicate_timeout': {'type': 'number', 'label': 'Duplikat-Sperre Sekunden'},
-                'min_confidence_to_save': {'type': 'number', 'step': 0.01, 'label': 'Min. Konfidenz zum Speichern'}
+                'accent_color': {'type': 'color', 'label': 'Akzentfarbe'},
+                'density': {'type': 'select', 'options': ['compact', 'comfortable', 'spacious'], 'label': 'Dichte'},
+                'animations': {'type': 'boolean', 'label': 'Animationen'},
+                'sidebar_labels': {'type': 'boolean', 'label': 'Sidebar-Text'},
+                'card_style': {'type': 'select', 'options': ['flat', 'glass', 'bordered'], 'label': 'Kartenstil'},
+                'show_help_text': {'type': 'boolean', 'label': 'Hilfetexte'}
+            }
+        },
+        'plate_recognition': {
+            'title': 'Kennzeichen-Erkennung',
+            'fields': {
+                'country_hint': {'type': 'select', 'options': ['auto', 'CH', 'FL', 'DE', 'AT', 'FR', 'IT'], 'label': 'Länder-Hinweis'},
+                'min_length': {'type': 'number', 'label': 'Min. Länge'},
+                'max_length': {'type': 'number', 'label': 'Max. Länge'},
+                'validation_regex': {'type': 'text', 'label': 'Regex-Validierung'},
+                'smart_ocr_correction': {'type': 'boolean', 'label': 'Intelligente OCR-Korrektur'},
+                'format_pretty_output': {'type': 'boolean', 'label': 'Schöne Ausgabe'},
+                'watchlist_enabled': {'type': 'boolean', 'label': 'Watchlist prüfen'}
+            }
+        },
+        'search': {
+            'title': 'Suche',
+            'fields': {
+                'default_limit': {'type': 'number', 'label': 'Standard-Limit'},
+                'enable_fuzzy_search': {'type': 'boolean', 'label': 'Fuzzy-Suche'},
+                'fuzzy_similarity': {'type': 'number', 'step': 0.01, 'label': 'Fuzzy-Schwelle'},
+                'allow_regex_search': {'type': 'boolean', 'label': 'Regex erlauben'},
+                'remember_last_filters': {'type': 'boolean', 'label': 'Filter merken'}
+            }
+        },
+        'traffic': {
+            'title': 'Verkehrsstatistik & Sessions',
+            'fields': {
+                'visit_gap_minutes': {'type': 'number', 'label': 'Besuch trennen nach Minuten'},
+                'active_timeout_minutes': {'type': 'number', 'label': 'Als gegangen nach Minuten ohne Erkennung'},
+                'daily_count_mode': {'type': 'select', 'options': ['visits', 'detections', 'unique_vehicles'], 'label': 'Tageszählung'},
+                'direction_mode': {'type': 'select', 'options': ['auto', 'explicit', 'spatial', 'timeout'], 'label': 'Kommen/Gehen-Modus'},
+                'min_confidence': {'type': 'number', 'step': 0.01, 'label': 'Min. Konfidenz für Statistik'},
+                'ignore_unknown_plates': {'type': 'boolean', 'label': 'Unbekannte Kennzeichen ignorieren'},
+                'include_duplicate_events': {'type': 'boolean', 'label': 'Duplikat-Events mitzählen'},
+                'movement_axis': {'type': 'select', 'options': ['x', 'y'], 'label': 'Bewegungsachse'},
+                'movement_threshold_percent': {'type': 'number', 'label': 'Bewegungs-Schwelle in %'}
+            }
+        },
+        'privacy': {
+            'title': 'Datenschutz & Aufbewahrung',
+            'fields': {
+                'mask_plate_numbers': {'type': 'boolean', 'label': 'Kennzeichen maskieren'},
+                'blur_plate_images': {'type': 'boolean', 'label': 'Kennzeichenbilder weichzeichnen'},
+                'retention_days': {'type': 'number', 'label': 'Aufbewahrung in Tagen (0 = unbegrenzt)'},
+                'export_include_images': {'type': 'boolean', 'label': 'Bilder in Exporten erlauben'}
             }
         },
         'storage': {
@@ -5941,15 +5852,50 @@ def _setting_schema():
                 'jpeg_quality_plate': {'type': 'number', 'label': 'JPEG Qualität Kennzeichen'},
                 'jpeg_quality_vehicle': {'type': 'number', 'label': 'JPEG Qualität Fahrzeuge'},
                 'auto_cleanup_images': {'type': 'boolean', 'label': 'Bilder automatisch bereinigen'},
-                'cleanup_images_days': {'type': 'number', 'label': 'Bild-Aufbewahrung Tage'}
+                'cleanup_images_days': {'type': 'number', 'label': 'Bild-Aufbewahrung Tage'},
+                'max_storage_mb': {'type': 'number', 'label': 'Max. Speicher MB'}
             }
         },
-        'traffic': {
-            'title': 'Verkehr / Statistik',
+        'detection': {
+            'title': 'YOLO Kennzeichen & Fahrzeuge',
             'fields': {
-                'visit_gap_minutes': {'type': 'number', 'label': 'Besuch trennen nach Minuten'},
-                'active_timeout_minutes': {'type': 'number', 'label': 'Als gegangen nach Minuten ohne Erkennung'},
-                'daily_count_mode': {'type': 'select', 'options': ['visits', 'detections', 'unique_vehicles'], 'label': 'Tageszählung'}
+                'confidence_threshold': {'type': 'number', 'step': 0.01, 'label': 'Fahrzeug YOLO Confidence'},
+                'plate_detector_confidence': {'type': 'number', 'step': 0.01, 'label': 'Kennzeichen YOLO Confidence'},
+                'plate_detector_iou': {'type': 'number', 'step': 0.01, 'label': 'Kennzeichen YOLO IoU'},
+                'plate_detector_imgsz': {'type': 'number', 'label': 'Kennzeichen YOLO Bildgröße'},
+                'plate_crop_padding_percent': {'type': 'number', 'step': 0.5, 'label': 'Kennzeichen Crop Padding %'},
+                'scan_full_frame_when_vehicle_found': {'type': 'boolean', 'label': 'Immer ganzes Bild nach Kennzeichen scannen'},
+                'zoom_enabled': {'type': 'boolean', 'label': 'Zusätzlicher Fahrzeug-Zoom Scan'},
+                'min_plate_width': {'type': 'number', 'label': 'Min. Kennzeichenbreite'},
+                'min_plate_height': {'type': 'number', 'label': 'Min. Kennzeichenhöhe'}
+            }
+        },
+        'ocr': {
+            'title': 'OCR Engine',
+            'fields': {
+                'engine': {'type': 'select', 'options': ['fast_plate_ocr', 'easyocr'], 'label': 'OCR Engine'},
+                'fast_plate_model': {'type': 'select', 'options': ['cct-s-v2-global-model', 'cct-xs-v2-global-model', 'cct-s-v1-global-model', 'cct-xs-v1-global-model'], 'label': 'fast-plate-ocr Modell'},
+                'fast_plate_device': {'type': 'select', 'options': ['auto', 'cpu', 'cuda'], 'label': 'fast-plate-ocr Gerät'},
+                'easyocr_backup_enabled': {'type': 'boolean', 'label': 'EasyOCR als Backup verwenden'},
+                'min_confidence': {'type': 'number', 'step': 0.01, 'label': 'OCR Mindest-Konfidenz'},
+                'fast_plate_remove_pad_char': {'type': 'boolean', 'label': 'Padding-Zeichen entfernen'}
+            }
+        },
+        'models': {
+            'title': 'Modelle',
+            'fields': {
+                'device': {'type': 'select', 'options': ['auto', 'cpu', 'cuda', 'mps'], 'label': 'Gerät'},
+                'half_precision': {'type': 'boolean', 'label': 'FP16'},
+                'auto_reload_on_change': {'type': 'boolean', 'label': 'Auto Reload'},
+                'fallback_to_cpu': {'type': 'boolean', 'label': 'CPU-Fallback'}
+            }
+        },
+        'about': {
+            'title': 'Über',
+            'fields': {
+                'release_channel': {'type': 'select', 'options': ['stable', 'beta', 'dev'], 'label': 'Release Kanal'},
+                'support_url': {'type': 'text', 'label': 'Support URL'},
+                'documentation_url': {'type': 'text', 'label': 'Dokumentation URL'}
             }
         }
     }
@@ -5965,6 +5911,84 @@ def api_i18n():
     lang = request.args.get('lang') or config_manager.get('general', 'language') or 'de'
     return jsonify({'language': lang, 'available': list(TRANSLATIONS.keys()), 'translations': TRANSLATIONS.get(lang, TRANSLATIONS['de'])})
 
+
+
+@app.route('/api/test/settings', methods=['GET', 'POST'])
+def api_test_settings():
+    """Central recognition profile used by Test & Upload and by RTSP.
+
+    The web UI writes the practical detector/OCR/person/traffic values here so
+    the same values are used for uploaded images, uploaded videos and the live
+    RTSP loop. This keeps the old Settings page focused on global app/storage
+    options while the tunable recognition values live in Test & Upload.
+    """
+    if request.method == 'GET':
+        return jsonify({
+            'success': True,
+            'config': _public_config(),
+            'models': _scan_model_files(),
+            'model_status': {
+                'models_loaded': bool(getattr(detector, 'models_loaded', False)),
+                'plate_model_loaded': bool(getattr(detector, 'plate_model', None)),
+                'vehicle_model_loaded': bool(getattr(detector, 'vehicle_model', None)),
+                'human_model_loaded': bool(getattr(detector, 'human_model', None)),
+                'ocr_engine': config_manager.get('ocr', 'engine') or 'fast_plate_ocr'
+            }
+        })
+
+    try:
+        data = request.get_json(silent=True) or {}
+        reload_requested = bool(data.pop('reload', False))
+
+        for section in ('detection', 'ocr', 'models', 'people', 'traffic'):
+            payload = data.get(section)
+            if not isinstance(payload, dict):
+                continue
+            config_manager.config.setdefault(section, {})
+            if section == 'ocr' and isinstance(payload.get('preprocessing'), dict):
+                config_manager.config[section].setdefault('preprocessing', {})
+                config_manager.config[section]['preprocessing'].update(payload.pop('preprocessing'))
+            config_manager.config[section].update(payload)
+
+        # Keep person model path synchronized with the generic models section.
+        people_cfg = config_manager.config.setdefault('people', {})
+        models_cfg = config_manager.config.setdefault('models', {})
+        selected_person = (people_cfg.get('selected_model_file') or people_cfg.get('custom_model_path') or models_cfg.get('person_detector'))
+        if selected_person:
+            people_cfg['model_path'] = selected_person
+            people_cfg['custom_model_path'] = selected_person
+            people_cfg['selected_model_file'] = selected_person
+            models_cfg['person_detector'] = selected_person
+
+        # Person images are intentionally enabled by default for the new workflow.
+        if people_cfg.get('image_history_enabled', True):
+            people_cfg['save_person_crops'] = True
+            people_cfg['image_history_store_crop'] = True
+            people_cfg.setdefault('image_history_store_annotated', True)
+
+        config_manager.save_config()
+
+        detector.ocr_reader = None
+        detector.fast_plate_recognizer = None
+        detector.fast_plate_cache_key = None
+        detector.models_loaded = False
+        detector.human_model = None
+        if reload_requested:
+            config_manager.config.setdefault('models', {})['last_reload_at'] = datetime.now().isoformat()
+            config_manager.save_config()
+            threading.Thread(target=detector.load_models, daemon=True).start()
+
+        logger.info('[TestSettings] Gespeichert: plate_model=%s vehicle_model=%s person_model=%s plate_conf=%s ocr=%s people=%s',
+                    config_manager.get('models', 'license_plate_detector'),
+                    config_manager.get('models', 'vehicle_detector'),
+                    config_manager.get('models', 'person_detector'),
+                    config_manager.get('detection', 'plate_detector_confidence'),
+                    config_manager.get('ocr', 'engine'),
+                    'aktiv' if config_manager.get('people', 'enabled') else 'inaktiv')
+        return jsonify({'success': True, 'config': _public_config(), 'models': _scan_model_files()})
+    except Exception as e:
+        logger.exception(f'Test-Einstellungen konnten nicht gespeichert werden: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/settings/schema')
 def api_settings_schema():
@@ -6394,7 +6418,7 @@ def _handle_people_image_analysis(source_name='people_upload'):
         effective_cfg = _people_config_with_overrides(override_cfg)
 
         force_enable = _bool_from_request(request.form.get('force_enable'), effective_cfg.get('test_force_enable_people', True))
-        save_to_history = _bool_from_request(request.form.get('save_history'), effective_cfg.get('test_save_to_history_default', False))
+        save_to_history = _bool_from_request(request.form.get('save_history'), effective_cfg.get('test_save_to_history_default', True))
         save_upload = _bool_from_request(request.form.get('save_upload'), effective_cfg.get('test_save_uploads', False))
         draw_boxes = _bool_from_request(request.form.get('draw_boxes'), effective_cfg.get('draw_boxes', True))
         if force_enable:
@@ -6422,7 +6446,7 @@ def _handle_people_image_analysis(source_name='people_upload'):
         history_saved = 0
         if save_to_history and (effective_cfg.get('history_enabled') is not False):
             for person in result.get('people', []):
-                if person.get('counted') or effective_cfg.get('save_all_detections'):
+                if person.get('counted') or effective_cfg.get('save_all_detections') or effective_cfg.get('image_history_enabled'):
                     event = dict(person)
                     event.update({'source': source_name, 'filename': saved_filename})
                     saved_person_event = person_history_manager.add_event(event, frame=payload['image'], annotated_frame=annotated)
