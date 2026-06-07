@@ -368,9 +368,23 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 - Hochgeladene Modelle werden bevorzugt unter `/data/models` gespeichert, damit sie Add-on-Updates überstehen.
 - Personenmodelle können nach dem Upload automatisch ausgewählt und optional direkt neu geladen werden.
 
-## Version 0.8.23
+## Version 0.8.24
 
 - Neue Paketversion auf Basis der funktionierenden 0.8.22 CPU-/RTSP-Korrektur.
 - Straßenbereich/Polygon bleibt als RTSP-Analysebereich aktiv, mit CPU-Gate und gepuffertem ROI-Crop.
 - Test & Upload, Modelle, Personen-Crops und neue OCR-/YOLO-Pipeline bleiben enthalten.
 
+- Webinterface-Stabilisierung: Settings-Formulare werden nicht mehr durch fehlende/verschobene UI-Elemente blockiert.
+- Sichtbare UI-Fehlermeldungen im Browser, damit stille JavaScript-Fehler sofort auffallen.
+- Personen-Test und Personen-Fotoanalyse speichern erkannte Personen jetzt zuverlässig als Crop-Bilder in der Personenanalyse.
+- Personen-Bild-History zeigt standardmäßig alle gespeicherten Personen-Crops, nicht nur gezählte Linienereignisse.
+- Historie und Suche: „Nur einzigartige“ funktioniert mit normalisierten/fuzzy Kennzeichen; doppelte Kennzeichen werden in der Anzeige zusammengefasst.
+- RTSP-Quelle und Fahrzeugtyp-Filter wurden an die tatsächlich gespeicherten Werte angepasst.
+- Fahrzeug- und Kennzeichen-YOLO verwenden die im Testmodus gespeicherten Modell-/ImgSz-/Confidence-Werte konsistent.
+
+
+## Version 0.8.25
+
+- Personen-Zähllinie auf der Personenanalyse-Seite wieder direkt einstellbar.
+- Linienposition, Achse, Richtung und ROI-Bezug können gespeichert und sofort für RTSP angewendet werden.
+- Test & Upload synchronisiert die Personen-Linie wieder sauber mit dem RTSP-Profil.

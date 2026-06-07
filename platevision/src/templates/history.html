@@ -257,7 +257,7 @@
                 <label class="form-label">Quelle</label>
                 <select class="form-select" name="source" id="sourceFilter">
                     <option value="">Alle Quellen</option>
-                    <option value="rtsp_stream" {{ 'selected' if source_filter == 'rtsp_stream' else '' }}>RTSP Stream</option>
+                    <option value="rtsp" {{ 'selected' if source_filter in ['rtsp', 'rtsp_stream'] else '' }}>RTSP Stream</option>
                     <option value="image_upload" {{ 'selected' if source_filter == 'image_upload' else '' }}>Bild Upload</option>
                     <option value="video_upload" {{ 'selected' if source_filter == 'video_upload' else '' }}>Video Upload</option>
                 </select>
@@ -268,10 +268,11 @@
                 <label class="form-label">Fahrzeugtyp</label>
                 <select class="form-select" name="vehicle_type" id="vehicleFilter">
                     <option value="">Alle Typen</option>
-                    <option value="PKW" {{ 'selected' if vehicle_type_filter == 'PKW' else '' }}>PKW</option>
-                    <option value="LKW" {{ 'selected' if vehicle_type_filter == 'LKW' else '' }}>LKW</option>
-                    <option value="Bus" {{ 'selected' if vehicle_type_filter == 'Bus' else '' }}>Bus</option>
-                    <option value="Motorrad" {{ 'selected' if vehicle_type_filter == 'Motorrad' else '' }}>Motorrad</option>
+                    <option value="car" {{ 'selected' if vehicle_type_filter in ['car', 'PKW'] else '' }}>Auto / PKW</option>
+                    <option value="truck" {{ 'selected' if vehicle_type_filter in ['truck', 'LKW'] else '' }}>LKW</option>
+                    <option value="bus" {{ 'selected' if vehicle_type_filter in ['bus', 'Bus'] else '' }}>Bus</option>
+                    <option value="motorcycle" {{ 'selected' if vehicle_type_filter in ['motorcycle', 'Motorrad'] else '' }}>Motorrad</option>
+                    <option value="bicycle" {{ 'selected' if vehicle_type_filter in ['bicycle', 'Fahrrad'] else '' }}>Fahrrad</option>
                 </select>
             </div>
             
@@ -293,9 +294,7 @@
             </div>
             
             <!-- Hidden: Unique Filter beibehalten -->
-            {% if unique_only %}
-            <input type="hidden" name="unique" value="true">
-            {% endif %}
+            <input type="hidden" name="unique" value="{{ 'true' if unique_only else 'false' }}">
         </form>
         
         <!-- Aktive Filter anzeigen -->
@@ -309,7 +308,7 @@
             <span class="filter-tag bg-primary">
                 <i class="fas fa-search"></i>
                 "{{ search }}"
-                <a href="{{ url_for('history', source=source_filter, vehicle_type=vehicle_type_filter, sort=sort_order, unique='true' if unique_only else '') }}" 
+                <a href="{{ url_for('history', source=source_filter, vehicle_type=vehicle_type_filter, sort=sort_order, unique='true' if unique_only else 'false') }}" 
                    class="remove-filter" title="Filter entfernen">×</a>
             </span>
             {% endif %}
@@ -317,11 +316,11 @@
             {% if source_filter %}
             <span class="filter-tag bg-success">
                 <i class="fas fa-broadcast-tower"></i>
-                {% if source_filter == 'rtsp_stream' %}RTSP Stream
+                {% if source_filter in ['rtsp', 'rtsp_stream'] %}RTSP Stream
                 {% elif source_filter == 'image_upload' %}Bild Upload
                 {% elif source_filter == 'video_upload' %}Video Upload
                 {% else %}{{ source_filter }}{% endif %}
-                <a href="{{ url_for('history', search=search, vehicle_type=vehicle_type_filter, sort=sort_order, unique='true' if unique_only else '') }}" 
+                <a href="{{ url_for('history', search=search, vehicle_type=vehicle_type_filter, sort=sort_order, unique='true' if unique_only else 'false') }}" 
                    class="remove-filter" title="Filter entfernen">×</a>
             </span>
             {% endif %}
@@ -330,7 +329,7 @@
             <span class="filter-tag bg-info">
                 <i class="fas fa-car"></i>
                 {{ vehicle_type_filter }}
-                <a href="{{ url_for('history', search=search, source=source_filter, sort=sort_order, unique='true' if unique_only else '') }}" 
+                <a href="{{ url_for('history', search=search, source=source_filter, sort=sort_order, unique='true' if unique_only else 'false') }}" 
                    class="remove-filter" title="Filter entfernen">×</a>
             </span>
             {% endif %}
@@ -529,9 +528,9 @@
                         <span>{{ entry.timestamp[:16].replace('T', ' ') if entry.timestamp else 'Unbekannt' }}</span>
                     </div>
                     <div class="meta-item">
-                        <i class="fas fa-{% if entry.source == 'rtsp_stream' %}video{% elif entry.source == 'image_upload' %}image{% else %}film{% endif %}"></i>
-                        <span class="source-badge {% if entry.source == 'rtsp_stream' %}rtsp{% elif entry.source == 'image_upload' %}image{% else %}video{% endif %}">
-                            {% if entry.source == 'rtsp_stream' %}RTSP{% elif entry.source == 'image_upload' %}Bild{% elif entry.source == 'video_upload' %}Video{% else %}{{ entry.source or 'Unbekannt' }}{% endif %}
+                        <i class="fas fa-{% if entry.source in ['rtsp', 'rtsp_stream'] %}video{% elif entry.source == 'image_upload' %}image{% else %}film{% endif %}"></i>
+                        <span class="source-badge {% if entry.source in ['rtsp', 'rtsp_stream'] %}rtsp{% elif entry.source == 'image_upload' %}image{% else %}video{% endif %}">
+                            {% if entry.source in ['rtsp', 'rtsp_stream'] %}RTSP{% elif entry.source == 'image_upload' %}Bild{% elif entry.source == 'video_upload' %}Video{% else %}{{ entry.source or 'Unbekannt' }}{% endif %}
                         </span>
                     </div>
                     {% if entry.plate_size %}
@@ -744,7 +743,7 @@
         if (checked) {
             url.searchParams.set('unique', 'true');
         } else {
-            url.searchParams.delete('unique');
+            url.searchParams.set('unique', 'false');
         }
         window.location.href = url.toString();
     }
@@ -895,8 +894,8 @@
                         <tr>
                             <td class="text-secondary"><i class="fas fa-broadcast-tower me-2"></i>Quelle</td>
                             <td>
-                                <span class="source-badge ${entry.source === 'rtsp_stream' ? 'rtsp' : (entry.source === 'image_upload' ? 'image' : 'video')}">
-                                    ${entry.source === 'rtsp_stream' ? 'RTSP Stream' : (entry.source === 'image_upload' ? 'Bild Upload' : (entry.source === 'video_upload' ? 'Video Upload' : (entry.source || 'Unbekannt')))}
+                                <span class="source-badge ${(entry.source === 'rtsp' || entry.source === 'rtsp_stream') ? 'rtsp' : (entry.source === 'image_upload' ? 'image' : 'video')}">
+                                    ${(entry.source === 'rtsp' || entry.source === 'rtsp_stream') ? 'RTSP Stream' : (entry.source === 'image_upload' ? 'Bild Upload' : (entry.source === 'video_upload' ? 'Video Upload' : (entry.source || 'Unbekannt')))}
                                 </span>
                             </td>
                         </tr>
@@ -1045,7 +1044,14 @@
     function exportHistory() {
         showToast('Export', 'Lade Historie...', 'info');
         
-        fetch('/api/history?limit=10000')
+        (() => {
+            const exportUrl = new URL('/api/history', window.location.origin);
+            exportUrl.searchParams.set('limit', '10000');
+            exportUrl.searchParams.set('unique', document.getElementById('uniqueFilter')?.checked ? 'true' : 'false');
+            if (document.getElementById('sourceFilter')?.value) exportUrl.searchParams.set('source', document.getElementById('sourceFilter').value);
+            if (document.getElementById('vehicleFilter')?.value) exportUrl.searchParams.set('vehicle_type', document.getElementById('vehicleFilter').value);
+            return fetch(exportUrl.toString());
+        })()
             .then(response => response.json())
             .then(data => {
                 // Prepare export data (remove base64 images to reduce size)

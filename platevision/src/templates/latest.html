@@ -621,7 +621,7 @@ cards:
                         <div class="latest-detail-content">
                             <div class="latest-detail-label">Quelle</div>
                             <div class="latest-detail-value">
-                                ${data.source === 'rtsp_stream' ? 'RTSP Stream' :
+                                ${(data.source === 'rtsp' || data.source === 'rtsp_stream') ? 'RTSP Stream' :
                                   data.source === 'image_upload' ? 'Bild Upload' :
                                   data.source === 'video_upload' ? 'Video' : data.source || 'Unbekannt'}
                             </div>

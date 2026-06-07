@@ -398,8 +398,10 @@
                     <div class="col-6"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testPeopleConf"></div>
                     <div class="col-6"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testPeopleImgsz"></div>
                     <div class="col-6"><label class="form-label">Zähllinie %</label><input class="form-control" type="number" min="1" max="99" step="1" id="testPeopleLine"></div>
-                    <div class="col-6"><label class="form-label">Achse</label><select class="form-select" id="testPeopleAxis"><option value="y">horizontal / Kommen-Gehen oben-unten</option><option value="x">vertikal / links-rechts</option></select></div>
-                    <div class="col-12"><label class="form-label">Richtung zählen</label><select class="form-select" id="testPeopleDirection"><option value="both">beide Richtungen</option><option value="positive">positive Richtung</option><option value="negative">negative Richtung</option></select></div>
+                    <div class="col-6"><label class="form-label">Linie Schieber</label><input class="form-range mt-2" type="range" min="1" max="99" step="1" id="testPeopleLineRange"></div>
+                    <div class="col-6"><label class="form-label">Achse</label><select class="form-select" id="testPeopleAxis"><option value="y">horizontal / oben-unten</option><option value="x">vertikal / links-rechts</option></select></div>
+                    <div class="col-6"><label class="form-label">Richtung zählen</label><select class="form-select" id="testPeopleDirection"><option value="both">beide Richtungen</option><option value="down">runter</option><option value="up">hoch</option><option value="right">rechts</option><option value="left">links</option></select></div>
+                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleLineRelative"><label class="form-check-label" for="testPeopleLineRelative">Zähllinie relativ zum Straßenbereich verwenden</label></div></div>
                 </div>
                 <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testPeopleSaveAll"><label class="form-check-label" for="testPeopleSaveAll">Alle Personen mit Bild speichern</label></div>
                 <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleSaveCrop"><label class="form-check-label" for="testPeopleSaveCrop">Personen-Crop speichern</label></div>
@@ -724,6 +726,13 @@
     // ============================================
     
     document.addEventListener('DOMContentLoaded', function() {
+        ['testPeopleLine','testPeopleLineRange','testPeopleAxis','testPeopleDirection'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('input', () => syncTestPeopleLineInputs(id));
+                el.addEventListener('change', () => syncTestPeopleLineInputs(id));
+            }
+        });
         loadTestRecognitionSettings();
         loadPeopleSettingsForUpload();
         initDragAndDrop();
@@ -785,6 +794,25 @@
     function numVal(id, fallback) { const el = document.getElementById(id); const v = el ? Number(el.value) : NaN; return Number.isFinite(v) ? v : fallback; }
     function boolVal(id) { const el = document.getElementById(id); return !!(el && el.checked); }
     function selVal(id, fallback='') { const el = document.getElementById(id); return el && el.value ? el.value : fallback; }
+    function normalizePeopleDirectionForAxis(value, axis) {
+        const v = String(value || 'both');
+        if (v === 'positive') return axis === 'x' ? 'right' : 'down';
+        if (v === 'negative') return axis === 'x' ? 'left' : 'up';
+        if (['both','down','up','right','left'].includes(v)) return v;
+        return 'both';
+    }
+    function syncTestPeopleLineInputs(sourceId='') {
+        const numberEl = document.getElementById('testPeopleLine');
+        const rangeEl = document.getElementById('testPeopleLineRange');
+        let v = Number((sourceId === 'testPeopleLineRange' ? rangeEl?.value : numberEl?.value) ?? 50);
+        if (!Number.isFinite(v)) v = 50;
+        v = Math.max(1, Math.min(99, Math.round(v)));
+        if (numberEl) numberEl.value = v;
+        if (rangeEl) rangeEl.value = v;
+        const axis = selVal('testPeopleAxis', 'y');
+        const dirEl = document.getElementById('testPeopleDirection');
+        if (dirEl) dirEl.value = normalizePeopleDirectionForAxis(dirEl.value, axis);
+    }
 
     function populateModelSelect(id, selected, preferredKind='') {
         const el = document.getElementById(id);
@@ -830,15 +858,18 @@
             setVal('testOcrEngine', (ocr.engine || 'fast_plate_ocr').replace('-', '_'));
             setVal('testFastPlateModel', ocr.fast_plate_model || 'cct-s-v2-global-model');
             setVal('testFastPlateDevice', ocr.fast_plate_device || 'auto');
-            setVal('testOcrMinConf', detection.ocr_min_confidence ?? 0.25);
+            setVal('testOcrMinConf', ocr.min_confidence ?? detection.ocr_min_confidence ?? 0.25);
             setChecked('testEasyBackup', ocr.easyocr_backup_enabled !== false);
             setChecked('testRemovePad', ocr.fast_plate_remove_pad_char !== false);
             setChecked('testPeopleEnabled', people.enabled !== false);
             setVal('testPeopleConf', people.confidence_threshold ?? 0.55);
             setVal('testPeopleImgsz', people.image_size ?? 640);
             setVal('testPeopleLine', people.virtual_line_position_percent ?? 50);
+            setVal('testPeopleLineRange', people.virtual_line_position_percent ?? 50);
             setVal('testPeopleAxis', people.movement_axis || 'y');
-            setVal('testPeopleDirection', people.crossing_direction || 'both');
+            setVal('testPeopleDirection', normalizePeopleDirectionForAxis(people.crossing_direction || 'both', people.movement_axis || 'y'));
+            setChecked('testPeopleLineRelative', people.line_relative_to_roi !== false);
+            syncTestPeopleLineInputs();
             setChecked('testPeopleSaveAll', people.save_all_detections !== false);
             setChecked('testPeopleSaveCrop', people.save_person_crops !== false || people.image_history_store_crop !== false);
             setVal('testVisitGap', traffic.visit_gap_minutes ?? 15);
@@ -858,7 +889,7 @@
         setVal('testVehicleConf', 0.5); setVal('testVehicleImgsz', 640);
         setVal('testOcrEngine', 'fast_plate_ocr'); setVal('testFastPlateModel', 'cct-s-v2-global-model'); setVal('testFastPlateDevice', 'auto'); setVal('testOcrMinConf', 0.25);
         setChecked('testEasyBackup', true); setChecked('testRemovePad', true);
-        setChecked('testPeopleEnabled', true); setVal('testPeopleConf', 0.55); setVal('testPeopleImgsz', 640); setVal('testPeopleLine', 50); setVal('testPeopleAxis', 'y'); setVal('testPeopleDirection', 'both');
+        setChecked('testPeopleEnabled', true); setVal('testPeopleConf', 0.55); setVal('testPeopleImgsz', 640); setVal('testPeopleLine', 50); setVal('testPeopleLineRange', 50); setVal('testPeopleAxis', 'y'); setVal('testPeopleDirection', 'both'); setChecked('testPeopleLineRelative', true); syncTestPeopleLineInputs();
         setChecked('testPeopleSaveAll', true); setChecked('testPeopleSaveCrop', true);
         setVal('testVisitGap', 15); setVal('testActiveTimeout', 30); setVal('testTrafficAxis', 'x'); setVal('testTrafficMove', 8);
         showToast('Demo-Werte', 'Die funktionierenden Demo-Werte wurden eingetragen. Bitte speichern.', 'info');
@@ -890,7 +921,8 @@
                 fast_plate_device: selVal('testFastPlateDevice', 'auto'),
                 easyocr_backup_enabled: boolVal('testEasyBackup'),
                 fast_plate_remove_pad_char: boolVal('testRemovePad'),
-                fast_plate_return_confidence: true
+                fast_plate_return_confidence: true,
+                min_confidence: numVal('testOcrMinConf', 0.25)
             },
             people: {
                 enabled: boolVal('testPeopleEnabled'),
@@ -904,7 +936,8 @@
                 line_crossing_enabled: true,
                 virtual_line_position_percent: numVal('testPeopleLine', 50),
                 movement_axis: selVal('testPeopleAxis', 'y'),
-                crossing_direction: selVal('testPeopleDirection', 'both'),
+                crossing_direction: normalizePeopleDirectionForAxis(selVal('testPeopleDirection', 'both'), selVal('testPeopleAxis', 'y')),
+                line_relative_to_roi: boolVal('testPeopleLineRelative'),
                 save_all_detections: boolVal('testPeopleSaveAll'),
                 image_history_enabled: true,
                 save_person_crops: boolVal('testPeopleSaveCrop'),

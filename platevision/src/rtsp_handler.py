@@ -342,7 +342,7 @@ class RTSPHandler:
     def _apply_analysis_mask(self, frame, area_info):
         """Prepare the frame that goes into YOLO.
 
-        0.8.23 CPU-Fix:
+        0.8.24 CPU-Fix:
         - If a road ROI is active, RTSP analysis uses a padded crop around that
           ROI by default. This keeps the detector away from irrelevant parts of
           the image while still leaving enough border so vehicles are not cut in

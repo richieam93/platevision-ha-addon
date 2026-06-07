@@ -2079,7 +2079,7 @@
                                 <table class="table table-sm text-start">
                                     <tr>
                                         <td class="text-secondary">Version</td>
-                                        <td class="fw-bold">0.8.23 FastPlateOCR + YOLO Vehicle Intelligence</td>
+                                        <td class="fw-bold">0.8.24 FastPlateOCR + YOLO Vehicle Intelligence</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">YOLO Version</td>
@@ -2202,52 +2202,62 @@
 
 {% block extra_js %}
 <script>
+    // Kleine sichere DOM-Helfer: Wenn ein Bereich ausgeblendet/verschoben wurde,
+    // darf ein fehlendes Element nicht das ganze Einstellungs-JavaScript stoppen.
+    function pvEl(id) { return document.getElementById(id); }
+    function pvOn(id, eventName, handler) {
+        const el = pvEl(id);
+        if (el) el.addEventListener(eventName, handler);
+        else console.warn('[PlateVision UI] Element fehlt:', id);
+    }
+    function pvText(id, value) { const el = pvEl(id); if (el) el.textContent = value; }
+
     // ============================================
     // RANGE SLIDER UPDATES
     // ============================================
     
     // Detection
-    document.getElementById('confidenceThreshold').addEventListener('input', function() {
-        document.getElementById('confidenceDisplay').textContent = this.value + '%';
+    pvOn('confidenceThreshold', 'input', function() {
+        pvText('confidenceDisplay', this.value + '%');
     });
     
-    document.getElementById('processInterval').addEventListener('input', function() {
-        document.getElementById('intervalDisplay').textContent = (this.value / 10).toFixed(1) + 's';
+    pvOn('processInterval', 'input', function() {
+        pvText('intervalDisplay', (this.value / 10).toFixed(1) + 's');
     });
     
-    document.getElementById('zoomFactor').addEventListener('input', function() {
-        document.getElementById('zoomDisplay').textContent = (this.value / 10).toFixed(1) + 'x';
+    pvOn('zoomFactor', 'input', function() {
+        pvText('zoomDisplay', (this.value / 10).toFixed(1) + 'x');
     });
     
-    document.getElementById('zoomPadding').addEventListener('input', function() {
-        document.getElementById('paddingDisplay').textContent = this.value + 'px';
+    pvOn('zoomPadding', 'input', function() {
+        pvText('paddingDisplay', this.value + 'px');
     });
     
     // OCR
-    document.getElementById('ocrMinConfidence').addEventListener('input', function() {
-        document.getElementById('ocrConfDisplay').textContent = this.value + '%';
+    pvOn('ocrMinConfidence', 'input', function() {
+        pvText('ocrConfDisplay', this.value + '%');
     });
     
     // Preprocessing
-    document.getElementById('targetHeight').addEventListener('input', function() {
-        document.getElementById('targetHeightDisplay').textContent = this.value + 'px';
+    pvOn('targetHeight', 'input', function() {
+        pvText('targetHeightDisplay', this.value + 'px');
     });
     
-    document.getElementById('minWidth').addEventListener('input', function() {
-        document.getElementById('minWidthDisplay').textContent = this.value + 'px';
+    pvOn('minWidth', 'input', function() {
+        pvText('minWidthDisplay', this.value + 'px');
     });
     
-    document.getElementById('resizeFactor').addEventListener('input', function() {
-        document.getElementById('resizeFactorDisplay').textContent = (this.value / 10).toFixed(1) + 'x';
+    pvOn('resizeFactor', 'input', function() {
+        pvText('resizeFactorDisplay', (this.value / 10).toFixed(1) + 'x');
     });
     
     // History
-    document.getElementById('duplicateTimeout').addEventListener('input', function() {
-        document.getElementById('duplicateTimeoutDisplay').textContent = this.value + 's';
+    pvOn('duplicateTimeout', 'input', function() {
+        pvText('duplicateTimeoutDisplay', this.value + 's');
     });
     
-    document.getElementById('minConfidenceToSave').addEventListener('input', function() {
-        document.getElementById('minSaveConfDisplay').textContent = this.value + '%';
+    pvOn('minConfidenceToSave', 'input', function() {
+        pvText('minSaveConfDisplay', this.value + '%');
     });
     
     // ============================================
@@ -2255,7 +2265,7 @@
     // ============================================
     
     // Detection Form
-    document.getElementById('detectionForm').addEventListener('submit', function(e) {
+    pvOn('detectionForm', 'submit', function(e) {
         e.preventDefault();
         
         const data = {
@@ -2283,7 +2293,7 @@
     });
     
     // OCR Form
-    document.getElementById('ocrForm').addEventListener('submit', function(e) {
+    pvOn('ocrForm', 'submit', function(e) {
         e.preventDefault();
         
         const languages = [];
@@ -2327,7 +2337,7 @@
     });
     
     // Preprocessing Form
-    document.getElementById('preprocessingForm').addEventListener('submit', function(e) {
+    pvOn('preprocessingForm', 'submit', function(e) {
         e.preventDefault();
         
         const data = {
@@ -2360,7 +2370,7 @@
     });
     
     // History Form
-    document.getElementById('historyForm').addEventListener('submit', function(e) {
+    pvOn('historyForm', 'submit', function(e) {
         e.preventDefault();
         
         const data = {
@@ -2387,7 +2397,7 @@
     });
     
     // Storage Form
-    document.getElementById('storageForm').addEventListener('submit', function(e) {
+    pvOn('storageForm', 'submit', function(e) {
         e.preventDefault();
         
         // Detection settings
@@ -2437,7 +2447,7 @@
     });
     
     // General Form
-    document.getElementById('generalForm').addEventListener('submit', function(e) {
+    pvOn('generalForm', 'submit', function(e) {
         e.preventDefault();
         
         const data = {
@@ -2535,7 +2545,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.8.23-fastplateocr-yolo-vehicle-intelligence',
+                    version: '0.8.24-fastplateocr-yolo-vehicle-intelligence',
                     config: config
                 };
                 
@@ -2871,7 +2881,7 @@
     
 
     function embedCombinedSettingsPanels() {
-        // 0.8.23 Fix: Die linke Navigation zeigt bewusst nur wenige sinnvolle Gruppen.
+        // 0.8.24 Fix: Die linke Navigation zeigt bewusst nur wenige sinnvolle Gruppen.
         // Deshalb werden die früher separaten Tabs "Speicher" und "Modelle hochladen"
         // sichtbar in die Gruppen "Historie + Speicher" und "Modelle + Modelle hochladen" eingebettet.
         const historyPane = document.getElementById('historySettings');
@@ -3500,7 +3510,7 @@
 
 
     function embedCombinedSettingsPanels() {
-        // 0.8.23 Fix: Die linke Navigation zeigt bewusst nur wenige sinnvolle Gruppen.
+        // 0.8.24 Fix: Die linke Navigation zeigt bewusst nur wenige sinnvolle Gruppen.
         // Deshalb werden die früher separaten Tabs "Speicher" und "Modelle hochladen"
         // sichtbar in die Gruppen "Historie + Speicher" und "Modelle + Modelle hochladen" eingebettet.
         const historyPane = document.getElementById('historySettings');

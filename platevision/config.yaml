@@ -1,7 +1,7 @@
 name: "PlateVision"
 slug: platevision
 description: PlateVision 
-version: "0.8.23"
+version: "0.8.25"
 arch:
   - amd64
 startup: services

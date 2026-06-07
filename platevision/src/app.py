@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.23 FastPlateOCR Vehicle Intelligence
+Version 0.8.25 FastPlateOCR Vehicle Intelligence
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -390,6 +390,7 @@ class ConfigManager:
             'min_vehicle_width': 80,
             'min_vehicle_height': 60,
             'duplicate_cooldown_per_frame': True,
+            'deduplicate_plates_per_frame': True,
         },
         'ocr': {
             'languages': ['en', 'de'],
@@ -704,7 +705,7 @@ class ConfigManager:
         return self._normalize_analysis_area(json.loads(json.dumps(self.DEFAULT_CONFIG)))
     
     def _migrate_config_for_0821(self, config, saved_config=None):
-        """Apply safe defaults for the 0.8.23 OCR/vehicle pipeline.
+        """Apply safe defaults for the 0.8.24 OCR/vehicle pipeline.
 
         This keeps EasyOCR available, but makes fast-plate-ocr the default OCR
         engine for both RTSP and upload analysis. Existing configs from older
@@ -714,7 +715,7 @@ class ConfigManager:
             ocr_cfg = config.setdefault('ocr', {})
             migration_cfg = config.setdefault('migration', {})
             old_engine = str(ocr_cfg.get('engine') or '').strip().lower()
-            # Apply the new 0.8.23 default once for old installations. After the
+            # Apply the new 0.8.24 default once for old installations. After the
             # flag is stored, a user can switch back to EasyOCR in the settings
             # and the next restart will keep that explicit choice.
             if not migration_cfg.get('fast_plate_ocr_default_applied'):
@@ -737,7 +738,7 @@ class ConfigManager:
             if 'bicycle' not in classes:
                 detection['vehicle_class_filter'] = list(classes) + ['bicycle']
 
-            # 0.8.23b: make live/test upload use the same robust plate-detector
+            # 0.8.24b: make live/test upload use the same robust plate-detector
             # settings that worked in the demo UI. This is applied once to older
             # saved configs because otherwise old thresholds can override the new
             # DEFAULT_CONFIG after merge_config().
@@ -774,7 +775,7 @@ class ConfigManager:
             area.setdefault('motion_gate_hold_seconds', 2.0)
             area.setdefault('motion_gate_idle_scan_seconds', 5.0)
             if not migration_cfg.get('rtsp_cpu_saver_area_applied_v1'):
-                # 0.8.23 CPU-Fix: Nicht mehr permanent das komplette Bild durch
+                # 0.8.24 CPU-Fix: Nicht mehr permanent das komplette Bild durch
                 # drei YOLO-Stufen schicken. Der verbindliche Straßenbereich wird
                 # vor der RTSP-Erkennung als gepolsterter Crop genutzt. Das Demo-
                 # Verhalten für Foto-Uploads bleibt unverändert.
@@ -797,7 +798,7 @@ class ConfigManager:
                 area.setdefault('crop_before_detection', True)
                 area.setdefault('mask_before_detection', False)
 
-            # 0.8.23c: persons should be stored with images like vehicle/plate detections.
+            # 0.8.24c: persons should be stored with images like vehicle/plate detections.
             # This is applied once to existing installations so the /people page gets
             # useful image history from Test & Upload and from the RTSP loop.
             people_cfg = config.setdefault('people', {})
@@ -820,7 +821,7 @@ class ConfigManager:
                 people_cfg['image_history_store_full_frame'] = False
                 migration_cfg['people_crop_only_display_applied_v1'] = True
         except Exception as exc:
-            logger.warning(f"0.8.23 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
+            logger.warning(f"0.8.24 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
         return config
 
     def _normalize_analysis_area(self, config):
@@ -1065,20 +1066,33 @@ class HistoryManager:
             self.save_history()
             return entry
     
+    def _unique_entries(self, entries, fuzzy=None):
+        """Return one visible row per license plate, newest row wins.
+
+        This is used by the History UI and API when "Nur einzigartige" is
+        active. It normalizes whitespace/dashes and can also group very similar
+        OCR variants using the configured fuzzy duplicate threshold.
+        """
+        seen = []
+        unique_entries = []
+        fuzzy_enabled = config_manager.get('history', 'fuzzy_duplicate_detection') if fuzzy is None else bool(fuzzy)
+        fuzzy_threshold = float(config_manager.get('history', 'fuzzy_duplicate_similarity') or 0.88)
+        for entry in entries or []:
+            normalized = self._normalize_plate(entry.get('plate_text') or entry.get('plate_text_normalized') or '')
+            if not normalized:
+                continue
+            is_duplicate = normalized in seen
+            if not is_duplicate and fuzzy_enabled:
+                is_duplicate = any(PlateUtils.similarity(normalized, old) >= fuzzy_threshold for old in seen)
+            if is_duplicate:
+                continue
+            seen.append(normalized)
+            unique_entries.append(entry)
+        return unique_entries
+
     def get_all(self, limit=100, offset=0, unique_only=False):
-        if unique_only:
-            seen = set()
-            unique_entries = []
-            
-            for entry in self.history:
-                normalized = self._normalize_plate(entry.get('plate_text', ''))
-                if normalized and normalized not in seen:
-                    seen.add(normalized)
-                    unique_entries.append(entry)
-            
-            return unique_entries[offset:offset + limit]
-        
-        return self.history[offset:offset + limit]
+        entries = self._unique_entries(self.history) if unique_only else list(self.history)
+        return entries[offset:offset + limit]
     
     def get_by_id(self, entry_id):
         for entry in self.history:
@@ -1136,7 +1150,20 @@ class HistoryManager:
 
         for key in ('source', 'vehicle_type', 'vehicle_color', 'plate_format'):
             val = filters.get(key)
-            if val and val != 'all' and str(entry.get(key, '')).lower() != str(val).lower():
+            if not val or val == 'all':
+                continue
+            wanted = str(val).strip().lower()
+            if key == 'vehicle_type':
+                candidates = [str(entry.get('vehicle_type', '')).lower(), str(entry.get('vehicle_type_en', '')).lower()]
+                # Accept both stable English values (car/truck/...) and visible German labels.
+                if not any(wanted == c or wanted in c or c in wanted for c in candidates if c):
+                    return False
+            elif key == 'source':
+                actual = str(entry.get(key, '')).lower()
+                source_aliases = {'rtsp_stream': 'rtsp', 'rtsp': 'rtsp_stream'}
+                if actual != wanted and actual != source_aliases.get(wanted):
+                    return False
+            elif str(entry.get(key, '')).lower() != wanted:
                 return False
 
         if filters.get('valid_only') and not entry.get('is_valid_plate', True):
@@ -1173,14 +1200,7 @@ class HistoryManager:
         entries = [e for e in self.history if self._entry_matches(e, filters)]
 
         if filters.get('unique'):
-            seen = set()
-            unique_entries = []
-            for entry in entries:
-                normalized = self._normalize_plate(entry.get('plate_text', ''))
-                if normalized and normalized not in seen:
-                    seen.add(normalized)
-                    unique_entries.append(entry)
-            entries = unique_entries
+            entries = self._unique_entries(entries)
 
         sort = filters.get('sort') or 'timestamp'
         reverse = (filters.get('order') or 'desc').lower() != 'asc'
@@ -2017,7 +2037,11 @@ class PersonHistoryManager:
             return {'success': True, 'deleted': 1, 'deleted_images': deleted_images, 'item': deleted}
 
     def image_history(self, filters=None):
-        filters = filters or {}
+        filters = dict(filters or {})
+        # Image galleries should show every stored crop, even if the event was not
+        # counted by the line-crossing logic. Otherwise Test & Upload can save
+        # six person entries but the /people image gallery appears empty.
+        filters.setdefault('counted_only', 'false')
         limit = int(filters.get('limit') or 60)
         offset = int(filters.get('offset') or 0)
         rows = []
@@ -2959,7 +2983,40 @@ class LicensePlateDetector:
             return self.human_model, False
         return self.coco_model, True
 
-    def _track_people(self, detections, frame_w, frame_h):
+    def _person_line_runtime_bounds(self, frame_w, frame_h, runtime_roi_polygon=None):
+        """Return the active person-counting line in detector coordinates.
+
+        The preview and live overlay can draw the line relative to the saved road ROI.
+        Counting must use the same basis, otherwise a visually adjusted line would not
+        match the actual crossing logic. runtime_roi_polygon is already in the current
+        detector frame/crop coordinate system when RTSP crops before YOLO.
+        """
+        cfg = self._person_config()
+        axis = str(cfg.get('movement_axis') or 'y').lower()
+        line_percent = max(1, min(99, float(cfg.get('virtual_line_position_percent') or 50)))
+        ax, ay, aw, ah = 0, 0, int(frame_w), int(frame_h)
+        if cfg.get('line_relative_to_roi') is not False and runtime_roi_polygon:
+            try:
+                pts = []
+                for pt in runtime_roi_polygon:
+                    if isinstance(pt, dict):
+                        pts.append((float(pt.get('x', 0)), float(pt.get('y', 0))))
+                    else:
+                        pts.append((float(pt[0]), float(pt[1])))
+                if len(pts) >= 3:
+                    xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+                    ax = max(0, int(min(xs))); ay = max(0, int(min(ys)))
+                    aw = max(1, min(int(frame_w) - ax, int(max(xs) - min(xs))))
+                    ah = max(1, min(int(frame_h) - ay, int(max(ys) - min(ys))))
+            except Exception:
+                ax, ay, aw, ah = 0, 0, int(frame_w), int(frame_h)
+        if axis == 'x':
+            value = ax + aw * line_percent / 100.0
+        else:
+            value = ay + ah * line_percent / 100.0
+        return {'axis': axis, 'percent': line_percent, 'x': ax, 'y': ay, 'width': aw, 'height': ah, 'value': value}
+
+    def _track_people(self, detections, frame_w, frame_h, runtime_roi_polygon=None):
         cfg = self._person_config()
         if not cfg.get('tracker_enabled', True):
             for index, det in enumerate(detections, start=1):
@@ -2972,9 +3029,9 @@ class LicensePlateDetector:
         now = time.time()
         max_distance = float(cfg.get('tracker_max_distance') or 120)
         timeout = float(cfg.get('tracker_timeout_seconds') or 8)
-        axis = (cfg.get('movement_axis') or 'y').lower()
-        line_percent = float(cfg.get('virtual_line_position_percent') or 50)
-        line_value = (frame_w if axis == 'x' else frame_h) * line_percent / 100.0
+        line_bounds = self._person_line_runtime_bounds(frame_w, frame_h, runtime_roi_polygon)
+        axis = line_bounds['axis']
+        line_value = float(line_bounds['value'])
         crossing_enabled = bool(cfg.get('line_crossing_enabled', True))
         crossing_direction = cfg.get('crossing_direction') or 'both'
         count_once = bool(cfg.get('count_once_per_track', True))
@@ -3180,19 +3237,22 @@ class LicensePlateDetector:
             logger.error(f"Personenerkennung Fehler: {e}")
             return []
 
-        people = self._track_people(people, frame_w, frame_h)
+        people = self._track_people(people, frame_w, frame_h, runtime_roi_polygon)
         if annotated is not None and cfg.get('draw_boxes', True):
-            axis = (cfg.get('movement_axis') or 'y').lower()
-            line_percent = float(cfg.get('virtual_line_position_percent') or 50)
+            line_bounds = self._person_line_runtime_bounds(frame_w, frame_h, runtime_roi_polygon)
+            axis = line_bounds['axis']
+            line_percent = line_bounds['percent']
             if cfg.get('line_crossing_enabled', True):
                 if axis == 'y':
-                    y = int(frame_h * line_percent / 100.0)
-                    cv2.line(annotated, (0, y), (frame_w, y), (34, 211, 238), 2)
-                    cv2.putText(annotated, 'Personen-Zaehllinie', (10, max(20, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (34, 211, 238), 2)
+                    y = int(line_bounds['value'])
+                    x1 = max(0, int(line_bounds['x'])); x2 = min(frame_w - 1, int(line_bounds['x'] + line_bounds['width']))
+                    cv2.line(annotated, (x1, y), (x2, y), (34, 211, 238), 2)
+                    cv2.putText(annotated, f'Personen-Zaehllinie {line_percent:.0f}%', (max(10, x1 + 8), max(20, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (34, 211, 238), 2)
                 else:
-                    x = int(frame_w * line_percent / 100.0)
-                    cv2.line(annotated, (x, 0), (x, frame_h), (34, 211, 238), 2)
-                    cv2.putText(annotated, 'Personen-Zaehllinie', (min(frame_w - 220, x + 8), 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (34, 211, 238), 2)
+                    x = int(line_bounds['value'])
+                    y1 = max(0, int(line_bounds['y'])); y2 = min(frame_h - 1, int(line_bounds['y'] + line_bounds['height']))
+                    cv2.line(annotated, (x, y1), (x, y2), (34, 211, 238), 2)
+                    cv2.putText(annotated, f'Personen-Zaehllinie {line_percent:.0f}%', (min(frame_w - 220, x + 8), max(24, y1 + 24)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (34, 211, 238), 2)
             for person in people:
                 x1, y1, x2, y2 = person['bbox']
                 color = (16, 185, 129) if person.get('counted') else (245, 158, 11)
@@ -3242,10 +3302,28 @@ class LicensePlateDetector:
             annotated = frame.copy()
             detected_vehicles = []
             frame_h, frame_w = frame.shape[:2]
+            seen_frame_plate_keys = []
+            frame_dup_threshold = float(self.config_manager.get('history', 'fuzzy_duplicate_similarity') or 0.88)
+            frame_duplicate_setting = self.config_manager.get('detection', 'deduplicate_plates_per_frame')
+            if frame_duplicate_setting is None:
+                frame_duplicate_setting = self.config_manager.get('detection', 'duplicate_cooldown_per_frame')
+            frame_duplicate_filter_enabled = frame_duplicate_setting is not False
             
             # Fahrzeugerkennung
             if self.coco_model and self.config_manager.get('detection', 'car_detection_enabled'):
-                vehicle_results = self.coco_model(frame, conf=confidence_threshold, verbose=False, **self._yolo_runtime_kwargs())[0]
+                vehicle_kwargs = {'conf': float(confidence_threshold), 'verbose': False}
+                try:
+                    vehicle_imgsz = self.config_manager.get('detection', 'vehicle_detector_imgsz')
+                    if vehicle_imgsz:
+                        vehicle_kwargs['imgsz'] = max(32, int(vehicle_imgsz))
+                    vehicle_iou = self.config_manager.get('detection', 'vehicle_detector_iou')
+                    if vehicle_iou is not None:
+                        vehicle_kwargs['iou'] = max(0.01, min(1.0, float(vehicle_iou)))
+                except Exception as exc:
+                    logger.debug(f"Fahrzeug-YOLO Runtime-Werte konnten nicht komplett gelesen werden: {exc}")
+                vehicle_kwargs.update(self._yolo_runtime_kwargs())
+                logger.debug(f"[Analyse] Fahrzeug-YOLO startet: conf={vehicle_kwargs.get('conf')} iou={vehicle_kwargs.get('iou')} imgsz={vehicle_kwargs.get('imgsz')} shape={frame.shape[:2]}")
+                vehicle_results = self.coco_model.predict(frame, **vehicle_kwargs)[0]
                 
                 for detection in vehicle_results.boxes.data.tolist():
                     x1, y1, x2, y2, score, class_id = detection
@@ -3423,10 +3501,18 @@ class LicensePlateDetector:
                                 cv2.rectangle(annotated, (orig_px1, orig_py1), (orig_px2, orig_py2), (0, 165, 255), 2)
                             continue
                         
+                        normalized_frame_plate = PlateUtils.normalize(plate_text, compact=True)
+                        if frame_duplicate_filter_enabled and normalized_frame_plate:
+                            if any(normalized_frame_plate == old_plate or PlateUtils.similarity(normalized_frame_plate, old_plate) >= frame_dup_threshold for old_plate in seen_frame_plate_keys):
+                                logger.info(f"[Analyse] Kennzeichen im selben Frame übersprungen: {plate_text}")
+                                continue
+                            seen_frame_plate_keys.append(normalized_frame_plate)
+
                         duplicate_detection = False
                         if filter_duplicates:
                             duplicate_detection = self._is_duplicate(plate_text)
                             if duplicate_detection:
+                                logger.info(f"[Analyse] Kennzeichen durch Historie-Duplikatsperre übersprungen: {plate_text}")
                                 continue
                         
                         if vehicle is None:
@@ -3613,57 +3699,42 @@ def dashboard():
 @app.route('/history')
 def history():
     # Parameter aus URL lesen
-    page_num = request.args.get('page', 1, type=int)
+    page_num = max(1, request.args.get('page', 1, type=int) or 1)
     per_page = 20
     search = request.args.get('search', '')
-    unique_only = request.args.get('unique', 'false').lower() == 'true'
+    unique_param = request.args.get('unique')
+    # In der sichtbaren Historie wird standardmäßig jedes Kennzeichen nur einmal angezeigt.
+    # Wer alle Ereignisse sehen möchte, kann den Schalter deaktivieren; dann wird unique=false gesetzt.
+    unique_only = str(unique_param).lower() not in ('false', '0', 'no', 'off', 'nein') if unique_param is not None else True
     source_filter = request.args.get('source', '')
     vehicle_type_filter = request.args.get('vehicle_type', '')
     sort_order = request.args.get('sort', 'newest')
 
-    # Basis-Einträge holen
-    if search:
-        entries = history_manager.search(search)
-    else:
-        entries = history_manager.get_all(limit=10000, unique_only=unique_only)
-
-    # ============================================
-    # FILTER ANWENDEN
-    # ============================================
-    
-    # Quelle filtern
-    if source_filter:
-        entries = [e for e in entries if e.get('source', '') == source_filter]
-
-    # Fahrzeugtyp filtern (case-insensitive)
-    if vehicle_type_filter:
-        entries = [e for e in entries 
-                   if e.get('vehicle_type', '').upper() == vehicle_type_filter.upper()]
-
-    # ============================================
-    # SORTIERUNG ANWENDEN
-    # ============================================
-    
+    filters = {
+        'q': search,
+        'source': source_filter,
+        'vehicle_type': vehicle_type_filter,
+        'unique': unique_only,
+        'limit': 100000,
+        'offset': 0,
+    }
     if sort_order == 'oldest':
-        entries = sorted(entries, key=lambda x: x.get('timestamp', ''), reverse=False)
+        filters.update({'sort': 'timestamp', 'order': 'asc'})
     elif sort_order == 'confidence':
-        entries = sorted(entries, key=lambda x: x.get('confidence', 0) or 0, reverse=True)
-    else:  # 'newest' (default)
-        entries = sorted(entries, key=lambda x: x.get('timestamp', ''), reverse=True)
+        filters.update({'sort': 'confidence', 'order': 'desc'})
+    else:
+        filters.update({'sort': 'timestamp', 'order': 'desc'})
 
-    # ============================================
-    # PAGINATION
-    # ============================================
-    
+    search_result = history_manager.search_advanced(filters)
+    entries = search_result.get('entries', [])
+
     total_filtered = len(entries)
     total_all = len(history_manager.history)
-    
+
     # Pagination anwenden
     start_idx = (page_num - 1) * per_page
     end_idx = start_idx + per_page
     paginated_entries = entries[start_idx:end_idx]
-
-    # Seitenzahl berechnen
     total_pages = max(1, (total_filtered + per_page - 1) // per_page)
 
     return render_template('history.html',
@@ -4133,17 +4204,17 @@ def api_save_about_config():
 
 @app.route('/api/history')
 def api_get_history():
-    limit = request.args.get('limit', 100, type=int)
-    offset = request.args.get('offset', 0, type=int)
-    search = request.args.get('search', '')
-    unique_only = request.args.get('unique', 'false').lower() == 'true'
-    
-    if search:
-        entries = history_manager.search(search)
-    else:
-        entries = history_manager.get_all(limit=limit, offset=offset, unique_only=unique_only)
-    
-    return jsonify({'entries': entries, 'total': len(history_manager.history)})
+    filters = request.args.to_dict()
+    filters.setdefault('limit', request.args.get('limit', 100, type=int) or 100)
+    filters.setdefault('offset', request.args.get('offset', 0, type=int) or 0)
+    # Backwards compatible: search=... and q=... mean the same thing.
+    if filters.get('search') and not filters.get('q'):
+        filters['q'] = filters.get('search')
+    for key in ('unique', 'regex', 'fuzzy', 'valid_only', 'watchlist_only'):
+        if key in filters:
+            filters[key] = str(filters[key]).lower() in ('true', '1', 'yes', 'on', 'ja')
+    result = history_manager.search_advanced(filters)
+    return jsonify({'entries': result.get('entries', []), 'total': result.get('total', 0), 'total_all': len(history_manager.history), 'limit': result.get('limit'), 'offset': result.get('offset')})
 
 @app.route('/api/history/<entry_id>', methods=['GET'])
 def api_get_history_entry(entry_id):
@@ -4172,7 +4243,7 @@ def api_history_search():
     filters = filters or {}
     for key in ('unique', 'regex', 'fuzzy', 'valid_only', 'watchlist_only'):
         if key in filters:
-            filters[key] = str(filters[key]).lower() in ('true', '1', 'yes', 'on')
+            filters[key] = str(filters[key]).lower() in ('true', '1', 'yes', 'on', 'ja')
     return jsonify(history_manager.search_advanced(filters))
 
 @app.route('/api/history/facets')
@@ -4184,6 +4255,9 @@ def api_history_export():
     fmt = request.args.get('format', 'csv').lower()
     filters = request.args.to_dict()
     filters['limit'] = int(filters.get('limit') or 100000)
+    for key in ('unique', 'regex', 'fuzzy', 'valid_only', 'watchlist_only'):
+        if key in filters:
+            filters[key] = str(filters[key]).lower() in ('true', '1', 'yes', 'on', 'ja')
     rows = history_manager.search_advanced(filters)['entries']
     filename = f"platevision_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     fields = ['timestamp', 'plate_text', 'plate_text_normalized', 'confidence', 'source', 'vehicle_type', 'vehicle_color', 'vehicle_color_hex', 'plate_country_display', 'plate_country', 'plate_country_prob', 'ocr_engine', 'ocr_model', 'plate_format', 'is_valid_plate', 'filename']
@@ -4199,7 +4273,7 @@ def api_history_export():
 @app.route('/api/dashboard/overview')
 def api_dashboard_overview():
     stats = history_manager.get_statistics()
-    latest = history_manager.get_all(limit=12)
+    latest = history_manager.get_all(limit=12, unique_only=True)
     status = stream_manager.get_status()
     return jsonify({
         'statistics': stats,
@@ -4528,6 +4602,7 @@ def api_process_image():
                 saved_person_event = person_history_manager.add_event(event, frame=image, annotated_frame=result.get('annotated_frame'))
                 if saved_person_event:
                     person.update({k: saved_person_event.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved_person_event})
+                    logger.info('[TestUpload] Person gespeichert: id=%s counted=%s images=%s', saved_person_event.get('id'), saved_person_event.get('counted'), list((saved_person_event.get('images') or {}).keys()))
         
         _attach_person_crop_previews(result.get('people', []), image)
         safe_detections = _json_safe(result.get('detections', []))
@@ -4826,7 +4901,7 @@ def _json_safe(value, _seen=None):
 
     The live detector keeps OpenCV crops as numpy arrays and some nested helper
     dicts for debugging. Flask cannot serialize numpy objects, and a bug in the
-    first 0.8.23 build created a color palette self-reference. This helper also
+    first 0.8.24 build created a color palette self-reference. This helper also
     protects future API responses against circular references.
     """
     if _seen is None:
@@ -5229,6 +5304,11 @@ def _people_settings_summary(cfg=None):
         'export_default_format': cfg.get('export_default_format'),
         'retention_days': cfg.get('retention_days'),
         'auto_cleanup_enabled': bool(cfg.get('auto_cleanup_enabled')),
+        'image_history_enabled': bool(cfg.get('image_history_enabled')),
+        'image_history_retention_days': cfg.get('image_history_retention_days'),
+        'person_recount_block_enabled': bool(cfg.get('person_recount_block_enabled')),
+        'person_recount_block_minutes': cfg.get('person_recount_block_minutes'),
+        'person_recount_identity_mode': cfg.get('person_recount_identity_mode'),
         'simulation_enabled': bool(cfg.get('simulation_enabled')),
         'alert_threshold_per_hour': cfg.get('alert_threshold_per_hour')
     }
@@ -5824,7 +5904,7 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.23',
+        'version': '0.8.25',
         'edition': 'FastPlateOCR + YOLO Vehicle Intelligence',
         'features': [
             'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
@@ -6050,8 +6130,8 @@ def api_test_settings():
             'models': _scan_model_files(),
             'model_status': {
                 'models_loaded': bool(getattr(detector, 'models_loaded', False)),
-                'plate_model_loaded': bool(getattr(detector, 'plate_model', None)),
-                'vehicle_model_loaded': bool(getattr(detector, 'vehicle_model', None)),
+                'plate_model_loaded': bool(getattr(detector, 'license_model', None)),
+                'vehicle_model_loaded': bool(getattr(detector, 'coco_model', None)),
                 'human_model_loaded': bool(getattr(detector, 'human_model', None)),
                 'ocr_engine': config_manager.get('ocr', 'engine') or 'fast_plate_ocr'
             }
@@ -6085,7 +6165,10 @@ def api_test_settings():
         if people_cfg.get('image_history_enabled', True):
             people_cfg['save_person_crops'] = True
             people_cfg['image_history_store_crop'] = True
-            people_cfg.setdefault('image_history_store_annotated', True)
+            # Personenansicht soll nur Personen-Crops zeigen/speichern, keine kompletten Frames.
+            people_cfg['image_history_store_annotated'] = False
+            people_cfg['save_full_frame'] = False
+            people_cfg['image_history_store_full_frame'] = False
 
         config_manager.save_config()
 
@@ -6372,11 +6455,30 @@ def api_save_traffic_config():
 @app.route('/api/people/settings-state')
 def api_people_settings_state():
     cfg = config_manager.get('people') or {}
+    # Give the browser the same preview geometry that the calibration image uses.
+    # This makes the Personen-Zaehl-Linie on /people clickable/draggable again,
+    # also when the line is relative to the stored road ROI.
+    preview_frame = stream_manager.get_raw_frame()
+    if preview_frame is None:
+        preview_frame = stream_manager.get_current_frame()
+    if preview_frame is not None:
+        try:
+            preview_h, preview_w = preview_frame.shape[:2]
+        except Exception:
+            preview_w, preview_h = 1280, 720
+    else:
+        preview_w, preview_h = 1280, 720
+    road_roi = _scaled_road_roi_for_frame(preview_w, preview_h)
     return jsonify({
         'success': True,
-        'people': cfg,
+        'people': _json_safe(cfg),
         'summary': _people_settings_summary(cfg),
         'stream_status': stream_manager.get_status(),
+        'preview': {
+            'width': int(preview_w),
+            'height': int(preview_h),
+            'road_roi': _json_safe(road_roi)
+        },
         'models': _scan_model_files(),
         'model_status': {
             'models_loaded': detector.models_loaded,
@@ -6497,16 +6599,28 @@ def api_people_test_snapshot():
     if frame is None:
         return jsonify({'success': False, 'error': 'Kein Live-Frame verfügbar. Es wird in den Einstellungen automatisch ein Fallback-Bild für die Kalibrierung angezeigt.'}), 400
     previous_enabled = config_manager.get('people', 'enabled')
+    cfg = dict(config_manager.get('people') or {})
     config_manager.config.setdefault('people', {})['enabled'] = True
     try:
         result = detector.process_frame(frame)
         annotated = _draw_people_calibration_overlay(result.get('annotated_frame'), config_manager.get('people') or {}, source_label='RTSP Live-Frame')
-        _, buffer = cv2.imencode('.jpg', annotated)
-        _attach_person_crop_previews(result.get('people', []), frame)
+        people = result.get('people', []) or []
+        history_saved = 0
+        for person in people:
+            if person.get('counted') or cfg.get('save_all_detections') or cfg.get('image_history_enabled'):
+                event = dict(person)
+                event.update({'source': 'people_live_snapshot', 'filename': 'rtsp_snapshot'})
+                saved = person_history_manager.add_event(event, frame=frame, annotated_frame=annotated)
+                if saved:
+                    person.update({k: saved.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved})
+                    history_saved += 1
+        _attach_person_crop_previews(people, frame)
+        logger.info(f"[PeopleSnapshot] Fertig: people={len(people)} history_saved={history_saved}")
         return jsonify({
             'success': True,
-            'people': _json_safe(result.get('people', [])),
-            'people_counted': sum(1 for p in result.get('people', []) if p.get('counted')),
+            'people': _json_safe(people),
+            'people_counted': sum(1 for p in people if p.get('counted')),
+            'history_saved': history_saved,
             'result_image': '',
             'processing_time': result.get('processing_time', 0)
         })
@@ -6557,24 +6671,27 @@ def _handle_people_image_analysis(source_name='people_upload'):
         original_people = json.loads(json.dumps(config_manager.config.get('people') or {}, ensure_ascii=False))
         config_manager.config['people'] = effective_cfg
         try:
+            logger.info(f"[PeopleUpload] Analyse gestartet: source={source_name} force_enable={force_enable} save_history={save_to_history} image_history={effective_cfg.get('image_history_enabled')} file={payload['filename']}")
             result = detector.process_frame(payload['image'])
+
+            annotated = result.get('annotated_frame') if result.get('annotated_frame') is not None else payload['image'].copy()
+            # Ensure the calibration line and zone are visible even when no person is detected.
+            annotated = _draw_people_calibration_overlay(annotated, effective_cfg, source_label='Upload-Bild')
+
+            history_saved = 0
+            if save_to_history and (effective_cfg.get('history_enabled') is not False):
+                for person in result.get('people', []):
+                    if person.get('counted') or effective_cfg.get('save_all_detections') or effective_cfg.get('image_history_enabled'):
+                        event = dict(person)
+                        event.update({'source': source_name, 'filename': saved_filename})
+                        saved_person_event = person_history_manager.add_event(event, frame=payload['image'], annotated_frame=annotated)
+                        if saved_person_event:
+                            person.update({k: saved_person_event.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved_person_event})
+                            history_saved += 1
+                            logger.info(f"[PeopleUpload] Person gespeichert: id={saved_person_event.get('id')} counted={saved_person_event.get('counted')} images={list((saved_person_event.get('images') or {}).keys())}")
+            logger.info(f"[PeopleUpload] Fertig: people={len(result.get('people', []) or [])} history_saved={history_saved}")
         finally:
             config_manager.config['people'] = original_people
-
-        annotated = result.get('annotated_frame') if result.get('annotated_frame') is not None else payload['image'].copy()
-        # Ensure the calibration line and zone are visible even when no person is detected.
-        annotated = _draw_people_calibration_overlay(annotated, effective_cfg, source_label='Upload-Bild')
-
-        history_saved = 0
-        if save_to_history and (effective_cfg.get('history_enabled') is not False):
-            for person in result.get('people', []):
-                if person.get('counted') or effective_cfg.get('save_all_detections') or effective_cfg.get('image_history_enabled'):
-                    event = dict(person)
-                    event.update({'source': source_name, 'filename': saved_filename})
-                    saved_person_event = person_history_manager.add_event(event, frame=payload['image'], annotated_frame=annotated)
-                    if saved_person_event:
-                        person.update({k: saved_person_event.get(k) for k in ('id', 'counted', 'event_type', 'repeat_blocked', 'repeat_block_minutes', 'repeat_match_id', 'images', 'note') if k in saved_person_event})
-                        history_saved += 1
 
         people = result.get('people', []) or []
         _attach_person_crop_previews(people, payload['image'])
@@ -6626,7 +6743,7 @@ def api_people_cleanup():
 
 @app.route('/api/people/test/simulate', methods=['POST'])
 def api_people_test_simulate():
-    return jsonify({'success': False, 'error': 'Demo-Daten wurden in Version 0.8.23 entfernt. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
+    return jsonify({'success': False, 'error': 'Demo-Daten wurden in Version 0.8.25 entfernt. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
 
 @app.route('/api/system/health')
 def api_system_health():
@@ -6643,7 +6760,7 @@ def api_system_health():
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.23'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.25'})
 
 
 @app.route('/api/system/audit')
@@ -6740,7 +6857,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.23 FastPlateOCR Vehicle Intelligence                                    ║
+    ║     Version 0.8.25 FastPlateOCR Vehicle Intelligence                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║
