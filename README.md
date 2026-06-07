@@ -388,3 +388,10 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 - Personen-Zähllinie auf der Personenanalyse-Seite wieder direkt einstellbar.
 - Linienposition, Achse, Richtung und ROI-Bezug können gespeichert und sofort für RTSP angewendet werden.
 - Test & Upload synchronisiert die Personen-Linie wieder sauber mit dem RTSP-Profil.
+
+
+## Version 0.8.28
+
+- Dashboard komplett vereinfacht: letztes Auto, letzte Person und Tageszahlen ohne Modell-Details.
+- RTSP/Webstream-Autostart nach Docker-/Home-Assistant-Neustart als Einstellung ergänzt.
+- Beispiele im Ordner `examples/` aktualisiert und veraltete Beispiele entfernt.

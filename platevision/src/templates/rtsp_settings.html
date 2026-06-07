@@ -104,6 +104,26 @@
                         Höhere Auflösungen = bessere Erkennung, aber mehr CPU-Last.
                         Für die meisten Kameras ist 1280×720 oder 1920×1080 optimal.
                     </div>
+
+                    <h6 class="mb-3">
+                        <i class="fas fa-power-off me-2 text-success"></i>
+                        Automatischer Start
+                    </h6>
+                    <div class="row g-3 mb-4 align-items-end">
+                        <div class="col-md-7">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="rtspAutoStart" {% if config.auto_start is defined and config.auto_start %}checked{% endif %}>
+                                <label class="form-check-label" for="rtspAutoStart">
+                                    <strong>Web-/RTSP-Stream nach Neustart automatisch starten</strong>
+                                    <br><small class="text-secondary">Gilt nach Docker-Container- oder Home-Assistant-Neustart.</small>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label">Startverzögerung Sekunden</label>
+                            <input type="number" class="form-control" id="rtspAutoStartDelay" min="0" max="60" step="1" value="{{ config.auto_start_delay_seconds if config.auto_start_delay_seconds is defined else 3 }}">
+                        </div>
+                    </div>
                     
                     <hr class="my-4">
                     
@@ -717,6 +737,12 @@ async function loadConfiguration() {
         if (rtspConfig.hw_acceleration) {
             document.getElementById('hwAcceleration').checked = rtspConfig.hw_acceleration;
         }
+        if (document.getElementById('rtspAutoStart')) {
+            document.getElementById('rtspAutoStart').checked = !!rtspConfig.auto_start;
+        }
+        if (document.getElementById('rtspAutoStartDelay') && rtspConfig.auto_start_delay_seconds !== undefined) {
+            document.getElementById('rtspAutoStartDelay').value = rtspConfig.auto_start_delay_seconds;
+        }
 
         const areaConfig = rtspConfig.analysis_area || {};
         isAreaEnabled = areaConfig.enabled || false;
@@ -845,11 +871,11 @@ function setupEventListeners() {
     // Bild geladen
     document.getElementById('previewImage').addEventListener('load', function() {
         previewLoaded = true;
-        document.getElementById('noStreamPlaceholder').style.display = 'none';
-        this.style.display = 'block';
+        pvSetStyle('noStreamPlaceholder', 'display', 'none');
+        if (this) this.style.display = 'block';
         
         const canvas = document.getElementById('selectionCanvas');
-        canvas.style.pointerEvents = 'auto';
+        if (canvas) canvas.style.pointerEvents = 'auto';
         syncStreamSizeFromImage(this);
         updateCanvasSize();
         drawSelection();
@@ -857,9 +883,9 @@ function setupEventListeners() {
     
     document.getElementById('previewImage').addEventListener('error', function() {
         previewLoaded = false;
-        this.style.display = 'none';
-        document.getElementById('selectionCanvas').style.pointerEvents = 'none';
-        document.getElementById('noStreamPlaceholder').style.display = 'flex';
+        if (this) this.style.display = 'none';
+        pvSetStyle('selectionCanvas', 'pointerEvents', 'none');
+        pvSetStyle('noStreamPlaceholder', 'display', 'flex');
     });
     
     // Window Resize
@@ -1023,27 +1049,27 @@ function updateStreamStatusUI(status) {
     }
     
     // Buttons
-    document.getElementById('btnStartStream').style.display = isRunning ? 'none' : 'block';
-    document.getElementById('btnStopStream').style.display = isRunning ? 'block' : 'none';
+    pvSetStyle('btnStartStream', 'display', isRunning ? 'none' : 'block');
+    pvSetStyle('btnStopStream', 'display', isRunning ? 'block' : 'none');
     
     // Error
     const errorDiv = document.getElementById('streamError');
     if (status.error && !isConnected) {
-        errorDiv.style.display = 'block';
+        if (errorDiv) errorDiv.style.display = 'block';
         document.getElementById('streamErrorText').textContent = status.error;
     } else {
-        errorDiv.style.display = 'none';
+        if (errorDiv) errorDiv.style.display = 'none';
     }
     
     // Stats
     const statsDiv = document.getElementById('streamStats');
     if (isRunning) {
-        statsDiv.style.display = 'block';
+        if (statsDiv) statsDiv.style.display = 'block';
         document.getElementById('statFps').textContent = status.fps || 0;
         document.getElementById('statFrames').textContent = formatNumber(status.frame_count || 0);
         document.getElementById('statDetections').textContent = status.detection_count || 0;
     } else {
-        statsDiv.style.display = 'none';
+        if (statsDiv) statsDiv.style.display = 'none';
     }
 }
 
@@ -1063,18 +1089,18 @@ function loadPreviewImage() {
     const canvas = document.getElementById('selectionCanvas');
 
     if (!previewLoaded) {
-        canvas.style.pointerEvents = 'none';
-        placeholder.style.display = 'flex';
-        placeholder.style.pointerEvents = 'auto';
+        if (canvas) canvas.style.pointerEvents = 'none';
+        if (placeholder) placeholder.style.display = 'flex';
+        if (placeholder) placeholder.style.pointerEvents = 'auto';
         placeholder.innerHTML = `
             <div class="spinner-border text-primary mb-3" role="status"></div>
             <p class="text-secondary">Lade Vorschau...</p>
         `;
     } else {
         // Bei bereits geladener Vorschau darf das Overlay die Mausbedienung nicht blockieren.
-        placeholder.style.display = 'none';
-        placeholder.style.pointerEvents = 'none';
-        canvas.style.pointerEvents = 'auto';
+        if (placeholder) placeholder.style.display = 'none';
+        if (placeholder) placeholder.style.pointerEvents = 'none';
+        if (canvas) canvas.style.pointerEvents = 'auto';
     }
 
     img.src = '/api/stream/snapshot?' + Date.now();
@@ -1084,10 +1110,10 @@ function loadPreviewImage() {
     setTimeout(() => {
         if (img.complete && img.naturalWidth > 0) {
             previewLoaded = true;
-            img.style.display = 'block';
-            placeholder.style.display = 'none';
-            placeholder.style.pointerEvents = 'none';
-            canvas.style.pointerEvents = 'auto';
+            if (img) img.style.display = 'block';
+            if (placeholder) placeholder.style.display = 'none';
+            if (placeholder) placeholder.style.pointerEvents = 'none';
+            if (canvas) canvas.style.pointerEvents = 'auto';
             syncStreamSizeFromImage(img);
             updateCanvasSize();
             drawSelection();
@@ -1123,7 +1149,7 @@ function syncStreamSizeFromImage(img) {
 function applyPreviewAspectRatio() {
     const container = document.getElementById('previewContainer');
     if (!container || !streamWidth || !streamHeight) return;
-    container.style.aspectRatio = `${streamWidth} / ${streamHeight}`;
+    if (container) container.style.aspectRatio = `${streamWidth} / ${streamHeight}`;
 }
 
 function updateCanvasSize() {
@@ -1138,10 +1164,10 @@ function updateCanvasSize() {
     const left = Math.round((containerRect.width - displayWidth) / 2);
     const top = Math.round((containerRect.height - displayHeight) / 2);
 
-    canvas.style.left = left + 'px';
-    canvas.style.top = top + 'px';
-    canvas.style.width = displayWidth + 'px';
-    canvas.style.height = displayHeight + 'px';
+    if (canvas) canvas.style.left = left + 'px';
+    if (canvas) canvas.style.top = top + 'px';
+    if (canvas) canvas.style.width = displayWidth + 'px';
+    if (canvas) canvas.style.height = displayHeight + 'px';
     canvas.width = streamWidth;
     canvas.height = streamHeight;
 
@@ -1234,7 +1260,7 @@ function startInteraction(e) {
         isDrawing = true;
         dragMode = 'polygon-point';
         activePointIndex = nearest;
-        canvas.style.cursor = 'grabbing';
+        if (canvas) canvas.style.cursor = 'grabbing';
         drawSelection();
         return;
     }
@@ -1243,7 +1269,7 @@ function startInteraction(e) {
         isDrawing = true;
         dragMode = 'polygon-pan';
         activePointIndex = -1;
-        canvas.style.cursor = 'move';
+        if (canvas) canvas.style.cursor = 'move';
         drawSelection();
         return;
     }
@@ -1263,11 +1289,11 @@ function handleCanvasPointerMove(e) {
     const nearest = getNearestPolygonPoint(coords);
     const canvas = document.getElementById('selectionCanvas');
     if (nearest >= 0) {
-        canvas.style.cursor = 'grab';
+        if (canvas) canvas.style.cursor = 'grab';
     } else if (isPointInPolygon(coords, polygonPoints)) {
-        canvas.style.cursor = 'move';
+        if (canvas) canvas.style.cursor = 'move';
     } else {
-        canvas.style.cursor = 'crosshair';
+        if (canvas) canvas.style.cursor = 'crosshair';
     }
 }
 
@@ -1541,11 +1567,11 @@ function updateAreaUI() {
     document.getElementById('maskOutsideArea').checked = maskOutsideArea;
 
     if (isAreaEnabled) {
-        controls.style.display = 'block';
+        if (controls) controls.style.display = 'block';
         badge.textContent = 'Straßenbereich aktiv';
         badge.className = 'badge bg-success';
     } else {
-        controls.style.display = 'none';
+        if (controls) controls.style.display = 'none';
         badge.textContent = 'Deaktiviert';
         badge.className = 'badge bg-secondary';
     }
@@ -1754,6 +1780,10 @@ function saveRtspSettings() {
         url: document.getElementById('rtspUrl').value,
         reconnect_delay: parseInt(document.getElementById('reconnectDelay').value) || 5,
         buffer_size: parseInt(document.getElementById('bufferSize').value) || 10,
+        autostart_enabled: document.getElementById('rtspAutoStart') ? document.getElementById('rtspAutoStart').checked : false,
+        autostart_delay_seconds: parseInt(document.getElementById('rtspAutoStartDelay')?.value || '3') || 3,
+        auto_start: document.getElementById('rtspAutoStart') ? document.getElementById('rtspAutoStart').checked : false,
+        auto_start_delay_seconds: parseInt(document.getElementById('rtspAutoStartDelay')?.value || '3') || 3,
         resolution: {
             width: parseInt(document.getElementById('streamWidth').value) || 1280,
             height: parseInt(document.getElementById('streamHeight').value) || 720
@@ -1876,7 +1906,7 @@ function testConnection() {
     const resultCard = document.getElementById('testResultCard');
     const resultDiv = document.getElementById('testResult');
     
-    resultCard.style.display = 'block';
+    if (resultCard) resultCard.style.display = 'block';
     resultDiv.innerHTML = `
         <div class="d-flex align-items-center gap-3">
             <div class="spinner-border text-primary" role="status"></div>
@@ -1987,7 +2017,7 @@ function createToastContainer() {
     const container = document.createElement('div');
     container.id = 'toastContainer';
     container.className = 'toast-container position-fixed bottom-0 end-0 p-3';
-    container.style.zIndex = '9999';
+    if (container) container.style.zIndex = '9999';
     document.body.appendChild(container);
     return container;
 }

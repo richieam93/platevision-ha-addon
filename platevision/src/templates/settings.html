@@ -483,6 +483,7 @@
                                 </div>
                             </div>
 
+
                             <div class="d-flex gap-2 mt-4">
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-save me-2"></i>Einstellungen speichern
@@ -1378,6 +1379,31 @@
                             
                             <div class="setting-group">
                                 <div class="setting-group-title">
+                                    <i class="fas fa-broadcast-tower"></i>
+                                    RTSP Autostart
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="settingsRtspAutostart" {% if config.rtsp is defined and config.rtsp.autostart_enabled %}checked{% endif %}>
+                                            <label class="form-check-label" for="settingsRtspAutostart">
+                                                <strong>Webstream nach Neustart automatisch starten</strong>
+                                                <br><small class="text-secondary">Gilt nach Docker-/Home-Assistant-Neustart.</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Startverzögerung</label>
+                                        <div class="input-group">
+                                            <input type="number" class="form-control" id="settingsRtspAutostartDelay" min="0" max="120" value="{{ config.rtsp.autostart_delay_seconds if config.rtsp is defined and config.rtsp.autostart_delay_seconds is defined else 3 }}">
+                                            <span class="input-group-text">Sek.</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="setting-group">
+                                <div class="setting-group-title">
                                     <i class="fas fa-bug"></i>
                                     Entwickler
                                 </div>
@@ -1409,6 +1435,7 @@
                                     <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="compactNumbers" {% if config.general.compact_numbers is defined and config.general.compact_numbers %}checked{% endif %}><label class="form-check-label" for="compactNumbers">Kompakte Zahlen</label></div></div>
                                 </div>
                             </div>
+
 
                             <div class="d-flex gap-2 mt-4">
                                 <button type="submit" class="btn btn-primary">
@@ -2005,7 +2032,7 @@
                             <div class="setting-group">
                                 <div class="setting-group-title"><i class="fas fa-clock-rotate-left"></i>History, Datenschutz & Testumgebung</div>
                                 <div class="row g-3">
-                                    <div class="col-md-3"><label class="form-label">Session-Lücke min</label><input type="number" class="form-control" id="peopleSessionGap" min="1" max="240" value="{{ config.people.session_gap_minutes if config.people is defined and config.people.session_gap_minutes is defined else 5 }}"></div>
+                                    <div class="col-md-3"><label class="form-label">Session-Lücke min</label><input type="number" class="form-control" id="peopleSessionGap" min="1" max="240" value="{{ config.people.session_gap_minutes if config.people is defined and config.people.session_gap_minutes is defined else 3 }}"></div>
                                     <div class="col-md-3"><label class="form-label">Anwesend Timeout min</label><input type="number" class="form-control" id="peoplePresentTimeout" min="1" max="240" value="{{ config.people.present_timeout_minutes if config.people is defined and config.people.present_timeout_minutes is defined else 10 }}"></div>
                                     <div class="col-md-3"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleSaveAll" {% if config.people is defined and config.people.save_all_detections %}checked{% endif %}><label class="form-check-label" for="peopleSaveAll">Alle Detections speichern</label></div></div>
                                     <div class="col-md-3"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="peopleTestEnvironment" {% if config.people is not defined or config.people.test_environment_enabled %}checked{% endif %}><label class="form-check-label" for="peopleTestEnvironment">Testumgebung aktiv</label></div></div>
@@ -2079,7 +2106,7 @@
                                 <table class="table table-sm text-start">
                                     <tr>
                                         <td class="text-secondary">Version</td>
-                                        <td class="fw-bold">0.8.26 FastPlateOCR + YOLO Vehicle Intelligence</td>
+                                        <td class="fw-bold">0.8.28 FastPlateOCR + YOLO Vehicle Intelligence</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">YOLO Version</td>
@@ -2466,6 +2493,12 @@
                 compact_numbers: pvBool('compactNumbers'),
                 site_name: pvStr('siteName', 'PlateVision Standort'),
                 operator_name: pvStr('operatorName', '')
+            },
+            rtsp: {
+                autostart_enabled: pvBool('settingsRtspAutostart'),
+                autostart_delay_seconds: pvNum('settingsRtspAutostartDelay', 3),
+                auto_start: pvBool('settingsRtspAutostart'),
+                auto_start_delay_seconds: pvNum('settingsRtspAutostartDelay', 3)
             }
         };
         
@@ -2545,7 +2578,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.8.26-fastplateocr-yolo-vehicle-intelligence',
+                    version: '0.8.28-fastplateocr-yolo-vehicle-intelligence',
                     config: config
                 };
                 

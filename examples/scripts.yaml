@@ -1,0 +1,30 @@
+# PlateVision Scripts
+
+script:
+  platevision_stream_start:
+    alias: PlateVision Stream starten
+    icon: mdi:play
+    sequence:
+      - service: rest_command.platevision_stream_start
+
+  platevision_stream_stop:
+    alias: PlateVision Stream stoppen
+    icon: mdi:stop
+    sequence:
+      - service: rest_command.platevision_stream_stop
+
+  platevision_reload_models:
+    alias: PlateVision Modelle neu laden
+    icon: mdi:reload
+    sequence:
+      - service: rest_command.platevision_models_reload
+
+  platevision_save_snapshot:
+    alias: PlateVision Snapshot speichern
+    icon: mdi:camera
+    sequence:
+      - service: camera.snapshot
+        target:
+          entity_id: camera.platevision_snapshot
+        data:
+          filename: "/config/www/platevision/snapshot_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg"

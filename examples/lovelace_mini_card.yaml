@@ -1,0 +1,13 @@
+# Kompakte PlateVision Karte
+
+type: glance
+title: PlateVision Heute
+entities:
+  - entity: sensor.platevision_kennzeichen
+    name: Kennzeichen
+  - entity: sensor.platevision_autos_heute
+    name: Autos
+  - entity: sensor.platevision_personen_heute
+    name: Personen
+  - entity: binary_sensor.platevision_stream
+    name: Stream

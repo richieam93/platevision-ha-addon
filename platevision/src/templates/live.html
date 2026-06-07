@@ -670,7 +670,7 @@
     function startStreamFeed() {
         // Use MJPEG stream
         streamVideo.src = '/api/stream/feed?' + Date.now();
-        streamVideo.style.display = 'block';
+        if (streamVideo) streamVideo.style.display = 'block';
         
         streamVideo.onerror = function() {
             console.error('Stream error');
@@ -701,7 +701,7 @@
     
     function stopStreamFeed() {
         streamVideo.src = '';
-        streamVideo.style.display = 'none';
+        if (streamVideo) streamVideo.style.display = 'none';
         
         if (frameInterval) {
             clearInterval(frameInterval);
@@ -719,8 +719,8 @@
         offlineIcon.className = 'fas fa-spinner offline-icon connecting';
         offlineTitle.textContent = 'Verbindung wird hergestellt...';
         offlineMessage.textContent = 'Bitte warten...';
-        offlineStartBtn.style.display = 'none';
-        errorAlert.style.display = 'none';
+        if (offlineStartBtn) offlineStartBtn.style.display = 'none';
+        if (errorAlert) errorAlert.style.display = 'none';
         
         connectionDot.className = 'connection-dot connecting';
         connectionText.textContent = 'Verbinde...';
@@ -731,13 +731,13 @@
     
     function updateUIStreaming() {
         offlineOverlay.classList.add('hidden');
-        streamInfoOverlay.style.display = 'flex';
+        if (streamInfoOverlay) streamInfoOverlay.style.display = 'flex';
         
         connectionDot.className = 'connection-dot connected';
         connectionText.textContent = 'Verbunden';
         
-        document.getElementById('btnStart').style.display = 'none';
-        document.getElementById('btnStop').style.display = 'inline-block';
+        pvSetStyle('btnStart', 'display', 'none');
+        pvSetStyle('btnStop', 'display', 'inline-block');
         document.getElementById('sidebarStartBtn').disabled = true;
         document.getElementById('sidebarStopBtn').disabled = false;
         
@@ -747,19 +747,19 @@
     
     function updateUIStopped() {
         offlineOverlay.classList.remove('hidden');
-        streamInfoOverlay.style.display = 'none';
+        if (streamInfoOverlay) streamInfoOverlay.style.display = 'none';
         
         offlineIcon.className = 'fas fa-video-slash offline-icon';
         offlineTitle.textContent = 'Stream nicht aktiv';
         offlineMessage.textContent = 'Klicken Sie auf Start, um den RTSP Stream zu starten';
-        offlineStartBtn.style.display = 'inline-block';
-        errorAlert.style.display = 'none';
+        if (offlineStartBtn) offlineStartBtn.style.display = 'inline-block';
+        if (errorAlert) errorAlert.style.display = 'none';
         
         connectionDot.className = 'connection-dot';
         connectionText.textContent = 'Getrennt';
         
-        document.getElementById('btnStart').style.display = 'inline-block';
-        document.getElementById('btnStop').style.display = 'none';
+        pvSetStyle('btnStart', 'display', 'inline-block');
+        pvSetStyle('btnStop', 'display', 'none');
         document.getElementById('sidebarStartBtn').disabled = false;
         document.getElementById('sidebarStopBtn').disabled = true;
         
@@ -769,23 +769,23 @@
     
     function updateUIError(error) {
         offlineOverlay.classList.remove('hidden');
-        streamInfoOverlay.style.display = 'none';
+        if (streamInfoOverlay) streamInfoOverlay.style.display = 'none';
         
         offlineIcon.className = 'fas fa-exclamation-triangle offline-icon';
-        offlineIcon.style.color = 'var(--danger-color)';
+        if (offlineIcon) offlineIcon.style.color = 'var(--danger-color)';
         offlineTitle.textContent = 'Verbindungsfehler';
         offlineMessage.textContent = 'Der Stream konnte nicht gestartet werden';
-        offlineStartBtn.style.display = 'inline-block';
+        if (offlineStartBtn) offlineStartBtn.style.display = 'inline-block';
         offlineStartBtn.innerHTML = '<i class="fas fa-redo me-2"></i>Erneut versuchen';
         
-        errorAlert.style.display = 'block';
+        if (errorAlert) errorAlert.style.display = 'block';
         errorMessage.textContent = error;
         
         connectionDot.className = 'connection-dot';
         connectionText.textContent = 'Fehler';
         
-        document.getElementById('btnStart').style.display = 'inline-block';
-        document.getElementById('btnStop').style.display = 'none';
+        pvSetStyle('btnStart', 'display', 'inline-block');
+        pvSetStyle('btnStop', 'display', 'none');
         document.getElementById('sidebarStartBtn').disabled = false;
         document.getElementById('sidebarStopBtn').disabled = true;
         
@@ -861,11 +861,11 @@
         document.getElementById('detectedConfidence').textContent = 
             data.confidence ? Math.round(data.confidence * 100) + '%' : '--%';
         
-        overlay.style.display = 'block';
+        if (overlay) overlay.style.display = 'block';
         
         // Hide after 4 seconds
         setTimeout(() => {
-            overlay.style.display = 'none';
+            if (overlay) overlay.style.display = 'none';
         }, 4000);
     }
     

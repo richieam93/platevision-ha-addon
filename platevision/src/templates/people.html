@@ -407,7 +407,7 @@ function initPeopleLineEditorEvents() {
     });
     const shell = document.getElementById('peopleLinePreviewShell');
     if (shell) {
-        shell.style.cursor = 'crosshair';
+        if (shell) shell.style.cursor = 'crosshair';
         shell.addEventListener('pointerdown', evt => { peopleLineDragging = true; shell.setPointerCapture?.(evt.pointerId); setPeopleLineFromPreviewEvent(evt); });
         shell.addEventListener('pointermove', evt => { if (peopleLineDragging) setPeopleLineFromPreviewEvent(evt); });
         shell.addEventListener('pointerup', () => { peopleLineDragging = false; });

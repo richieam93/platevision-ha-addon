@@ -586,7 +586,7 @@
                 <i class="fas fa-car-side"></i>
                 <div>
                     <div class="sidebar-logo-text">Plate<span>Vision</span></div>
-                    <div class="mini-label">ProTraffic v0.8.26</div>
+                    <div class="mini-label">ProTraffic v0.8.28</div>
                 </div>
             </a>
         </div>
@@ -653,10 +653,6 @@
                 <span>{{ t('settings') }}</span>
             </a>
 
-            <a href="{{ url_for('settings') }}#diagnosticsAudit" class="nav-link {% if page == 'diagnostics' %}active{% endif %}">
-                <i class="fas fa-stethoscope"></i>
-                <span>Diagnose & Audit</span>
-            </a>
         </div>
         
         <!-- Sidebar Footer -->
@@ -733,6 +729,52 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <script>
+        // PlateVision DOM helpers: optional UI blocks must not crash the whole page.
+        function pvDom(id, quiet = false) {
+            const el = document.getElementById(id);
+            if (!el && !quiet) console.warn('[PlateVision UI] Element nicht gefunden:', id);
+            return el;
+        }
+        function pvSetStyle(id, prop, value) {
+            const el = pvDom(id, true);
+            if (el && el.style) el.style[prop] = value;
+            return el;
+        }
+        function pvSetDisplay(id, value) { return pvSetStyle(id, 'display', value); }
+        function pvSetText(id, value) {
+            const el = pvDom(id, true);
+            if (el) el.textContent = value == null ? '' : String(value);
+            return el;
+        }
+        function pvSetHtml(id, value) {
+            const el = pvDom(id, true);
+            if (el) el.innerHTML = value == null ? '' : String(value);
+            return el;
+        }
+        function pvSetValue(id, value) {
+            const el = pvDom(id, true);
+            if (el) el.value = value == null ? '' : value;
+            return el;
+        }
+        function pvSetChecked(id, value) {
+            const el = pvDom(id, true);
+            if (el) el.checked = !!value;
+            return el;
+        }
+        function pvSetDisabled(id, value) {
+            const el = pvDom(id, true);
+            if (el) el.disabled = !!value;
+            return el;
+        }
+        function pvSafeCall(name, fn) {
+            try { return fn(); }
+            catch (err) {
+                if (typeof notifyUiError === 'function') notifyUiError(`${name}: ${err.message || err}`);
+                else console.error('[PlateVision UI]', name, err);
+                return null;
+            }
+        }
+        
         // Socket.IO Connection
         const socket = io();
 
@@ -747,7 +789,10 @@
                 lastUiErrorToast = now;
             }
         }
-        window.addEventListener('error', function(ev) { notifyUiError(ev.message || ev.error || 'JavaScript Fehler'); });
+        window.addEventListener('error', function(ev) {
+            const location = ev.filename ? ` @ ${String(ev.filename).split('/').pop()}:${ev.lineno || '?'}:${ev.colno || '?'}` : '';
+            notifyUiError((ev.message || ev.error || 'JavaScript Fehler') + location);
+        });
         window.addEventListener('unhandledrejection', function(ev) { notifyUiError(ev.reason && ev.reason.message ? ev.reason.message : ev.reason); });
         
         socket.on('connect', function() {
@@ -816,15 +861,17 @@
             const btnStart = document.getElementById('btnStartStream');
             const btnStop = document.getElementById('btnStopStream');
             
-            badge.textContent = status;
-            badge.className = 'stream-status-badge ' + status;
+            if (badge) {
+                badge.textContent = status;
+                badge.className = 'stream-status-badge ' + status;
+            }
             
             if (status === 'running' || status === 'connecting') {
-                btnStart.style.display = 'none';
-                btnStop.style.display = 'inline-block';
+                if (btnStart) btnStart.style.display = 'none';
+                if (btnStop) btnStop.style.display = 'inline-block';
             } else {
-                btnStart.style.display = 'inline-block';
-                btnStop.style.display = 'none';
+                if (btnStart) btnStart.style.display = 'inline-block';
+                if (btnStop) btnStop.style.display = 'none';
             }
             
             // Event für andere Seiten
@@ -843,6 +890,7 @@
         // Toast Notification
         function showToast(title, message, type = 'info') {
             const container = document.getElementById('toastContainer');
+            if (!container) { console.warn('[PlateVision UI] Toast container fehlt:', title, message); return; }
             const id = 'toast-' + Date.now();
             
             const icons = {
@@ -891,10 +939,13 @@
             }
             
             const countEl = document.getElementById('notificationCount');
-            countEl.textContent = notificationCount;
-            countEl.style.display = 'inline-block';
+            if (countEl) {
+                countEl.textContent = notificationCount;
+                countEl.style.display = 'inline-block';
+            }
             
             const listEl = document.getElementById('notificationList');
+            if (!listEl) return;
             listEl.innerHTML = notifications.map(n => `
                 <a href="/history" class="dropdown-item">
                     <div class="d-flex align-items-center gap-2">

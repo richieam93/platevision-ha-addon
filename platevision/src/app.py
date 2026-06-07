@@ -1,7 +1,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.26 FastPlateOCR Vehicle Intelligence
+Version 0.8.28 FastPlateOCR Vehicle Intelligence
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
@@ -324,6 +324,13 @@ class ConfigManager:
         'rtsp': {
             'url': 'rtsp://admin:password@192.168.1.100:554/stream1',
             'enabled': False,
+            # Startet den Live-/RTSP-Stream automatisch nach Docker- oder Home-Assistant-Neustart.
+            # Kann in den Einstellungen deaktiviert werden.
+            'auto_start': True,
+            'auto_start_delay_seconds': 3,
+            'auto_start_retry_seconds': 30,
+            'autostart_enabled': True,
+            'autostart_delay_seconds': 3,
             'reconnect_delay': 5,
             'buffer_size': 10,
             'resolution': {
@@ -767,7 +774,20 @@ class ConfigManager:
                 detection.setdefault('plate_crop_padding_percent', 8.0)
                 detection.setdefault('plate_scan_strategy', 'full_frame_first')
 
-            area = config.setdefault('rtsp', {}).setdefault('analysis_area', {})
+            rtsp_cfg = config.setdefault('rtsp', {})
+            if not migration_cfg.get('rtsp_auto_start_setting_applied_v1'):
+                # 0.8.28: Keep the web stream alive after Docker/HA restarts.
+                # Existing users can disable this switch in Settings.
+                rtsp_cfg.setdefault('auto_start', True)
+                rtsp_cfg.setdefault('auto_start_delay_seconds', 3)
+                rtsp_cfg.setdefault('auto_start_retry_seconds', 30)
+                migration_cfg['rtsp_auto_start_setting_applied_v1'] = True
+            else:
+                rtsp_cfg.setdefault('auto_start', True)
+                rtsp_cfg.setdefault('auto_start_delay_seconds', 3)
+                rtsp_cfg.setdefault('auto_start_retry_seconds', 30)
+
+            area = rtsp_cfg.setdefault('analysis_area', {})
             area.setdefault('crop_padding_percent', 25.0)
             area.setdefault('crop_min_padding_px', 120)
             area.setdefault('motion_gate_enabled', True)
@@ -820,6 +840,16 @@ class ConfigManager:
                 people_cfg['save_full_frame'] = False
                 people_cfg['image_history_store_full_frame'] = False
                 migration_cfg['people_crop_only_display_applied_v1'] = True
+
+            rtsp_cfg = config.setdefault('rtsp', {})
+            if 'autostart_enabled' not in rtsp_cfg:
+                rtsp_cfg['autostart_enabled'] = bool(rtsp_cfg.get('auto_start', True))
+            if 'autostart_delay_seconds' not in rtsp_cfg:
+                rtsp_cfg['autostart_delay_seconds'] = int(rtsp_cfg.get('auto_start_delay_seconds') or 3)
+            dashboard_cfg = config.setdefault('dashboard', {})
+            dashboard_cfg.setdefault('show_latest_vehicle', True)
+            dashboard_cfg.setdefault('show_latest_person', True)
+            dashboard_cfg.setdefault('show_today_summary', True)
         except Exception as exc:
             logger.warning(f"0.8.24 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
         return config
@@ -3676,6 +3706,7 @@ def init_models():
 threading.Thread(target=init_models, daemon=True).start()
 
 
+
 # ============================================================
 # FLASK ROUTEN - SEITEN
 # ============================================================
@@ -4058,9 +4089,11 @@ def api_save_config():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
-@app.route('/api/config/rtsp', methods=['POST'])
+@app.route('/api/config/rtsp', methods=['GET', 'POST'])
 def api_save_rtsp_config():
     try:
+        if request.method == 'GET':
+            return jsonify(config_manager.config.get('rtsp', {}))
         data = request.json
         
         # Deep merge für analysis_area. coordinate_width/height keep ROI geometry stable
@@ -4086,9 +4119,11 @@ def api_save_rtsp_config():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
-@app.route('/api/config/detection', methods=['POST'])
+@app.route('/api/config/detection', methods=['GET', 'POST'])
 def api_save_detection_config():
     try:
+        if request.method == 'GET':
+            return jsonify(config_manager.config.get('detection', {}))
         data = request.json
         config_manager.config['detection'].update(data)
         config_manager.save_config()
@@ -4096,9 +4131,11 @@ def api_save_detection_config():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
-@app.route('/api/config/ocr', methods=['POST'])
+@app.route('/api/config/ocr', methods=['GET', 'POST'])
 def api_save_ocr_config():
     try:
+        if request.method == 'GET':
+            return jsonify(config_manager.config.get('ocr', {}))
         data = request.json
         
         if 'preprocessing' in data:
@@ -4120,9 +4157,11 @@ def api_save_ocr_config():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
-@app.route('/api/config/history', methods=['POST'])
+@app.route('/api/config/history', methods=['GET', 'POST'])
 def api_save_history_config():
     try:
+        if request.method == 'GET':
+            return jsonify(config_manager.config.get('history', {}))
         data = request.json
         config_manager.config['history'].update(data)
         config_manager.save_config()
@@ -4131,9 +4170,11 @@ def api_save_history_config():
         return jsonify({'success': False, 'error': str(e)}), 400
 
 
-@app.route('/api/config/storage', methods=['POST'])
+@app.route('/api/config/storage', methods=['GET', 'POST'])
 def api_save_storage_config():
     try:
+        if request.method == 'GET':
+            return jsonify(config_manager.config.get('storage', {}))
         data = request.get_json(silent=True) or {}
         config_manager.config.setdefault('storage', {})
         config_manager.config['storage'].update(data)
@@ -4144,9 +4185,11 @@ def api_save_storage_config():
 
 
 
-@app.route('/api/config/people', methods=['POST'])
+@app.route('/api/config/people', methods=['GET', 'POST'])
 def api_save_people_config():
     try:
+        if request.method == 'GET':
+            return jsonify(config_manager.config.get('people', {}))
         data = request.get_json(silent=True) or {}
         config_manager.config.setdefault('people', {})
         config_manager.config['people'].update(data)
@@ -4164,9 +4207,11 @@ def api_save_people_config():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
-@app.route('/api/config/models', methods=['POST'])
+@app.route('/api/config/models', methods=['GET', 'POST'])
 def api_save_models_config():
     try:
+        if request.method == 'GET':
+            return jsonify(config_manager.config.get('models', {}))
         data = request.get_json(silent=True) or {}
         reload_requested = bool(data.pop('reload', False))
         config_manager.config.setdefault('models', {})
@@ -4270,21 +4315,141 @@ def api_history_export():
         writer.writerow(row)
     return Response(output.getvalue(), mimetype='text/csv; charset=utf-8', headers={'Content-Disposition': f'attachment; filename={filename}.csv'})
 
+def _parse_iso_datetime(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00')).replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def _is_today(value):
+    dt = _parse_iso_datetime(value)
+    return bool(dt and dt.date() == datetime.now().date())
+
+
+def _entry_image_flags(entry):
+    entry = dict(entry or {})
+    entry_id = entry.get('id')
+    has_vehicle = bool(entry.get('vehicle_image'))
+    has_plate = bool(entry.get('plate_image'))
+    has_full = bool(entry.get('full_frame') or entry.get('full_frame_image'))
+    entry['has_vehicle_image'] = has_vehicle
+    entry['has_plate_image'] = has_plate
+    entry['has_full_frame_image'] = has_full
+    if entry_id:
+        if has_vehicle:
+            entry['vehicle_image_url'] = f'/api/history/{entry_id}/image/vehicle'
+        if has_plate:
+            entry['plate_image_url'] = f'/api/history/{entry_id}/image/plate'
+        if has_full:
+            entry['full_frame_image_url'] = f'/api/history/{entry_id}/image/full'
+        entry['image_url'] = entry.get('vehicle_image_url') or entry.get('plate_image_url') or entry.get('full_frame_image_url')
+    # Keep dashboard payload small. Image bytes stay behind image endpoints.
+    entry.pop('vehicle_image', None)
+    entry.pop('plate_image', None)
+    entry.pop('full_frame', None)
+    entry.pop('full_frame_image', None)
+    return entry
+
+
+def _latest_person_entry():
+    entries = person_history_manager.image_history({'limit': 1, 'counted_only': 'false', 'days': 3650}).get('entries') or []
+    if entries:
+        item = dict(entries[0])
+        urls = item.get('image_urls') or {}
+        if not urls and item.get('images'):
+            urls = {k: f'/api/people/images/{v}' for k, v in (item.get('images') or {}).items()}
+        item['image_urls'] = urls
+        item['image_url'] = urls.get('crop') or urls.get('person') or urls.get('annotated') or urls.get('full_frame') or next(iter(urls.values()), None)
+        return item
+    raw = person_history_manager.get_all(limit=1)
+    if raw:
+        item = dict(raw[0])
+        images = item.get('images') or {}
+        urls = {k: f'/api/people/images/{v}' for k, v in images.items()}
+        item['image_urls'] = urls
+        item['image_url'] = urls.get('crop') or urls.get('annotated') or urls.get('full_frame') or next(iter(urls.values()), None)
+        return item
+    return None
+
+
 @app.route('/api/dashboard/overview')
 def api_dashboard_overview():
     stats = history_manager.get_statistics()
-    latest = history_manager.get_all(limit=12, unique_only=True)
+    latest_unique = history_manager.get_all(limit=8, unique_only=True)
     status = stream_manager.get_status()
+    traffic_data_today = history_manager.get_traffic_statistics({'days': 1})
+    traffic_today = traffic_data_today.get('summary', {})
+    people_data_today = person_history_manager.get_statistics({'days': 1})
+    people_stats = people_data_today.get('summary', {})
+    today_entries = [e for e in history_manager.history if _is_today(e.get('timestamp'))]
+    today_unique = history_manager._unique_entries(today_entries)
+    repeat_vehicles = max(0, int(traffic_today.get('repeat_vehicles') or 0))
+    arrivals_today = sum(1 for session in traffic_data_today.get('sessions', []) if session.get('arrival_detected'))
+    if not arrivals_today:
+        arrivals_today = int(traffic_today.get('total_visits') or 0)
+    departures_today = int(traffic_today.get('departures_detected') or 0) + int(traffic_today.get('departures_assumed') or 0)
+    today_iso = datetime.now().date().isoformat()
+    line_crossings_today = 0
+    for row in people_data_today.get('daily', []):
+        if row.get('date') == today_iso:
+            line_crossings_today += int(row.get('line_crossings') or 0)
+    latest_vehicle_entries = history_manager.get_all(limit=1)
+    latest_vehicle = _entry_image_flags(latest_vehicle_entries[0]) if latest_vehicle_entries else None
+    if latest_vehicle is not None:
+        latest_vehicle['image_url'] = '/api/latest/vehicle/image' if latest_vehicle.get('has_vehicle_image') else '/api/latest/plate/image'
+    latest_person = _latest_person_entry()
+    if latest_person is not None:
+        latest_person = dict(latest_person)
+        images = latest_person.get('image_urls') or {}
+        if not images and latest_person.get('images'):
+            images = {k: f"/api/people/images/{v}" for k, v in (latest_person.get('images') or {}).items()}
+        latest_person['image_urls'] = images
+        latest_person['image_url'] = images.get('crop') or images.get('person') or next(iter(images.values()), None)
+    rtsp_auto = bool(config_manager.get('rtsp', 'autostart_enabled') if config_manager.get('rtsp', 'autostart_enabled') is not None else config_manager.get('rtsp', 'auto_start'))
+    rtsp_delay = config_manager.get('rtsp', 'autostart_delay_seconds') or config_manager.get('rtsp', 'auto_start_delay_seconds') or 3
     return jsonify({
         'statistics': stats,
-        'latest': latest,
+        'today': {
+            # New compact names
+            'raw_detections': len(today_entries),
+            'unique_vehicles': len(today_unique),
+            'traffic_visits': traffic_today.get('total_visits') or 0,
+            'repeat_vehicles': repeat_vehicles,
+            'currently_present': traffic_today.get('currently_present') or 0,
+            'arrivals': arrivals_today,
+            'departures': departures_today,
+            'last_hour_detections': stats.get('last_hour_detections') or 0,
+            'people_counted': people_stats.get('today_persons') or 0,
+            'people_events': people_stats.get('events') or 0,
+            'people_line_crossings': line_crossings_today,
+            'stream_running': bool(status.get('status') == 'running'),
+            'stream_connected': bool(status.get('connected')),
+            'fps': status.get('fps') or 0,
+            # Backward-compatible names used by current dashboard widgets
+            'plate_events': len(today_entries),
+            'traffic': traffic_today,
+            'people': people_stats,
+            'watchlist_hits_total': stats.get('watchlist_hits', 0)
+        },
+        'latest': [_entry_image_flags(e) for e in latest_unique],
+        'latest_vehicle': latest_vehicle,
+        'latest_person': latest_person,
         'stream': status,
         'facets': history_manager.get_facets(),
-        'people': person_history_manager.get_statistics({'days': 1}).get('summary', {}),
+        'people': people_stats,
         'config': {
             'dashboard': config_manager.get('dashboard'),
             'search': config_manager.get('search'),
-            'plate_recognition': config_manager.get('plate_recognition')
+            'plate_recognition': config_manager.get('plate_recognition'),
+            'rtsp': {
+                'auto_start': rtsp_auto,
+                'auto_start_delay_seconds': rtsp_delay,
+                'autostart_enabled': rtsp_auto,
+                'autostart_delay_seconds': rtsp_delay
+            }
         }
     })
 
@@ -4628,6 +4793,38 @@ def api_process_image():
 # API ROUTEN - LETZTE ERKENNUNG
 # ============================================================
 
+@app.route('/api/history/<entry_id>/image/<kind>')
+def api_history_entry_image(entry_id, kind):
+    """Return a stored image for one history entry without embedding Base64 in dashboard JSON."""
+    image_key = {
+        'vehicle': 'vehicle_image',
+        'plate': 'plate_image',
+        'full': 'full_frame',
+        'frame': 'full_frame'
+    }.get(str(kind or '').lower())
+    if not image_key:
+        return jsonify({'success': False, 'error': 'Unbekannter Bildtyp'}), 404
+    entry = None
+    try:
+        for item in history_manager.history:
+            if str(item.get('id')) == str(entry_id):
+                entry = item
+                break
+    except Exception:
+        entry = None
+    if not entry:
+        return jsonify({'success': False, 'error': 'Historie-Eintrag nicht gefunden'}), 404
+    data = entry.get(image_key)
+    if not data and image_key == 'full_frame':
+        data = entry.get('full_frame_image')
+    if not data:
+        return jsonify({'success': False, 'error': 'Bild nicht vorhanden'}), 404
+    try:
+        return Response(base64.b64decode(data), mimetype='image/jpeg')
+    except Exception as exc:
+        logger.warning(f"Historie-Bild konnte nicht gelesen werden: entry={entry_id} kind={kind} err={exc}")
+        return jsonify({'success': False, 'error': 'Bild konnte nicht gelesen werden'}), 500
+
 @app.route('/api/latest')
 def api_latest_detection():
     entries = history_manager.get_all(limit=1)
@@ -4724,6 +4921,45 @@ def api_latest_vehicle_image():
     img[:] = (30, 30, 30)
     cv2.putText(img, "Kein Fahrzeug", (120, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 100, 100), 2)
     cv2.putText(img, "vorhanden", (140, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 100, 100), 2)
+    _, buffer = cv2.imencode('.jpg', img)
+    return Response(buffer.tobytes(), mimetype='image/jpeg')
+
+
+
+@app.route('/api/latest/person')
+@app.route('/api/latest/person/')
+def api_latest_person():
+    """Gibt die letzte gespeicherte Personen-Erkennung als JSON zurück."""
+    item = _latest_person_entry()
+    if not item:
+        return jsonify({'success': False, 'error': 'Keine Person vorhanden', 'person': None})
+    out = dict(item)
+    out['success'] = True
+    images = out.get('images') or {}
+    existing_urls = out.get('image_urls') or {}
+    out['image_urls'] = existing_urls or {k: f"/api/people/images/{v}" for k, v in images.items()}
+    out['image_url'] = out.get('image_url') or out['image_urls'].get('crop') or out['image_urls'].get('annotated') or next(iter(out['image_urls'].values()), None)
+    out['has_person_image'] = bool(out.get('image_url'))
+    return jsonify(out)
+
+
+@app.route('/api/latest/person/image')
+@app.route('/api/latest/person/image/')
+def api_latest_person_image():
+    """Gibt den letzten Personen-Crop als JPEG zurück."""
+    item = _latest_person_entry()
+    if item:
+        images = item.get('images') or {}
+        rel = images.get('crop') or images.get('annotated') or images.get('full_frame')
+        if rel:
+            root = person_history_manager.IMAGE_ROOT.resolve()
+            target = (root / str(rel)).resolve()
+            if str(target).startswith(str(root)) and target.exists() and target.is_file():
+                return send_from_directory(str(root), str(rel))
+    img = np.zeros((260, 180, 3), dtype=np.uint8)
+    img[:] = (30, 30, 30)
+    cv2.putText(img, "Keine", (45, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (120, 120, 120), 2)
+    cv2.putText(img, "Person", (35, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (120, 120, 120), 2)
     _, buffer = cv2.imencode('.jpg', img)
     return Response(buffer.tobytes(), mimetype='image/jpeg')
 
@@ -5904,12 +6140,12 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.26',
+        'version': '0.8.28',
         'edition': 'FastPlateOCR + YOLO Vehicle Intelligence',
         'features': [
             'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
             'Statistik', 'Suche', 'Watchlist', 'Mehrsprachige Einstellungen',
-            'Erweiterte Original-Einstellungen', 'Personenzählung und Personenanalyse'
+            'Erweiterte Original-Einstellungen', 'Personenzählung und Personenanalyse', 'RTSP Auto-Start', 'Dashboard Tagesübersicht'
         ],
         'config': config_manager.get('about') or {},
         'models_loaded': detector.models_loaded,
@@ -5989,6 +6225,14 @@ def _setting_schema():
                 'max_history_entries': {'type': 'number', 'label': 'Max. Historie'},
                 'notification_enabled': {'type': 'boolean', 'label': 'Benachrichtigungen'},
                 'debug_mode': {'type': 'boolean', 'label': 'Debug-Modus'}
+            }
+        },
+        'rtsp': {
+            'title': 'RTSP Stream',
+            'fields': {
+                'auto_start': {'type': 'boolean', 'label': 'Stream nach Neustart automatisch starten'},
+                'auto_start_delay_seconds': {'type': 'number', 'label': 'Auto-Start Verzögerung Sekunden'},
+                'url': {'type': 'text', 'label': 'RTSP URL'}
             }
         },
         'ui': {
@@ -6743,7 +6987,7 @@ def api_people_cleanup():
 
 @app.route('/api/people/test/simulate', methods=['POST'])
 def api_people_test_simulate():
-    return jsonify({'success': False, 'error': 'Demo-Daten wurden in Version 0.8.26 entfernt. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
+    return jsonify({'success': False, 'error': 'Demo-Daten wurden in Version 0.8.28 entfernt. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
 
 @app.route('/api/system/health')
 def api_system_health():
@@ -6758,9 +7002,10 @@ def api_system_health():
     add('people_history_writable', os.access(os.path.dirname(person_history_manager.HISTORY_FILE), os.W_OK), person_history_manager.HISTORY_FILE)
     add('person_model_path', bool(config_manager.get('people', 'model_mode') == 'coco_person' or os.path.exists(config_manager.get('people', 'custom_model_path') or '')), config_manager.get('people', 'custom_model_path') or 'COCO person class')
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
+    add('rtsp_autostart', True, 'aktiv' if config_manager.get('rtsp', 'autostart_enabled') else 'deaktiviert')
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.26'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.28'})
 
 
 @app.route('/api/system/audit')
@@ -6824,6 +7069,38 @@ def internal_error(e):
     return render_template('500.html', page='error'), 500
 
 
+
+# ============================================================
+# STARTUP HELPERS
+# ============================================================
+
+def _maybe_autostart_stream():
+    """Starts the RTSP stream after app boot when configured by the user."""
+    try:
+        rtsp_cfg = config_manager.get('rtsp') or {}
+        enabled = bool(rtsp_cfg.get('autostart_enabled', rtsp_cfg.get('auto_start', False)))
+        if not enabled:
+            logger.info('RTSP Autostart deaktiviert')
+            return
+        if not rtsp_cfg.get('url'):
+            logger.warning('RTSP Autostart aktiviert, aber keine RTSP URL konfiguriert')
+            return
+        delay = max(0.0, float(rtsp_cfg.get('autostart_delay_seconds', rtsp_cfg.get('auto_start_delay_seconds', 3)) or 3))
+
+        def delayed_start():
+            if delay:
+                time.sleep(delay)
+            if stream_manager.is_running():
+                logger.info('RTSP Autostart: Stream laeuft bereits')
+                return
+            logger.info('RTSP Autostart: starte Stream nach %.1fs Verzoegerung', delay)
+            ok = stream_manager.start()
+            logger.info('RTSP Autostart Ergebnis: %s', 'gestartet' if ok else 'nicht gestartet')
+
+        threading.Thread(target=delayed_start, daemon=True).start()
+    except Exception as exc:
+        logger.error('RTSP Autostart Fehler: %s', exc)
+
 # ============================================================
 # HAUPTPROGRAMM
 # ============================================================
@@ -6857,7 +7134,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.26 FastPlateOCR Vehicle Intelligence                                    ║
+    ║     Version 0.8.28 FastPlateOCR Vehicle Intelligence                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║
@@ -6865,8 +7142,12 @@ if __name__ == '__main__':
     ╚══════════════════════════════════════════════════════════╝
     """)
     
+    debug_enabled = config_manager.get('general', 'debug_mode') or False
+    if (not debug_enabled) or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        _maybe_autostart_stream()
+
     socketio.run(app, host='0.0.0.0', port=5000, 
-                 debug=config_manager.get('general', 'debug_mode') or False,
+                 debug=debug_enabled,
                  allow_unsafe_werkzeug=True)
 
 

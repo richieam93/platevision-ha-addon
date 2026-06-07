@@ -1,0 +1,83 @@
+# PlateVision Automationen
+
+automation:
+  - id: platevision_neues_kennzeichen
+    alias: PlateVision - Neues Kennzeichen
+    trigger:
+      - platform: state
+        entity_id: sensor.platevision_kennzeichen
+    condition:
+      - condition: template
+        value_template: >-
+          {{ trigger.to_state.state not in ['', 'unknown', 'unavailable', 'Unbekannt']
+             and trigger.to_state.state != trigger.from_state.state }}
+    action:
+      - service: notify.mobile_app_dein_handy
+        data:
+          title: "🚗 Kennzeichen erkannt"
+          message: >-
+            {{ states('sensor.platevision_kennzeichen') }} ·
+            {{ states('sensor.platevision_fahrzeugtyp') }} ·
+            {{ states('sensor.platevision_fahrzeugfarbe') }} ·
+            {{ states('sensor.platevision_land') }}
+          data:
+            image: http://192.168.1.240:8087/api/latest/vehicle/image
+            tag: platevision_vehicle
+            group: platevision
+    mode: single
+
+  - id: platevision_bekanntes_kennzeichen
+    alias: PlateVision - Bekanntes Kennzeichen
+    trigger:
+      - platform: state
+        entity_id: sensor.platevision_kennzeichen
+    condition:
+      - condition: template
+        value_template: >-
+          {% set plate = states('sensor.platevision_kennzeichen') | upper | replace(' ', '') | replace('-', '') %}
+          {% set known = ['OW12345', 'FL12345', 'ZH98765'] %}
+          {{ plate in known }}
+    action:
+      - service: notify.mobile_app_dein_handy
+        data:
+          title: "✅ Bekanntes Fahrzeug"
+          message: "{{ states('sensor.platevision_kennzeichen') }} wurde erkannt."
+          data:
+            image: http://192.168.1.240:8087/api/latest/vehicle/image
+            tag: platevision_known
+    mode: single
+
+  - id: platevision_person_erkannt
+    alias: PlateVision - Person erkannt
+    trigger:
+      - platform: state
+        entity_id: sensor.platevision_letzte_person
+    condition:
+      - condition: template
+        value_template: "{{ trigger.to_state.state not in ['keine', 'unknown', 'unavailable', ''] }}"
+    action:
+      - service: notify.mobile_app_dein_handy
+        data:
+          title: "🚶 Person erkannt"
+          message: >-
+            Richtung: {{ state_attr('sensor.platevision_letzte_person', 'direction') | default('unbekannt') }} ·
+            gezählt: {{ state_attr('sensor.platevision_letzte_person', 'counted') | default(false) }}
+          data:
+            image: http://192.168.1.240:8087/api/latest/person/image
+            tag: platevision_person
+            group: platevision
+    mode: single
+
+  - id: platevision_stream_aus
+    alias: PlateVision - Stream ist aus
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.platevision_stream
+        to: 'off'
+        for: '00:05:00'
+    action:
+      - service: notify.mobile_app_dein_handy
+        data:
+          title: "⚠️ PlateVision Stream"
+          message: "Der RTSP-Stream ist seit 5 Minuten nicht verbunden."
+    mode: single

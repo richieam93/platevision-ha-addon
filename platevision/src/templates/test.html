@@ -999,7 +999,7 @@
     }
     
     function updateFileInfo(file) {
-        document.getElementById('fileInfo').style.display = 'block';
+        pvSetStyle('fileInfo', 'display', 'block');
         document.getElementById('fileName').textContent = file.name;
         document.getElementById('fileSize').textContent = formatFileSize(file.size);
         
@@ -1029,16 +1029,16 @@
     function clearFile() {
         selectedFile = null;
         document.getElementById('fileInput').value = '';
-        document.getElementById('fileInfo').style.display = 'none';
+        pvSetStyle('fileInfo', 'display', 'none');
         resetResults();
     }
     
     function resetResults() {
-        document.getElementById('emptyResult').style.display = 'block';
-        document.getElementById('imageResult').style.display = 'none';
-        document.getElementById('videoProgress').style.display = 'none';
-        document.getElementById('processingOverlay').style.display = 'none';
-        document.getElementById('resultBadge').style.display = 'none';
+        pvSetStyle('emptyResult', 'display', 'block');
+        pvSetStyle('imageResult', 'display', 'none');
+        pvSetStyle('videoProgress', 'display', 'none');
+        pvSetStyle('processingOverlay', 'display', 'none');
+        pvSetStyle('resultBadge', 'display', 'none');
     }
     
     // ============================================
@@ -1093,8 +1093,8 @@
     }
     
     function displayImageResults(data) {
-        document.getElementById('emptyResult').style.display = 'none';
-        document.getElementById('imageResult').style.display = 'block';
+        pvSetStyle('emptyResult', 'display', 'none');
+        pvSetStyle('imageResult', 'display', 'block');
         
         // Set result image
         if (data.result_image) {
@@ -1110,7 +1110,7 @@
         // Show result badge
         const detectionCount = data.detections ? data.detections.length : 0;
         if (detectionCount > 0) {
-            document.getElementById('resultBadge').style.display = 'inline-flex';
+            pvSetStyle('resultBadge', 'display', 'inline-flex');
             document.getElementById('resultCount').textContent = detectionCount;
         }
         
@@ -1312,18 +1312,18 @@
     
     async function processVideo() {
         try { await saveTestRecognitionSettings(false); } catch (e) { console.warn('Test-Einstellungen konnten vor Video nicht gespeichert werden', e); }
-        document.getElementById('emptyResult').style.display = 'none';
-        document.getElementById('imageResult').style.display = 'none';
-        document.getElementById('videoProgress').style.display = 'block';
-        document.getElementById('videoCompleteActions').style.display = 'none';
-        document.getElementById('videoErrorMessage').style.display = 'none';
+        pvSetStyle('emptyResult', 'display', 'none');
+        pvSetStyle('imageResult', 'display', 'none');
+        pvSetStyle('videoProgress', 'display', 'block');
+        pvSetStyle('videoCompleteActions', 'display', 'none');
+        pvSetStyle('videoErrorMessage', 'display', 'none');
         
         // Reset progress display
         document.getElementById('videoFileName').textContent = selectedFile.name;
         document.getElementById('videoJobId').textContent = 'Wird erstellt...';
         document.getElementById('videoJobStatusText').textContent = 'Wird hochgeladen...';
         document.getElementById('videoJobStatus').className = 'job-status processing';
-        document.getElementById('videoProgressFill').style.width = '0%';
+        pvSetStyle('videoProgressFill', 'width', '0%');
         document.getElementById('videoProgressPercent').textContent = '0%';
         document.getElementById('videoFramesCurrent').textContent = '0';
         document.getElementById('videoDetectionsCount').textContent = '0';
@@ -1414,7 +1414,7 @@
     function updateVideoProgress(data) {
         const progress = data.progress || 0;
         
-        document.getElementById('videoProgressFill').style.width = progress + '%';
+        pvSetStyle('videoProgressFill', 'width', progress + '%');
         document.getElementById('videoProgressPercent').textContent = progress + '%';
         document.getElementById('videoFramesCurrent').textContent = data.current_frame || 0;
         document.getElementById('videoDetectionsCount').textContent = data.detections_count || 0;
@@ -1442,12 +1442,12 @@
     function showVideoComplete(jobId, data) {
         document.getElementById('videoJobStatus').className = 'job-status completed';
         document.getElementById('videoJobStatus').innerHTML = '<i class="fas fa-check"></i> Fertig';
-        document.getElementById('videoProgressFill').style.width = '100%';
+        pvSetStyle('videoProgressFill', 'width', '100%');
         document.getElementById('videoProgressPercent').textContent = '100%';
         document.getElementById('videoETA').textContent = '0:00';
         
-        document.getElementById('videoProcessingDetails').style.display = 'none';
-        document.getElementById('videoCompleteActions').style.display = 'block';
+        pvSetStyle('videoProcessingDetails', 'display', 'none');
+        pvSetStyle('videoCompleteActions', 'display', 'block');
         document.getElementById('videoCompleteInfo').textContent = 
             `${data.detections_count || 0} Kennzeichen in ${data.total_frames || 0} Frames erkannt`;
         document.getElementById('downloadVideoBtn').href = `/api/process/video/${jobId}/output`;
@@ -1459,8 +1459,8 @@
     function showVideoError(error) {
         document.getElementById('videoJobStatus').className = 'job-status error';
         document.getElementById('videoJobStatus').innerHTML = '<i class="fas fa-times"></i> Fehler';
-        document.getElementById('videoProcessingDetails').style.display = 'none';
-        document.getElementById('videoErrorMessage').style.display = 'block';
+        pvSetStyle('videoProcessingDetails', 'display', 'none');
+        pvSetStyle('videoErrorMessage', 'display', 'block');
         document.getElementById('videoErrorText').textContent = error;
         
         showToast('Fehler', error, 'danger');
@@ -1471,20 +1471,20 @@
     // ============================================
     
     function showProcessing(title, status) {
-        document.getElementById('emptyResult').style.display = 'none';
-        document.getElementById('imageResult').style.display = 'none';
-        document.getElementById('videoProgress').style.display = 'none';
-        document.getElementById('processingOverlay').style.display = 'flex';
+        pvSetStyle('emptyResult', 'display', 'none');
+        pvSetStyle('imageResult', 'display', 'none');
+        pvSetStyle('videoProgress', 'display', 'none');
+        pvSetStyle('processingOverlay', 'display', 'flex');
         document.getElementById('processingTitle').textContent = title;
         document.getElementById('processingStatus').textContent = status;
     }
     
     function hideProcessing() {
-        document.getElementById('processingOverlay').style.display = 'none';
+        pvSetStyle('processingOverlay', 'display', 'none');
     }
     
     function showError(message) {
-        document.getElementById('emptyResult').style.display = 'block';
+        pvSetStyle('emptyResult', 'display', 'block');
         showToast('Fehler', message, 'danger');
     }
     
@@ -1536,7 +1536,7 @@
         .then(stream => {
             cameraStream = stream;
             video.srcObject = stream;
-            video.style.display = 'block';
+            if (video) video.style.display = 'block';
             
             document.getElementById('cameraToggleBtn').classList.remove('btn-outline-primary');
             document.getElementById('cameraToggleBtn').classList.add('btn-outline-danger');
@@ -1556,7 +1556,7 @@
         
         const video = document.getElementById('cameraPreview');
         video.srcObject = null;
-        video.style.display = 'none';
+        if (video) video.style.display = 'none';
         
         document.getElementById('cameraToggleBtn').classList.remove('btn-outline-danger');
         document.getElementById('cameraToggleBtn').classList.add('btn-outline-primary');
@@ -1609,11 +1609,11 @@
         
         if (jobsArray.length === 0) {
             jobsList.innerHTML = '';
-            noJobsMessage.style.display = 'block';
+            if (noJobsMessage) noJobsMessage.style.display = 'block';
             return;
         }
         
-        noJobsMessage.style.display = 'none';
+        if (noJobsMessage) noJobsMessage.style.display = 'none';
         
         // Sort by created_at descending
         jobsArray.sort((a, b) => {
@@ -1720,9 +1720,9 @@
                 if (data.success) {
                     const jobEl = document.getElementById('job-' + jobId);
                     if (jobEl) {
-                        jobEl.style.transition = 'all 0.3s ease';
-                        jobEl.style.opacity = '0';
-                        jobEl.style.transform = 'translateX(20px)';
+                        if (jobEl) jobEl.style.transition = 'all 0.3s ease';
+                        if (jobEl) jobEl.style.opacity = '0';
+                        if (jobEl) jobEl.style.transform = 'translateX(20px)';
                         setTimeout(() => jobEl.remove(), 300);
                     }
                     showToast('Gelöscht', 'Job wurde entfernt', 'success');
@@ -1730,7 +1730,7 @@
                     // Check if we need to show "no jobs" message
                     setTimeout(() => {
                         if (document.getElementById('jobsList').children.length === 0) {
-                            document.getElementById('noJobsMessage').style.display = 'block';
+                            pvSetStyle('noJobsMessage', 'display', 'block');
                         }
                     }, 350);
                 } else {

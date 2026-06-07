@@ -1,67 +1,131 @@
 {% extends "base.html" %}
-{% block title %}PlateVision ProTraffic Dashboard{% endblock %}
-{% block page_title %}Dashboard ProTraffic{% endblock %}
+{% block title %}PlateVision Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+.dashboard-hero { background: radial-gradient(circle at top left, rgba(99,102,241,.26), transparent 32%), linear-gradient(135deg, rgba(30,41,59,.98), rgba(15,23,42,.98)); border:1px solid var(--card-border); border-radius:20px; padding:1.5rem; }
+.today-tile { background: rgba(15,23,42,.55); border:1px solid rgba(148,163,184,.16); border-radius:16px; padding:1rem; height:100%; }
+.today-tile .value { font-size:2rem; font-weight:800; line-height:1; }
+.latest-image { width:100%; min-height:230px; max-height:360px; object-fit:cover; border-radius:14px; background:#020617; border:1px solid rgba(148,163,184,.18); }
+.person-image { width:100%; max-height:360px; object-fit:cover; border-radius:14px; background:#020617; border:1px solid rgba(148,163,184,.18); }
+.dashboard-meta { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:.75rem; }
+.dashboard-meta .item { background:rgba(15,23,42,.55); border:1px solid rgba(148,163,184,.14); border-radius:12px; padding:.75rem; }
+.dashboard-meta .label { color:var(--text-secondary); font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; }
+.dashboard-meta .text { font-weight:700; margin-top:.15rem; }
+.status-pill { display:inline-flex; align-items:center; gap:.45rem; border:1px solid rgba(148,163,184,.18); border-radius:999px; padding:.35rem .7rem; background:rgba(15,23,42,.55); }
+.status-dot { width:9px; height:9px; border-radius:50%; background:#ef4444; }
+.status-dot.running { background:#10b981; }
+.status-dot.connecting { background:#f59e0b; }
+.small-table td { padding:.65rem .5rem; }
+@media (max-width: 767px) { .dashboard-meta { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="pro-hero mb-4">
+<div class="dashboard-hero mb-4">
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
         <div>
-            <div class="mini-label mb-2">PlateVision Pro+</div>
-            <h2 class="mb-2">Live-Übersicht, Qualität und Treffer</h2>
-            <p class="text-secondary mb-0">Zentrale Ansicht für Stream, Kennzeichen, Watchlist, Konfidenz und Systemzustand.</p>
+            <div class="mini-label mb-2">PlateVision Tagesübersicht</div>
+            <h2 class="mb-2">Letztes Auto, letzte Person und heutige Aktivität</h2>
+            <p class="text-secondary mb-0">Kompakte Übersicht ohne Modell-Details. Modelle und Erkennung stellst du in <strong>Test & Upload</strong> oder in den Einstellungen ein.</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
-            <a class="btn btn-outline-primary" href="/search"><i class="fas fa-search me-2"></i>Suche öffnen</a>
-            <a class="btn btn-outline-success" href="/statistics"><i class="fas fa-road me-2"></i>Statistik</a>
-            <a class="btn btn-outline-info" href="/people"><i class="fas fa-person-walking me-2"></i>Personen</a>
-            <a class="btn btn-outline-warning" href="/settings#diagnosticsAudit"><i class="fas fa-stethoscope me-2"></i>Diagnose</a>
+            <a class="btn btn-primary" href="/live"><i class="fas fa-video me-2"></i>Live Stream</a>
+            <a class="btn btn-outline-info" href="/test"><i class="fas fa-flask me-2"></i>Test & Upload</a>
+            <a class="btn btn-outline-success" href="/people"><i class="fas fa-person-walking me-2"></i>Personen</a>
+            <a class="btn btn-outline-secondary" href="/history"><i class="fas fa-history me-2"></i>Historie</a>
         </div>
     </div>
 </div>
 
 <div class="row g-3 mb-4">
-    <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon primary"><i class="fas fa-id-card"></i></div><div class="stat-card-value" id="totalDetections">0</div><div class="stat-card-label">Erkennungen gesamt</div></div></div>
-    <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon success"><i class="fas fa-calendar-day"></i></div><div class="stat-card-value" id="todayDetections">0</div><div class="stat-card-label">Heute Roh</div></div></div>
-    <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon warning"><i class="fas fa-fingerprint"></i></div><div class="stat-card-value" id="uniquePlates">0</div><div class="stat-card-label">Einzigartige Kennzeichen</div></div></div>
-    <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon info"><i class="fas fa-route"></i></div><div class="stat-card-value" id="trafficVisitsToday">0</div><div class="stat-card-label">Durchfahrten heute</div></div></div>
-    <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon success"><i class="fas fa-car"></i></div><div class="stat-card-value" id="trafficUniqueToday">0</div><div class="stat-card-label">Autos heute</div></div></div>
-    <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon info"><i class="fas fa-person-walking"></i></div><div class="stat-card-value" id="peopleToday">0</div><div class="stat-card-label">Personen heute</div></div></div>
-    <div class="col-md-6 col-xl-2"><div class="stat-card"><div class="stat-card-icon primary"><i class="fas fa-bullseye"></i></div><div class="stat-card-value" id="avgConfidence">0%</div><div class="stat-card-label">Ø Konfidenz</div></div></div>
+    <div class="col-6 col-lg-2"><div class="today-tile"><div class="mini-label">Kennzeichen heute</div><div class="value" id="todayPlateEvents">0</div><small class="text-secondary">alle Ereignisse</small></div></div>
+    <div class="col-6 col-lg-2"><div class="today-tile"><div class="mini-label">Autos heute</div><div class="value" id="todayUniqueVehicles">0</div><small class="text-secondary">einzigartig</small></div></div>
+    <div class="col-6 col-lg-2"><div class="today-tile"><div class="mini-label">Durchfahrten</div><div class="value" id="todayVisits">0</div><small class="text-secondary">Besuche/Sessions</small></div></div>
+    <div class="col-6 col-lg-2"><div class="today-tile"><div class="mini-label">Wiederkehrer</div><div class="value" id="todayRepeats">0</div><small class="text-secondary">mehrfach gesehen</small></div></div>
+    <div class="col-6 col-lg-2"><div class="today-tile"><div class="mini-label">Personen heute</div><div class="value" id="todayPersons">0</div><small class="text-secondary">gezählt</small></div></div>
+    <div class="col-6 col-lg-2"><div class="today-tile"><div class="mini-label">Letzte Stunde</div><div class="value" id="lastHourEvents">0</div><small class="text-secondary">Kennzeichen</small></div></div>
 </div>
 
 <div class="row g-4">
-    <div class="col-xl-8">
-        <div class="soft-card p-3 mb-4">
+    <div class="col-xl-7">
+        <div class="soft-card p-3 h-100">
             <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="mb-0"><i class="fas fa-chart-line text-primary me-2"></i>Erkennungen der letzten Tage</h5>
-                <select class="form-select form-select-sm" style="width:auto" id="timelineBucket" onchange="loadTimeline()"><option value="day">Tag</option><option value="hour">Stunde</option></select>
+                <h5 class="mb-0"><i class="fas fa-car-side text-primary me-2"></i>Letztes Auto</h5>
+                <span class="status-pill"><span id="streamStatusDot" class="status-dot"></span><span id="streamStatusText">Stream...</span></span>
             </div>
-            <canvas id="timelineChart" height="110"></canvas>
+            <div class="row g-3 align-items-stretch">
+                <div class="col-lg-7">
+                    <img id="latestVehicleImage" class="latest-image" src="/api/latest/vehicle/image" alt="Letztes Fahrzeug">
+                </div>
+                <div class="col-lg-5">
+                    <div class="mb-3">
+                        <div class="mini-label">Kennzeichen</div>
+                        <div class="plate-badge mt-2" id="latestPlate">-</div>
+                    </div>
+                    <div class="dashboard-meta">
+                        <div class="item"><div class="label">Fahrzeug</div><div class="text" id="latestVehicleType">-</div></div>
+                        <div class="item"><div class="label">Farbe</div><div class="text" id="latestVehicleColor">-</div></div>
+                        <div class="item"><div class="label">Land</div><div class="text" id="latestCountry">-</div></div>
+                        <div class="item"><div class="label">Konfidenz</div><div class="text" id="latestVehicleConf">-</div></div>
+                        <div class="item"><div class="label">Quelle</div><div class="text" id="latestVehicleSource">-</div></div>
+                        <div class="item"><div class="label">Zeit</div><div class="text" id="latestVehicleTime">-</div></div>
+                    </div>
+                </div>
+            </div>
         </div>
+    </div>
+
+    <div class="col-xl-5">
+        <div class="soft-card p-3 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0"><i class="fas fa-person-walking text-info me-2"></i>Letzte Person</h5>
+                <a class="btn btn-sm btn-outline-info" href="/people">Personenanalyse</a>
+            </div>
+            <img id="latestPersonImage" class="person-image mb-3" src="" alt="Letzte Person" style="display:none;">
+            <div id="latestPersonPlaceholder" class="text-center text-secondary py-5 border rounded" style="border-color:var(--card-border)!important;">Noch kein Personenbild gespeichert</div>
+            <div class="dashboard-meta mt-3">
+                <div class="item"><div class="label">Richtung</div><div class="text" id="latestPersonDirection">-</div></div>
+                <div class="item"><div class="label">Zählung</div><div class="text" id="latestPersonCounted">-</div></div>
+                <div class="item"><div class="label">Konfidenz</div><div class="text" id="latestPersonConf">-</div></div>
+                <div class="item"><div class="label">Zeit</div><div class="text" id="latestPersonTime">-</div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mt-1">
+    <div class="col-xl-8">
         <div class="soft-card p-3">
             <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="mb-0"><i class="fas fa-clock text-primary me-2"></i>Letzte Treffer</h5>
-                <a class="btn btn-sm btn-outline-secondary" href="/history">Alle anzeigen</a>
+                <h5 class="mb-0"><i class="fas fa-clock text-primary me-2"></i>Letzte eindeutige Kennzeichen</h5>
+                <a class="btn btn-sm btn-outline-secondary" href="/history?unique=true">Alle anzeigen</a>
             </div>
             <div class="table-responsive">
-                <table class="table align-middle"><thead><tr><th>Kennzeichen</th><th>Fahrzeug</th><th>Konfidenz</th><th>Zeit</th></tr></thead><tbody id="latestRows"></tbody></table>
+                <table class="table align-middle small-table mb-0">
+                    <thead><tr><th>Kennzeichen</th><th>Fahrzeug</th><th>Land</th><th>Zeit</th></tr></thead>
+                    <tbody id="latestRows"><tr><td colspan="4" class="text-center text-secondary py-4">Lade...</td></tr></tbody>
+                </table>
             </div>
         </div>
     </div>
     <div class="col-xl-4">
         <div class="soft-card p-3 mb-4">
-            <h5><i class="fas fa-signal text-success me-2"></i>Stream & System</h5>
-            <div id="healthBox" class="d-grid gap-2 mt-3"></div>
-        </div>
-        <div class="soft-card p-3 mb-4">
-            <h5><i class="fas fa-star text-warning me-2"></i>Watchlist-Treffer</h5>
-            <div class="display-6" id="watchHits">0</div>
-            <div class="text-secondary">Treffer aus der Historie</div>
+            <h5 class="mb-3"><i class="fas fa-calendar-day text-success me-2"></i>Heute</h5>
+            <div class="dashboard-meta">
+                <div class="item"><div class="label">Gekommen</div><div class="text" id="todayArrivals">0</div></div>
+                <div class="item"><div class="label">Gegangen</div><div class="text" id="todayDepartures">0</div></div>
+                <div class="item"><div class="label">Aktuell präsent</div><div class="text" id="todayPresent">0</div></div>
+                <div class="item"><div class="label">Personen-Events</div><div class="text" id="todayPeopleEvents">0</div></div>
+            </div>
         </div>
         <div class="soft-card p-3">
-            <h5><i class="fas fa-magic text-primary me-2"></i>Schneller Nummern-Test</h5>
-            <div class="input-group mt-3"><input class="form-control" id="quickPlate" placeholder="z.B. OW O123"><button class="btn btn-primary" onclick="quickAnalyze()">Prüfen</button></div>
-            <div id="quickPlateResult" class="mt-3 text-secondary small">Testet Normalisierung, Korrektur und Kandidaten.</div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0"><i class="fas fa-chart-line text-primary me-2"></i>Verlauf</h5>
+                <select class="form-select form-select-sm" style="width:auto" id="timelineBucket" onchange="loadTimeline()"><option value="hour">Stunde</option><option value="day">Tag</option></select>
+            </div>
+            <canvas id="timelineChart" height="140"></canvas>
         </div>
     </div>
 </div>
@@ -70,26 +134,80 @@
 {% block extra_js %}
 <script>
 let timelineChart;
+const qs = id => document.getElementById(id);
+const setText = (id, value) => { const el = qs(id); if (el) el.textContent = value ?? '-'; };
 const pct = v => Math.round(Number(v || 0) * 100) + '%';
+const fmtTime = value => value ? new Date(value).toLocaleString('de-CH') : '-';
+const cacheBust = url => url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
 function renderLatest(rows){
-    latestRows.innerHTML = (rows||[]).length ? rows.map(e => `<tr><td><span class="plate-badge">${e.plate_text || 'Unbekannt'}</span>${e.watchlist_match ? '<span class="badge bg-warning text-dark ms-2">Watchlist</span>' : ''}</td><td>${e.vehicle_type || 'Unbekannt'} · ${e.vehicle_color || 'Unbekannt'}</td><td>${pct(e.confidence)}</td><td>${e.timestamp ? new Date(e.timestamp).toLocaleString('de-DE') : ''}</td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-secondary py-4">Noch keine Daten</td></tr>';
+    const body = qs('latestRows');
+    if (!body) return;
+    body.innerHTML = (rows||[]).length ? rows.slice(0,8).map(e => `<tr><td><span class="plate-badge">${e.plate_text || 'Unbekannt'}</span></td><td>${e.vehicle_type || 'Unbekannt'} · ${e.vehicle_color || 'Unbekannt'}</td><td>${e.plate_country_display || e.plate_country || 'Unbekannt'}</td><td>${fmtTime(e.timestamp)}</td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-secondary py-4">Noch keine Daten</td></tr>';
+}
+function renderStream(stream, config){
+    const status = stream?.status || 'stopped';
+    const dot = qs('streamStatusDot');
+    if (dot) dot.className = 'status-dot ' + status;
+    const auto = (config?.rtsp?.auto_start || config?.rtsp?.autostart_enabled) ? ' · Autostart an' : '';
+    setText('streamStatusText', (status === 'running' ? 'läuft' : status) + auto);
+}
+function renderVehicle(vehicle){
+    setText('latestPlate', vehicle?.plate_text || '-');
+    setText('latestVehicleType', vehicle?.vehicle_type || '-');
+    setText('latestVehicleColor', vehicle?.vehicle_color || '-');
+    setText('latestCountry', vehicle?.plate_country_display || '-');
+    setText('latestVehicleConf', pct(vehicle?.confidence));
+    setText('latestVehicleSource', vehicle?.source || '-');
+    setText('latestVehicleTime', fmtTime(vehicle?.timestamp));
+    const img = qs('latestVehicleImage');
+    if (img) img.src = cacheBust(vehicle?.image_url || '/api/latest/vehicle/image');
+}
+function renderPerson(person){
+    setText('latestPersonDirection', person?.direction || '-');
+    setText('latestPersonCounted', person ? (person.counted ? 'gezählt' : 'nicht gezählt') : '-');
+    setText('latestPersonConf', pct(person?.confidence));
+    setText('latestPersonTime', fmtTime(person?.timestamp));
+    const img = qs('latestPersonImage');
+    const ph = qs('latestPersonPlaceholder');
+    if (person?.image_url && img) {
+        img.src = cacheBust(person.image_url);
+        img.style.display = 'block';
+        if (ph) ph.style.display = 'none';
+    } else {
+        if (img) img.style.display = 'none';
+        if (ph) ph.style.display = 'block';
+    }
 }
 function loadDashboard(){
     fetch('/api/dashboard/overview').then(r=>r.json()).then(d=>{
-        const s=d.statistics||{}; totalDetections.textContent=s.total_detections||0; todayDetections.textContent=s.today_detections||0; uniquePlates.textContent=s.unique_plates||0; avgConfidence.textContent=pct(s.average_confidence); trafficVisitsToday.textContent=s.traffic_today?.total_visits||0; trafficUniqueToday.textContent=s.traffic_today?.unique_vehicles||0; watchHits.textContent=s.watchlist_hits||0; if (window.peopleToday) peopleToday.textContent=(d.people&&d.people.today_persons)||0; renderLatest(d.latest||[]);
-    });
-    fetch('/api/system/health').then(r=>r.json()).then(d=>{ healthBox.innerHTML=(d.checks||[]).map(c=>`<div class="d-flex justify-content-between align-items-center border rounded p-2" style="border-color:var(--card-border)!important"><span>${c.name}</span><span class="badge ${c.ok?'bg-success':'bg-warning text-dark'}">${c.ok?'OK':'Prüfen'}</span></div>`).join(''); });
+        const today = d.today || {}; const traffic = today.traffic || {}; const people = today.people || {};
+        const departures = today.departures ?? ((traffic.departures_detected || 0) + (traffic.departures_assumed || 0));
+        setText('todayPlateEvents', today.raw_detections ?? today.plate_events ?? 0);
+        setText('todayUniqueVehicles', today.unique_vehicles ?? traffic.unique_vehicles ?? 0);
+        setText('todayVisits', today.traffic_visits ?? traffic.total_visits ?? 0);
+        setText('todayRepeats', today.repeat_vehicles ?? traffic.repeat_vehicles ?? 0);
+        setText('todayPersons', today.people_counted ?? people.today_persons ?? 0);
+        setText('lastHourEvents', today.last_hour_detections ?? 0);
+        setText('todayArrivals', today.arrivals ?? traffic.arrivals ?? today.traffic_visits ?? 0);
+        setText('todayDepartures', departures);
+        setText('todayPresent', today.currently_present ?? traffic.currently_present ?? 0);
+        setText('todayPeopleEvents', today.people_events ?? people.events ?? 0);
+        renderStream(d.stream, d.config);
+        renderVehicle(d.latest_vehicle);
+        renderPerson(d.latest_person);
+        renderLatest(d.latest || []);
+    }).catch(err => showToast('Dashboard', 'Dashboard konnte nicht geladen werden: ' + err.message, 'danger'));
     loadTimeline();
 }
 function loadTimeline(){
-    fetch('/api/history/timeline?bucket=' + timelineBucket.value).then(r=>r.json()).then(d=>{
+    const bucket = qs('timelineBucket')?.value || 'hour';
+    fetch('/api/history/timeline?bucket=' + encodeURIComponent(bucket)).then(r=>r.json()).then(d=>{
         const labels=(d.items||[]).map(x=>x.time), values=(d.items||[]).map(x=>x.count);
+        const canvas = qs('timelineChart'); if (!canvas) return;
         if(timelineChart) timelineChart.destroy();
-        timelineChart = new Chart(timelineChartCanvas(), { type:'line', data:{labels, datasets:[{label:'Erkennungen', data:values, tension:.35, fill:true}]}, options:{plugins:{legend:{display:false}}, scales:{x:{ticks:{color:'#94a3b8'}}, y:{ticks:{color:'#94a3b8'}, beginAtZero:true}}} });
-    });
+        timelineChart = new Chart(canvas, { type:'line', data:{labels, datasets:[{label:'Kennzeichen', data:values, tension:.35, fill:true}]}, options:{plugins:{legend:{display:false}}, scales:{x:{ticks:{color:'#94a3b8'}}, y:{ticks:{color:'#94a3b8'}, beginAtZero:true}}} });
+    }).catch(()=>{});
 }
-function timelineChartCanvas(){ return document.getElementById('timelineChart'); }
-function quickAnalyze(){ fetch('/api/plate/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plate_text:quickPlate.value})}).then(r=>r.json()).then(d=>{ const a=d.analysis||{}; quickPlateResult.innerHTML=`<div><span class="plate-badge">${a.pretty||a.corrected||'--'}</span></div><div class="mt-2">Format: ${a.format} · Score: ${Math.round((a.score||0)*100)}% · Gültig: ${a.valid?'Ja':'Nein'}</div><div class="mt-2 small">Kandidaten: ${(d.candidates||[]).slice(0,4).map(c=>c.pretty||c.corrected).join(', ')}</div>`; }); }
 document.addEventListener('DOMContentLoaded',()=>{ loadDashboard(); setInterval(loadDashboard, Number({{ config.dashboard.auto_refresh_seconds|default(10) }})*1000); });
 </script>
 {% endblock %}
