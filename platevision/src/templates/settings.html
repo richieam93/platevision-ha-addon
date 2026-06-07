@@ -248,8 +248,14 @@
                     <button class="btn btn-outline-primary btn-sm" onclick="saveAllSettings()">
                         <i class="fas fa-save me-2"></i>Alle speichern
                     </button>
-                    <button class="btn btn-outline-warning btn-sm" onclick="resetAllSettings()">
-                        <i class="fas fa-undo me-2"></i>Zurücksetzen
+                    <button class="btn btn-warning btn-sm" onclick="applyDefaultSettingsSafe()">
+                        <i class="fas fa-wand-magic-sparkles me-2"></i>Default-Einstellungen
+                    </button>
+                    <button class="btn btn-outline-warning btn-sm" onclick="applyRecognitionDefaultsFromSettings()">
+                        <i class="fas fa-sliders me-2"></i>Default Test & RTSP
+                    </button>
+                    <button class="btn btn-outline-danger btn-sm" onclick="resetAllSettings()">
+                        <i class="fas fa-triangle-exclamation me-2"></i>Werksreset
                     </button>
                     <button class="btn btn-outline-info btn-sm" onclick="exportSettings()">
                         <i class="fas fa-download me-2"></i>Exportieren
@@ -1423,7 +1429,7 @@
                                 <div class="settings-pro-grid">
                                     <div><label class="form-label">Zeitzone</label><input type="text" class="form-control" id="timezone" value="{{ config.general.timezone if config.general.timezone is defined else 'Europe/Zurich' }}"></div>
                                     <div><label class="form-label">Datumsformat</label><input type="text" class="form-control" id="dateFormat" value="{{ config.general.date_format if config.general.date_format is defined else 'dd.mm.yyyy HH:MM' }}"></div>
-                                    <div><label class="form-label">Startseite</label>{% set start_page = config.general.startup_page if config.general.startup_page is defined else 'dashboard' %}<select class="form-select" id="startupPage">{% for page_value, page_label in [('dashboard','Dashboard'),('live','Live'),('history','Historie'),('statistics','Statistik'),('search','Suche')] %}<option value="{{ page_value }}" {% if start_page == page_value %}selected{% endif %}>{{ page_label }}</option>{% endfor %}</select></div>
+                                    <div><label class="form-label">Startseite</label>{% set start_page = config.general.startup_page if config.general.startup_page is defined else 'dashboard' %}<select class="form-select" id="startupPage">{% for page_value, page_label in [('dashboard','Dashboard'),('live','Live'),('history','Historie'),('statistics','Statistik'),('search','Suche'),('test','Test & Upload')] + ([('people','Personenanalyse')] if config.people is not defined or config.people.enabled is not defined or config.people.enabled else []) %}<option value="{{ page_value }}" {% if start_page == page_value %}selected{% endif %}>{{ page_label }}</option>{% endfor %}</select></div>
                                     <div><label class="form-label">Log-Level</label>{% set log_level = config.general.log_level if config.general.log_level is defined else 'INFO' %}<select class="form-select" id="logLevel">{% for l in ['DEBUG','INFO','WARNING','ERROR'] %}<option value="{{ l }}" {% if log_level == l %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
                                     <div><label class="form-label">Standortname</label><input type="text" class="form-control" id="siteName" value="{{ config.general.site_name if config.general.site_name is defined else 'PlateVision Standort' }}"></div>
                                     <div><label class="form-label">Bediener/Owner</label><input type="text" class="form-control" id="operatorName" value="{{ config.general.operator_name if config.general.operator_name is defined else '' }}"></div>
@@ -1810,6 +1816,193 @@
 
             <!-- Dashboard / UI Settings -->
             <div class="tab-pane fade" id="dashboardUiSettings" role="tabpanel">
+                <div class="alert alert-info d-flex align-items-start gap-2 mb-3">
+                    <i class="fas fa-circle-info mt-1"></i>
+                    <div>
+                        Hier steuerst du die Hauptmodule, das Dashboard und das Layout. Die Erkennungswerte selbst bleiben in <strong>Test & Upload</strong>, damit Foto-Test und RTSP dieselben Werte verwenden.
+                    </div>
+                </div>
+                <div class="card mb-3">
+                    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <h5 class="card-title mb-0"><i class="fas fa-toggle-on text-success me-2"></i>Module & Autostart</h5>
+                        <button type="button" class="btn btn-sm btn-warning" onclick="applyDefaultSettingsSafe()"><i class="fas fa-wand-magic-sparkles me-1"></i>Default-Einstellungen</button>
+                    </div>
+                    <div class="card-body">
+                        <form id="moduleSwitchesForm">
+                            <div class="row g-3 align-items-end">
+                                <div class="col-lg-6">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="settingsPeopleEnabled" {% if config.people is not defined or config.people.enabled is not defined or config.people.enabled %}checked{% endif %}>
+                                        <label class="form-check-label" for="settingsPeopleEnabled">
+                                            <strong>Personenanalyse aktiv</strong>
+                                            <br><small class="text-secondary">Wenn ausgeschaltet, wird die Personenanalyse im Hauptmenü ausgeblendet und im RTSP nicht verarbeitet.</small>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-lg-6">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="settingsPeopleShowOnLive" {% if config.people is not defined or config.people.show_on_live is not defined or config.people.show_on_live %}checked{% endif %}>
+                                        <label class="form-check-label" for="settingsPeopleShowOnLive">
+                                            <strong>Personen im Livebild markieren</strong>
+                                            <br><small class="text-secondary">Nur wirksam, wenn Personenanalyse aktiv ist.</small>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-lg-6">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="moduleRtspAutostart" {% if config.rtsp is defined and (config.rtsp.autostart_enabled or config.rtsp.auto_start) %}checked{% endif %}>
+                                        <label class="form-check-label" for="moduleRtspAutostart">
+                                            <strong>Webstream automatisch starten</strong>
+                                            <br><small class="text-secondary">Startet nach Docker-/Home-Assistant-Neustart automatisch.</small>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-lg-3">
+                                    <label class="form-label">Startverzögerung</label>
+                                    <div class="input-group"><input type="number" class="form-control" id="moduleRtspAutostartDelay" min="0" max="120" value="{{ config.rtsp.autostart_delay_seconds if config.rtsp is defined and config.rtsp.autostart_delay_seconds is defined else 3 }}"><span class="input-group-text">Sek.</span></div>
+                                </div>
+                                <div class="col-lg-3">
+                                    <label class="form-label">Autostart Retry</label>
+                                    <div class="input-group"><input type="number" class="form-control" id="moduleRtspAutoStartRetry" min="5" max="600" value="{{ config.rtsp.auto_start_retry_seconds if config.rtsp is defined and config.rtsp.auto_start_retry_seconds is defined else 30 }}"><span class="input-group-text">Sek.</span></div>
+                                </div>
+                                <div class="col-lg-3">
+                                    <label class="form-label">Reconnect Delay</label>
+                                    <div class="input-group"><input type="number" class="form-control" id="moduleRtspReconnectDelay" min="1" max="120" value="{{ config.rtsp.reconnect_delay if config.rtsp is defined and config.rtsp.reconnect_delay is defined else 5 }}"><span class="input-group-text">Sek.</span></div>
+                                </div>
+                                <div class="col-lg-3">
+                                    <label class="form-label">Stream Buffer</label>
+                                    <div class="input-group"><input type="number" class="form-control" id="moduleRtspBufferSize" min="1" max="120" value="{{ config.rtsp.buffer_size if config.rtsp is defined and config.rtsp.buffer_size is defined else 10 }}"><span class="input-group-text">Frames</span></div>
+                                </div>
+                                <div class="col-lg-3">
+                                    <label class="form-label">Stream Breite</label>
+                                    <input type="number" class="form-control" id="moduleRtspWidth" min="320" max="7680" step="1" value="{{ config.rtsp.resolution.width if config.rtsp is defined and config.rtsp.resolution is defined and config.rtsp.resolution.width is defined else 1280 }}">
+                                </div>
+                                <div class="col-lg-3">
+                                    <label class="form-label">Stream Höhe</label>
+                                    <input type="number" class="form-control" id="moduleRtspHeight" min="240" max="4320" step="1" value="{{ config.rtsp.resolution.height if config.rtsp is defined and config.rtsp.resolution is defined and config.rtsp.resolution.height is defined else 720 }}">
+                                </div>
+                                <div class="col-12"><hr class="border-secondary-subtle"></div>
+                                <div class="col-12">
+                                    <div class="d-flex align-items-center gap-2 mb-1">
+                                        <i class="fas fa-car-side text-primary"></i>
+                                        <strong>Betrieb & Speicherung</strong>
+                                    </div>
+                                    <div class="text-secondary small">Diese Schnellschalter gelten global. Die Detailwerte für YOLO/OCR stellst du weiterhin in <strong>Test & Upload</strong> ein.</div>
+                                </div>
+                                <div class="col-lg-4">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="settingsVehicleDetectionEnabled" {% if config.detection is not defined or config.detection.car_detection_enabled is not defined or config.detection.car_detection_enabled %}checked{% endif %}>
+                                        <label class="form-check-label" for="settingsVehicleDetectionEnabled">Fahrzeuganalyse aktiv</label>
+                                    </div>
+                                </div>
+                                <div class="col-lg-4">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="settingsAutoSaveHistory" {% if config.general is not defined or config.general.auto_save_history is not defined or config.general.auto_save_history %}checked{% endif %}>
+                                        <label class="form-check-label" for="settingsAutoSaveHistory">Automatisch in Historie speichern</label>
+                                    </div>
+                                </div>
+                                <div class="col-lg-4">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="settingsSavePlateImages" {% if config.detection is not defined or config.detection.save_detected_plates is not defined or config.detection.save_detected_plates %}checked{% endif %}>
+                                        <label class="form-check-label" for="settingsSavePlateImages">Kennzeichen-Bilder speichern</label>
+                                    </div>
+                                </div>
+                                <div class="col-lg-4">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="settingsSaveVehicleImages" {% if config.detection is not defined or config.detection.save_detected_vehicles is not defined or config.detection.save_detected_vehicles %}checked{% endif %}>
+                                        <label class="form-check-label" for="settingsSaveVehicleImages">Fahrzeug-Bilder speichern</label>
+                                    </div>
+                                </div>
+                                <div class="col-lg-4">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="settingsSaveFullFrames" {% if config.detection is defined and config.detection.save_full_frame %}checked{% endif %}>
+                                        <label class="form-check-label" for="settingsSaveFullFrames">Vollständige Frames speichern</label>
+                                    </div>
+                                </div>
+                                <div class="col-lg-4">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="moduleDebugMode" {% if config.general is defined and config.general.debug_mode %}checked{% endif %}>
+                                        <label class="form-check-label" for="moduleDebugMode">Debug-Logging aktivieren</label>
+                                    </div>
+                                </div>
+                                <div class="col-lg-4">
+                                    <label class="form-label">Log-Level</label>
+                                    <select class="form-select" id="moduleLogLevel">
+                                        {% set log_level = config.general.log_level if config.general is defined and config.general.log_level is defined else 'INFO' %}
+                                        <option value="DEBUG" {% if log_level == 'DEBUG' %}selected{% endif %}>DEBUG</option>
+                                        <option value="INFO" {% if log_level == 'INFO' %}selected{% endif %}>INFO</option>
+                                        <option value="WARNING" {% if log_level == 'WARNING' %}selected{% endif %}>WARNING</option>
+                                        <option value="ERROR" {% if log_level == 'ERROR' %}selected{% endif %}>ERROR</option>
+                                    </select>
+                                </div>
+                                <div class="col-lg-4">
+                                    <label class="form-label">Startseite</label>
+                                    <select class="form-select" id="moduleStartupPage">
+                                        {% set startup_page = config.general.startup_page if config.general is defined and config.general.startup_page is defined else 'dashboard' %}
+                                        <option value="dashboard" {% if startup_page == 'dashboard' %}selected{% endif %}>Dashboard</option>
+                                        <option value="test" {% if startup_page == 'test' %}selected{% endif %}>Test & Upload</option>
+                                        <option value="stream" {% if startup_page == 'stream' %}selected{% endif %}>Live Stream</option>
+                                        <option value="history" {% if startup_page == 'history' %}selected{% endif %}>Historie</option>
+                                    </select>
+                                </div>
+                                <div class="col-lg-4">
+                                    <label class="form-label">Standortname</label>
+                                    <input type="text" class="form-control" id="moduleSiteName" value="{{ config.general.site_name if config.general is defined and config.general.site_name is defined else 'PlateVision Standort' }}">
+                                </div>
+                                <div class="col-lg-3 d-grid">
+                                    <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Module speichern</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                <div class="card mb-3 settings-pro-section">
+                    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <h5 class="card-title mb-0"><i class="fas fa-screwdriver-wrench text-warning me-2"></i>System-Wartung & sichere Defaults</h5>
+                        <span class="value-badge">RTSP bleibt erhalten</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-6">
+                                <div class="info-box mb-0"><i class="fas fa-info-circle me-2"></i>Die Default-Schalter setzen empfohlene Werte, löschen aber nicht deine RTSP-URL und nicht den gespeicherten Straßenbereich. Für YOLO/OCR-Feintuning bleibt <strong>Test & Upload</strong> die Hauptseite.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="d-grid gap-2 d-md-flex justify-content-md-end flex-wrap">
+                                    <button type="button" class="btn btn-warning" onclick="applyDefaultSettingsSafe()"><i class="fas fa-wand-magic-sparkles me-1"></i>Globale Defaults</button>
+                                    <button type="button" class="btn btn-outline-warning" onclick="applyRecognitionDefaultsFromSettings()"><i class="fas fa-flask me-1"></i>Test/RTSP Defaults</button>
+                                    <button type="button" class="btn btn-outline-info" onclick="reloadModels()"><i class="fas fa-sync me-1"></i>Modelle neu laden</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card mb-3 settings-pro-section">
+                    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <h5 class="card-title mb-0"><i class="fas fa-microchip text-danger me-2"></i>RTSP Leistung & CPU-Sparmodus</h5>
+                        <a href="/test" class="btn btn-sm btn-outline-primary"><i class="fas fa-flask me-1"></i>in Test & Upload fein einstellen</a>
+                    </div>
+                    <div class="card-body">
+                        <form id="rtspPerformanceForm">
+                            <div class="row g-3 align-items-end">
+                                <div class="col-md-3"><label class="form-label">Frame-Intervall</label><div class="input-group"><input type="number" class="form-control" id="settingsProcessInterval" min="0.1" max="10" step="0.1" value="{{ config.detection.process_interval if config.detection is defined and config.detection.process_interval is defined else 0.8 }}"><span class="input-group-text">Sek.</span></div></div>
+                                <div class="col-md-3"><label class="form-label">Max. Erkennungen</label><input type="number" class="form-control" id="settingsMaxDetections" min="1" max="50" step="1" value="{{ config.detection.max_detections_per_frame if config.detection is defined and config.detection.max_detections_per_frame is defined else 8 }}"></div>
+                                <div class="col-md-3"><label class="form-label">ROI Padding</label><div class="input-group"><input type="number" class="form-control" id="settingsRoiPadding" min="0" max="100" step="1" value="{{ config.rtsp.analysis_area.crop_padding_percent if config.rtsp is defined and config.rtsp.analysis_area is defined and config.rtsp.analysis_area.crop_padding_percent is defined else 25 }}"><span class="input-group-text">%</span></div></div>
+                                <div class="col-md-3"><label class="form-label">ROI Min. Rand</label><div class="input-group"><input type="number" class="form-control" id="settingsRoiMinPadding" min="0" max="1000" step="10" value="{{ config.rtsp.analysis_area.crop_min_padding_px if config.rtsp is defined and config.rtsp.analysis_area is defined and config.rtsp.analysis_area.crop_min_padding_px is defined else 120 }}"><span class="input-group-text">px</span></div></div>
+                                <div class="col-md-3"><label class="form-label">Motion-Schwelle</label><div class="input-group"><input type="number" class="form-control" id="settingsMotionThreshold" min="0.01" max="10" step="0.01" value="{{ config.rtsp.analysis_area.motion_gate_threshold_percent if config.rtsp is defined and config.rtsp.analysis_area is defined and config.rtsp.analysis_area.motion_gate_threshold_percent is defined else 0.20 }}"><span class="input-group-text">%</span></div></div>
+                                <div class="col-md-3"><label class="form-label">Motion halten</label><div class="input-group"><input type="number" class="form-control" id="settingsMotionHold" min="0" max="30" step="0.1" value="{{ config.rtsp.analysis_area.motion_gate_hold_seconds if config.rtsp is defined and config.rtsp.analysis_area is defined and config.rtsp.analysis_area.motion_gate_hold_seconds is defined else 2 }}"><span class="input-group-text">Sek.</span></div></div>
+                                <div class="col-md-3"><label class="form-label">Idle-Scan</label><div class="input-group"><input type="number" class="form-control" id="settingsMotionIdle" min="1" max="120" step="1" value="{{ config.rtsp.analysis_area.motion_gate_idle_scan_seconds if config.rtsp is defined and config.rtsp.analysis_area is defined and config.rtsp.analysis_area.motion_gate_idle_scan_seconds is defined else 5 }}"><span class="input-group-text">Sek.</span></div></div>
+                                <div class="col-md-3"><label class="form-label">Fahrzeugfarbe Palette</label><input type="number" class="form-control" id="settingsVehicleColorPaletteMax" min="1" max="12" step="1" value="{{ config.detection.vehicle_color_palette_max if config.detection is defined and config.detection.vehicle_color_palette_max is defined else 5 }}"></div>
+                                <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="settingsCropBeforeDetection" {% if config.rtsp is not defined or config.rtsp.analysis_area is not defined or config.rtsp.analysis_area.crop_before_detection is not defined or config.rtsp.analysis_area.crop_before_detection %}checked{% endif %}><label class="form-check-label" for="settingsCropBeforeDetection">Straßenbereich vor YOLO croppen</label></div></div>
+                                <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="settingsMotionGate" {% if config.rtsp is not defined or config.rtsp.analysis_area is not defined or config.rtsp.analysis_area.motion_gate_enabled is not defined or config.rtsp.analysis_area.motion_gate_enabled %}checked{% endif %}><label class="form-check-label" for="settingsMotionGate">Bewegungsgate aktiv</label></div></div>
+                                <div class="col-md-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="settingsVehicleColorEnabled" {% if config.detection is not defined or config.detection.vehicle_color_enabled is not defined or config.detection.vehicle_color_enabled %}checked{% endif %}><label class="form-check-label" for="settingsVehicleColorEnabled">Fahrzeugfarbe speichern</label></div></div>
+                                <div class="col-12 d-flex gap-2 flex-wrap">
+                                    <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Leistung speichern</button>
+                                    <button type="button" class="btn btn-outline-warning" onclick="applyCpuDefaultsInSettings()"><i class="fas fa-gauge-high me-2"></i>CPU-Defaults einsetzen</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
                 <div class="row">
                     <div class="col-lg-6">
                         <div class="d-flex flex-wrap gap-2 mb-3">
@@ -2106,7 +2299,7 @@
                                 <table class="table table-sm text-start">
                                     <tr>
                                         <td class="text-secondary">Version</td>
-                                        <td class="fw-bold">0.8.28 FastPlateOCR + YOLO Vehicle Intelligence</td>
+                                        <td class="fw-bold">0.8.30 FastPlateOCR + YOLO Vehicle Intelligence</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">YOLO Version</td>
@@ -2499,6 +2692,10 @@
                 autostart_delay_seconds: pvNum('settingsRtspAutostartDelay', 3),
                 auto_start: pvBool('settingsRtspAutostart'),
                 auto_start_delay_seconds: pvNum('settingsRtspAutostartDelay', 3)
+            },
+            people: {
+                enabled: document.getElementById('settingsPeopleEnabled') ? pvBool('settingsPeopleEnabled') : {{ 'true' if config.people is not defined or config.people.enabled is not defined or config.people.enabled else 'false' }},
+                show_on_live: document.getElementById('settingsPeopleShowOnLive') ? pvBool('settingsPeopleShowOnLive') : {{ 'true' if config.people is not defined or config.people.show_on_live is not defined or config.people.show_on_live else 'false' }}
             }
         };
         
@@ -2539,21 +2736,61 @@
     }
     
     function saveAllSettings() {
-        document.getElementById('detectionForm').dispatchEvent(new Event('submit'));
-        document.getElementById('ocrForm').dispatchEvent(new Event('submit'));
-        document.getElementById('preprocessingForm').dispatchEvent(new Event('submit'));
-        document.getElementById('historyForm').dispatchEvent(new Event('submit'));
-        document.getElementById('storageForm').dispatchEvent(new Event('submit'));
-        document.getElementById('generalForm').dispatchEvent(new Event('submit'));
-        ['plateRecognitionForm', 'searchForm', 'trafficForm', 'dashboardForm', 'uiForm', 'privacyForm', 'alertsForm', 'peopleForm', 'modelsForm', 'aboutForm'].forEach(function(formId) {
+        ['detectionForm', 'ocrForm', 'preprocessingForm', 'historyForm', 'storageForm', 'generalForm',
+         'moduleSwitchesForm', 'rtspPerformanceForm', 'plateRecognitionForm', 'searchForm', 'trafficForm', 'dashboardForm',
+         'uiForm', 'privacyForm', 'alertsForm', 'peopleForm', 'modelsForm', 'aboutForm'].forEach(function(formId) {
             const form = document.getElementById(formId);
             if (form) form.dispatchEvent(new Event('submit'));
         });
     }
     
+    function applyRecognitionDefaultsFromSettings() {
+        showConfirm('Default Test & RTSP anwenden?',
+            'Die funktionierenden Demo-Werte für YOLO, fast-plate-ocr, Personen-Crops, CPU-Gate und RTSP-Erkennung werden gespeichert. RTSP-URL und Straßenbereich bleiben erhalten.',
+            function() {
+                fetch('/api/config/defaults', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({scope: 'recognition', preserve_rtsp: true, preserve_model_uploads: true, reload_models: true})
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('Default Test & RTSP', 'Erkennungs-Defaults gespeichert. Seite wird neu geladen.', 'success');
+                        setTimeout(() => location.reload(), 900);
+                    } else {
+                        showToast('Fehler', data.error || 'Defaults konnten nicht angewendet werden', 'danger');
+                    }
+                })
+                .catch(() => showToast('Fehler', 'Verbindungsfehler beim Speichern der Test/RTSP-Defaults', 'danger'));
+            });
+    }
+
+    function applyDefaultSettingsSafe() {
+        showConfirm('Default-Einstellungen laden?',
+            'PlateVision wird auf die empfohlenen Standardwerte gesetzt. RTSP-URL und gespeicherter Straßenbereich bleiben erhalten. Personenanalyse ist danach wieder aktiv.',
+            function() {
+                fetch('/api/config/defaults', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scope: 'global', preserve_rtsp: true, preserve_model_uploads: true, reload_models: true })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('Default-Einstellungen', 'Standardwerte angewendet. Seite wird neu geladen.', 'success');
+                        setTimeout(() => location.reload(), 1200);
+                    } else {
+                        showToast('Fehler', data.error || 'Default-Einstellungen konnten nicht angewendet werden', 'danger');
+                    }
+                })
+                .catch(() => showToast('Fehler', 'Verbindungsfehler beim Laden der Defaults', 'danger'));
+            });
+    }
+    
     function resetAllSettings() {
         showConfirm('Alle Einstellungen zurücksetzen?', 
-            'Dies setzt alle Einstellungen auf die Standardwerte zurück. Die Seite wird neu geladen.', 
+            'Dies ist ein kompletter Werksreset und setzt auch RTSP/ROI auf Standardwerte zurück. Die Seite wird neu geladen.', 
             function() {
                 fetch('/api/config/reset', { method: 'POST' })
                     .then(response => response.json())
@@ -2578,7 +2815,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.8.28-fastplateocr-yolo-vehicle-intelligence',
+                    version: '0.8.30-fastplateocr-yolo-vehicle-intelligence',
                     config: config
                 };
                 
@@ -3055,6 +3292,121 @@
             arrival_label: pvStr('arrivalLabel', 'gekommen'),
             departure_label: pvStr('departureLabel', 'gegangen')
         }, '/api/config/traffic');
+    });
+
+    const moduleSwitchesForm = document.getElementById('moduleSwitchesForm');
+    if (moduleSwitchesForm) moduleSwitchesForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                people: {
+                    enabled: pvBool('settingsPeopleEnabled'),
+                    show_on_live: pvBool('settingsPeopleShowOnLive'),
+                    history_enabled: true,
+                    image_history_enabled: true,
+                    save_person_crops: true,
+                    image_history_store_crop: true,
+                    save_full_frame: false,
+                    image_history_store_full_frame: false
+                },
+                rtsp: {
+                    autostart_enabled: pvBool('moduleRtspAutostart'),
+                    auto_start: pvBool('moduleRtspAutostart'),
+                    autostart_delay_seconds: pvNum('moduleRtspAutostartDelay', 3),
+                    auto_start_delay_seconds: pvNum('moduleRtspAutostartDelay', 3),
+                    auto_start_retry_seconds: pvNum('moduleRtspAutoStartRetry', 30),
+                    reconnect_delay: pvNum('moduleRtspReconnectDelay', 5),
+                    buffer_size: pvNum('moduleRtspBufferSize', 10),
+                    resolution: {
+                        width: pvNum('moduleRtspWidth', 1280),
+                        height: pvNum('moduleRtspHeight', 720)
+                    }
+                },
+                detection: {
+                    car_detection_enabled: pvBool('settingsVehicleDetectionEnabled'),
+                    save_detected_plates: pvBool('settingsSavePlateImages'),
+                    save_detected_vehicles: pvBool('settingsSaveVehicleImages'),
+                    save_full_frame: pvBool('settingsSaveFullFrames')
+                },
+                general: {
+                    auto_save_history: pvBool('settingsAutoSaveHistory'),
+                    log_level: pvStr('moduleLogLevel', 'INFO'),
+                    startup_page: pvStr('moduleStartupPage', 'dashboard'),
+                    site_name: pvStr('moduleSiteName', 'PlateVision Standort'),
+                    debug_mode: pvBool('moduleDebugMode')
+                }
+            })
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                showToast('Gespeichert', 'Module und Autostart gespeichert. Menü wird aktualisiert.', 'success');
+                setTimeout(() => location.reload(), 700);
+            } else {
+                showToast('Fehler', result.error || 'Speichern fehlgeschlagen', 'danger');
+            }
+        })
+        .catch(() => showToast('Fehler', 'Verbindungsfehler', 'danger'));
+    });
+
+    function applyCpuDefaultsInSettings() {
+        const values = {
+            settingsProcessInterval: 0.8,
+            settingsMaxDetections: 8,
+            settingsRoiPadding: 25,
+            settingsRoiMinPadding: 120,
+            settingsMotionThreshold: 0.20,
+            settingsMotionHold: 2,
+            settingsMotionIdle: 5,
+            settingsVehicleColorPaletteMax: 5
+        };
+        Object.entries(values).forEach(([id, value]) => { const el = document.getElementById(id); if (el) el.value = value; });
+        const crop = document.getElementById('settingsCropBeforeDetection'); if (crop) crop.checked = true;
+        const motion = document.getElementById('settingsMotionGate'); if (motion) motion.checked = true;
+        const color = document.getElementById('settingsVehicleColorEnabled'); if (color) color.checked = true;
+        showToast('CPU-Defaults', 'Empfohlene RTSP-Leistungswerte wurden eingetragen. Bitte speichern.', 'info');
+    }
+
+    const rtspPerformanceForm = document.getElementById('rtspPerformanceForm');
+    if (rtspPerformanceForm) rtspPerformanceForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        Promise.all([
+            fetch('/api/config/detection', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    process_interval: pvNum('settingsProcessInterval', 0.8),
+                    max_detections_per_frame: pvNum('settingsMaxDetections', 8),
+                    vehicle_color_enabled: pvBool('settingsVehicleColorEnabled'),
+                    vehicle_color_palette_max: pvNum('settingsVehicleColorPaletteMax', 5)
+                })
+            }),
+            fetch('/api/config/rtsp', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    analysis_area: {
+                        crop_before_detection: pvBool('settingsCropBeforeDetection'),
+                        crop_padding_percent: pvNum('settingsRoiPadding', 25),
+                        crop_min_padding_px: pvNum('settingsRoiMinPadding', 120),
+                        motion_gate_enabled: pvBool('settingsMotionGate'),
+                        motion_gate_threshold_percent: pvNum('settingsMotionThreshold', 0.20),
+                        motion_gate_hold_seconds: pvNum('settingsMotionHold', 2),
+                        motion_gate_idle_scan_seconds: pvNum('settingsMotionIdle', 5)
+                    }
+                })
+            })
+        ])
+        .then(async responses => {
+            for (const response of responses) {
+                const data = await response.json();
+                if (!data.success) throw new Error(data.error || 'Speichern fehlgeschlagen');
+            }
+            showToast('Gespeichert', 'RTSP-Leistungswerte gespeichert und werden im Stream verwendet.', 'success');
+        })
+        .catch(err => showToast('Fehler', err.message || 'Leistungswerte konnten nicht gespeichert werden', 'danger'));
     });
 
     const dashboardForm = document.getElementById('dashboardForm');

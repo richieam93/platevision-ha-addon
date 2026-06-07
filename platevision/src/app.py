@@ -1,10 +1,10 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.28 FastPlateOCR Vehicle Intelligence
+Version 0.8.30 FastPlateOCR Vehicle Intelligence
 """
 
-from flask import Flask, render_template, request, jsonify, Response, send_from_directory
+from flask import Flask, render_template, request, jsonify, Response, send_from_directory, redirect, url_for
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 import cv2
@@ -23,6 +23,9 @@ import io
 import queue
 import logging
 import re
+
+APP_VERSION = '0.8.30'
+APP_EDITION = 'FastPlateOCR + YOLO Vehicle Intelligence'
 import csv
 from difflib import SequenceMatcher
 from collections import Counter, defaultdict
@@ -370,6 +373,8 @@ class ConfigManager:
         },
         'detection': {
             'confidence_threshold': 0.5,
+            'vehicle_detector_iou': 0.45,
+            'vehicle_detector_imgsz': 640,
             'car_detection_enabled': True,
             'zoom_enabled': True,
             'zoom_factor': 2.5,
@@ -383,7 +388,10 @@ class ConfigManager:
             'plate_aspect_ratio_min': 1.2,
             'plate_aspect_ratio_max': 8.0,
             'vehicle_class_filter': ['car', 'truck', 'bus', 'motorcycle', 'bicycle'],
+            'vehicle_detector_imgsz': 640,
+            'vehicle_detector_iou': 0.45,
             'max_detections_per_frame': 8,
+            'ocr_min_confidence': 0.25,
             'plate_detector_confidence_factor': 0.6,
             'plate_detector_confidence': 0.25,
             'plate_detector_iou': 0.45,
@@ -396,6 +404,11 @@ class ConfigManager:
             'scan_full_frame_when_vehicle_found': True,
             'min_vehicle_width': 80,
             'min_vehicle_height': 60,
+            'vehicle_color_enabled': True,
+            'vehicle_color_crop_margin_x_percent': 8.0,
+            'vehicle_color_crop_margin_y_percent': 12.0,
+            'vehicle_color_palette_max': 5,
+            'vehicle_color_sample_pixels': 60000,
             'duplicate_cooldown_per_frame': True,
             'deduplicate_plates_per_frame': True,
         },
@@ -776,7 +789,7 @@ class ConfigManager:
 
             rtsp_cfg = config.setdefault('rtsp', {})
             if not migration_cfg.get('rtsp_auto_start_setting_applied_v1'):
-                # 0.8.28: Keep the web stream alive after Docker/HA restarts.
+                # 0.8.30: Keep the web stream alive after Docker/HA restarts.
                 # Existing users can disable this switch in Settings.
                 rtsp_cfg.setdefault('auto_start', True)
                 rtsp_cfg.setdefault('auto_start_delay_seconds', 3)
@@ -2505,13 +2518,19 @@ class LicensePlateDetector:
         compatibility, while HEX/RGB are stored separately.
         """
         try:
+            if self.config_manager.get('detection', 'vehicle_color_enabled') is False:
+                return None
             if vehicle_crop is None or vehicle_crop.size == 0:
                 return None
 
             h, w = vehicle_crop.shape[:2]
             mask = np.zeros((h, w), dtype=np.uint8)
-            mx = max(1, int(w * 0.08))
-            my = max(1, int(h * 0.12))
+            margin_x = float(self.config_manager.get('detection', 'vehicle_color_crop_margin_x_percent') or 8.0) / 100.0
+            margin_y = float(self.config_manager.get('detection', 'vehicle_color_crop_margin_y_percent') or 12.0) / 100.0
+            margin_x = min(0.45, max(0.0, margin_x))
+            margin_y = min(0.45, max(0.0, margin_y))
+            mx = max(1, int(w * margin_x))
+            my = max(1, int(h * margin_y))
             mask[my:max(my + 1, h - my), mx:max(mx + 1, w - mx)] = 1
 
             if plate_box_relative:
@@ -2531,8 +2550,10 @@ class LicensePlateDetector:
             pixels = vehicle_crop[mask.astype(bool)]
             if pixels.size == 0:
                 pixels = vehicle_crop.reshape(-1, 3)
-            if len(pixels) > 60000:
-                step = max(1, len(pixels) // 60000)
+            max_sample_pixels = int(self.config_manager.get('detection', 'vehicle_color_sample_pixels') or 60000)
+            max_sample_pixels = max(5000, min(200000, max_sample_pixels))
+            if len(pixels) > max_sample_pixels:
+                step = max(1, len(pixels) // max_sample_pixels)
                 pixels = pixels[::step]
 
             hsv = cv2.cvtColor(pixels.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)
@@ -2568,7 +2589,9 @@ class LicensePlateDetector:
             # That creates a self-reference: best -> palette -> best, and Flask's
             # jsonify/json.dumps then fails with "Circular reference detected".
             best = dict(palette[0])
-            palette_preview = [dict(item) for item in palette[:5]]
+            palette_max = int(self.config_manager.get('detection', 'vehicle_color_palette_max') or 5)
+            palette_max = max(1, min(12, palette_max))
+            palette_preview = [dict(item) for item in palette[:palette_max]]
             best["method"] = "dominant vehicle paint swatch + RGB-based color naming; heuristic"
             best["note"] = "Schätzung aus Pixeln, kein spezialisiertes Lackfarben-Modell. HEX/RGB ist die wichtigste Messung."
             best["palette"] = palette_preview
@@ -3797,6 +3820,8 @@ def statistics_page():
 
 @app.route('/people')
 def people_page():
+    if not config_manager.get('people', 'enabled'):
+        return redirect(url_for('settings') + '#dashboardUiSettings')
     return render_template('people.html',
                           page='people',
                           stream_status=stream_manager.get_status(),
@@ -4060,11 +4085,109 @@ def api_stream_snapshot():
 # API ROUTEN - KONFIGURATION
 # ============================================================
 
+def _config_defaults_copy():
+    return json.loads(json.dumps(config_manager.DEFAULT_CONFIG))
+
+
+def _apply_default_scope(scope='all', preserve_rtsp=True, preserve_model_uploads=True):
+    """Apply known-good defaults without accidentally deleting important runtime data.
+
+    scope='recognition'/'test' resets the values used by Test & Upload and RTSP.
+    scope='global'/'all' resets the global web-interface settings. By default the
+    RTSP URL and the saved road polygon stay untouched so a defaults click does
+    not destroy the camera setup.
+    """
+    scope = (scope or 'all').lower()
+    current = config_manager.config or {}
+    defaults = _config_defaults_copy()
+
+    if scope in ('recognition', 'test', 'demo'):
+        for section in ('detection', 'ocr', 'people', 'traffic'):
+            current[section] = json.loads(json.dumps(defaults.get(section, {})))
+        current.setdefault('models', {})
+        current['models'].update({
+            'license_plate_detector': defaults['models']['license_plate_detector'],
+            'vehicle_detector': defaults['models']['vehicle_detector'],
+            'person_detector': defaults['models']['person_detector'],
+        })
+        # Recognition defaults also refresh the CPU-saving RTSP analysis behavior,
+        # while preserving the user's actual RTSP URL and road polygon/geometry.
+        current.setdefault('rtsp', {})
+        current['rtsp'].setdefault('analysis_area', {})
+        default_area = defaults.get('rtsp', {}).get('analysis_area', {})
+        for key in ('crop_before_detection', 'mask_before_detection', 'crop_padding_percent',
+                    'crop_min_padding_px', 'motion_gate_enabled', 'motion_gate_threshold_percent',
+                    'motion_gate_hold_seconds', 'motion_gate_idle_scan_seconds'):
+            if key in default_area:
+                current['rtsp']['analysis_area'][key] = default_area[key]
+        # Upload settings stay in place so custom models are not lost from the UI.
+        people = current.setdefault('people', {})
+        people['enabled'] = True
+        people['image_history_enabled'] = True
+        people['save_person_crops'] = True
+        people['image_history_store_crop'] = True
+        people['image_history_store_annotated'] = False
+        people['save_full_frame'] = False
+        people['image_history_store_full_frame'] = False
+        config_manager.config = config_manager._normalize_analysis_area(current)
+        config_manager.save_config()
+        return config_manager.config
+
+    preserved_rtsp = json.loads(json.dumps(current.get('rtsp', {}))) if preserve_rtsp else None
+    preserved_models = json.loads(json.dumps(current.get('models', {}))) if preserve_model_uploads else None
+    config_manager.config = defaults
+
+    if preserved_rtsp:
+        # Keep camera URL, active state, autostart and exact Straßenbereich/Polygon.
+        for key in ('url', 'enabled', 'auto_start', 'auto_start_delay_seconds', 'auto_start_retry_seconds',
+                    'autostart_enabled', 'autostart_delay_seconds', 'reconnect_delay', 'buffer_size',
+                    'resolution', 'analysis_area'):
+            if key in preserved_rtsp:
+                config_manager.config.setdefault('rtsp', {})[key] = preserved_rtsp[key]
+
+    if preserved_models:
+        models = config_manager.config.setdefault('models', {})
+        # Preserve upload folders and the last uploaded file; selected detector models return to defaults.
+        for key in ('custom_model_directory', 'additional_model_directories', 'model_upload_enabled',
+                    'model_upload_directory', 'model_upload_max_mb', 'model_upload_allow_overwrite',
+                    'model_upload_select_after_upload', 'last_uploaded_model'):
+            if key in preserved_models:
+                models[key] = preserved_models[key]
+
+    config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
+    config_manager.save_config()
+    return config_manager.config
+
+
 @app.route('/api/config/reset', methods=['POST'])
 def api_reset_config():
-    config_manager.config = json.loads(json.dumps(config_manager.DEFAULT_CONFIG))
+    # Legacy endpoint: true full reset, kept for compatibility.
+    config_manager.config = _config_defaults_copy()
+    config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
     config_manager.save_config()
-    return jsonify({'success': True})
+    return jsonify({'success': True, 'config': _public_config()})
+
+
+@app.route('/api/config/defaults', methods=['POST'])
+def api_config_defaults():
+    try:
+        data = request.get_json(silent=True) or {}
+        scope = data.get('scope') or 'global'
+        preserve_rtsp = data.get('preserve_rtsp', True) is not False
+        preserve_model_uploads = data.get('preserve_model_uploads', True) is not False
+        cfg = _apply_default_scope(scope, preserve_rtsp=preserve_rtsp, preserve_model_uploads=preserve_model_uploads)
+        detector.ocr_reader = None
+        detector.fast_plate_recognizer = None
+        detector.fast_plate_cache_key = None
+        detector.models_loaded = False
+        detector.human_model = None
+        if data.get('reload_models', scope in ('recognition', 'test', 'demo')):
+            threading.Thread(target=detector.load_models, daemon=True).start()
+        logger.info('[Defaults] scope=%s preserve_rtsp=%s preserve_model_uploads=%s people=%s', scope, preserve_rtsp, preserve_model_uploads, config_manager.get('people', 'enabled'))
+        return jsonify({'success': True, 'config': _public_config(), 'models': _scan_model_files()})
+    except Exception as e:
+        logger.exception(f'Default-Einstellungen konnten nicht angewendet werden: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/config', methods=['GET'])
 def api_get_config():
@@ -4491,9 +4614,19 @@ def api_watchlist_delete(item_id):
 def api_save_advanced_config():
     try:
         data = request.get_json(silent=True) or {}
-        for section in ('general', 'ui', 'privacy', 'plate_recognition', 'search', 'dashboard', 'alerts', 'traffic', 'people', 'recognition_profiles'):
+        def deep_update(target, payload):
+            for key, value in (payload or {}).items():
+                if isinstance(value, dict) and isinstance(target.get(key), dict):
+                    deep_update(target[key], value)
+                else:
+                    target[key] = value
+            return target
+        for section in ('general', 'ui', 'privacy', 'plate_recognition', 'search', 'dashboard', 'alerts',
+                        'traffic', 'people', 'recognition_profiles', 'detection', 'ocr', 'models', 'history', 'storage', 'rtsp'):
             if section in data:
-                config_manager.config.setdefault(section, {}).update(data[section])
+                config_manager.config.setdefault(section, {})
+                deep_update(config_manager.config[section], data[section])
+        config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
         config_manager.save_config()
         return jsonify({'success': True, 'config': config_manager.config})
     except Exception as e:
@@ -6140,8 +6273,8 @@ def api_delete_job(job_id):
 def api_system_about():
     return jsonify({
         'name': 'PlateVision',
-        'version': '0.8.28',
-        'edition': 'FastPlateOCR + YOLO Vehicle Intelligence',
+        'version': APP_VERSION,
+        'edition': APP_EDITION,
         'features': [
             'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
             'Statistik', 'Suche', 'Watchlist', 'Mehrsprachige Einstellungen',
@@ -6194,7 +6327,15 @@ def inject_i18n_helpers():
     translations = TRANSLATIONS.get(lang, TRANSLATIONS['de'])
     def t(key):
         return translations.get(key, TRANSLATIONS['de'].get(key, key))
-    return {'lang': lang, 't': t, 'translations': translations}
+    return {
+        'lang': lang,
+        't': t,
+        'translations': translations,
+        'app_version': APP_VERSION,
+        'app_edition': APP_EDITION,
+        'app_config': config_manager.config,
+        'people_menu_enabled': bool(config_manager.get('people', 'enabled') is not False),
+    }
 
 
 def _deep_update(target, updates):
@@ -6385,7 +6526,7 @@ def api_test_settings():
         data = request.get_json(silent=True) or {}
         reload_requested = bool(data.pop('reload', False))
 
-        for section in ('detection', 'ocr', 'models', 'people', 'traffic'):
+        for section in ('detection', 'ocr', 'models', 'people', 'traffic', 'rtsp'):
             payload = data.get(section)
             if not isinstance(payload, dict):
                 continue
@@ -6393,7 +6534,12 @@ def api_test_settings():
             if section == 'ocr' and isinstance(payload.get('preprocessing'), dict):
                 config_manager.config[section].setdefault('preprocessing', {})
                 config_manager.config[section]['preprocessing'].update(payload.pop('preprocessing'))
+            if section == 'rtsp' and isinstance(payload.get('analysis_area'), dict):
+                config_manager.config[section].setdefault('analysis_area', {})
+                config_manager.config[section]['analysis_area'].update(payload.pop('analysis_area'))
             config_manager.config[section].update(payload)
+
+        config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
 
         # Keep person model path synchronized with the generic models section.
         people_cfg = config_manager.config.setdefault('people', {})
@@ -6426,13 +6572,16 @@ def api_test_settings():
             config_manager.save_config()
             threading.Thread(target=detector.load_models, daemon=True).start()
 
-        logger.info('[TestSettings] Gespeichert: plate_model=%s vehicle_model=%s person_model=%s plate_conf=%s ocr=%s people=%s',
+        logger.info('[TestSettings] Gespeichert: plate_model=%s vehicle_model=%s person_model=%s plate_conf=%s ocr=%s people=%s interval=%ss roi_crop=%s motion_gate=%s',
                     config_manager.get('models', 'license_plate_detector'),
                     config_manager.get('models', 'vehicle_detector'),
                     config_manager.get('models', 'person_detector'),
                     config_manager.get('detection', 'plate_detector_confidence'),
                     config_manager.get('ocr', 'engine'),
-                    'aktiv' if config_manager.get('people', 'enabled') else 'inaktiv')
+                    'aktiv' if config_manager.get('people', 'enabled') else 'inaktiv',
+                    config_manager.get('detection', 'process_interval'),
+                    config_manager.get('rtsp', 'analysis_area', 'crop_before_detection'),
+                    config_manager.get('rtsp', 'analysis_area', 'motion_gate_enabled'))
         return jsonify({'success': True, 'config': _public_config(), 'models': _scan_model_files()})
     except Exception as e:
         logger.exception(f'Test-Einstellungen konnten nicht gespeichert werden: {e}')
@@ -6682,9 +6831,11 @@ def api_statistics_export():
     return response
 
 
-@app.route('/api/config/traffic', methods=['POST'])
+@app.route('/api/config/traffic', methods=['GET', 'POST'])
 def api_save_traffic_config():
     try:
+        if request.method == 'GET':
+            return jsonify(config_manager.config.get('traffic', {}))
         data = request.get_json(silent=True) or {}
         config_manager.config.setdefault('traffic', {})
         config_manager.config['traffic'].update(data)
@@ -6987,7 +7138,7 @@ def api_people_cleanup():
 
 @app.route('/api/people/test/simulate', methods=['POST'])
 def api_people_test_simulate():
-    return jsonify({'success': False, 'error': 'Demo-Daten wurden in Version 0.8.28 entfernt. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
+    return jsonify({'success': False, 'error': 'Demo-Daten wurden in Version 0.8.30 entfernt. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
 
 @app.route('/api/system/health')
 def api_system_health():
@@ -7005,7 +7156,7 @@ def api_system_health():
     add('rtsp_autostart', True, 'aktiv' if config_manager.get('rtsp', 'autostart_enabled') else 'deaktiviert')
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': '0.8.28'})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': APP_VERSION})
 
 
 @app.route('/api/system/audit')
@@ -7134,7 +7285,7 @@ if __name__ == '__main__':
     print("""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.28 FastPlateOCR Vehicle Intelligence                                    ║
+    ║     Version 0.8.30 FastPlateOCR Vehicle Intelligence                                    ║
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

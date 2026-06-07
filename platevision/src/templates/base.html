@@ -586,7 +586,7 @@
                 <i class="fas fa-car-side"></i>
                 <div>
                     <div class="sidebar-logo-text">Plate<span>Vision</span></div>
-                    <div class="mini-label">ProTraffic v0.8.28</div>
+                    <div class="mini-label">ProTraffic v{{ app_version|default('0.8.30') }}</div>
                 </div>
             </a>
         </div>
@@ -623,10 +623,12 @@
                 <span>{{ t('statistics') }}</span>
             </a>
 
+            {% if people_menu_enabled %}
             <a href="{{ url_for('people_page') }}" class="nav-link {% if page == 'people' %}active{% endif %}">
                 <i class="fas fa-person-walking"></i>
                 <span>{{ t('people') }}</span>
             </a>
+            {% endif %}
 
 			
 			<a href="{{ url_for('latest_detection_page') }}" class="nav-link {% if page == 'latest' %}active{% endif %}">

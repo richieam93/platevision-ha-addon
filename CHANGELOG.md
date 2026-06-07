@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.30
+- Einstellungen-Menü erweitert und verbessert: Module & Autostart, Stream-Retry, Reconnect, Buffer, Stream-Auflösung, sichere Defaults und Test/RTSP-Defaults.
+- Test & Upload erweitert: Schnellprofile, Kennzeichen-Scanstrategie, Fahrzeugfilter, Fahrzeugfarbe, OCR-Detailwerte, Bildvorverarbeitung, Personen-Zählung, Verkehrslogik, RTSP-CPU-Sparmodus und Speicheroptionen.
+- Test-&-Upload-Speichern übernimmt jetzt auch RTSP-Analysebereich/CPU-Gate-Werte, YOLO-Zoom, Deduplikation, Fahrzeugklassen, OCR-Preprocessing und Traffic-Labels.
+- API `/api/test/settings` kann jetzt zusätzlich RTSP-Analysebereich-Werte sicher zusammenführen; gespeicherter Straßenbereich bleibt erhalten.
+- Fehlende Schnellprofil-Funktion im Testmodus ergänzt und alle neuen Testfelder mit Laden, Default und Speichern verbunden.
+
 ## 0.8.28
 
 - Dashboard komplett überarbeitet: keine Modell-Details mehr, Fokus auf letztes Auto, letzte Person und heutige Kennzahlen.

@@ -1,4 +1,4 @@
-# PlateVision API-Endpunkte 0.8.28
+# PlateVision API-Endpunkte 0.8.30
 
 Basis-URL im Beispiel: `http://192.168.1.240:8087`
 

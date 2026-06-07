@@ -21,3 +21,8 @@ Nach Änderungen in **Test & Upload** bitte **Speichern & RTSP anwenden** verwen
 ## Beispiele
 
 Aktuelle Home-Assistant-Beispiele findest du im Ordner `examples/`.
+
+
+## 0.8.30
+
+Neue RTSP-Leistungsoptionen befinden sich unter Einstellungen -> Dashboard & Layout + Allgemein. Praktische YOLO/OCR/Personenwerte werden im Test & Upload Menü gespeichert und für RTSP verwendet.

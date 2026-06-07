@@ -390,8 +390,13 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 - Test & Upload synchronisiert die Personen-Linie wieder sauber mit dem RTSP-Profil.
 
 
-## Version 0.8.28
+## Version 0.8.30
 
 - Dashboard komplett vereinfacht: letztes Auto, letzte Person und Tageszahlen ohne Modell-Details.
 - RTSP/Webstream-Autostart nach Docker-/Home-Assistant-Neustart als Einstellung ergänzt.
 - Beispiele im Ordner `examples/` aktualisiert und veraltete Beispiele entfernt.
+
+
+### Version 0.8.30
+
+Diese Version erweitert Einstellungen und Test & Upload. Zusätzliche RTSP-Leistungswerte, OCR-/YOLO-Filter, Fahrzeugfarbe, Personenfilter und Verkehrslogik können jetzt im Webinterface gesetzt und für den RTSP-Stream gespeichert werden.

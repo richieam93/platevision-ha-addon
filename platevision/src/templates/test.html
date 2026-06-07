@@ -334,13 +334,21 @@
             <small class="text-secondary">Diese Werte gelten für Foto-Upload, Video-Upload und nach dem Speichern auch für den RTSP-Stream.</small>
         </div>
         <div class="d-flex flex-wrap gap-2">
-            <button class="btn btn-outline-info btn-sm" type="button" onclick="applyDemoRecognitionDefaults()"><i class="fas fa-wand-magic-sparkles me-1"></i>Demo-Werte</button>
+            <button class="btn btn-warning btn-sm" type="button" onclick="applyDefaultRecognitionSettings(false)"><i class="fas fa-wand-magic-sparkles me-1"></i>Default-Einstellungen</button>
+            <button class="btn btn-outline-warning btn-sm" type="button" onclick="applyDefaultRecognitionSettings(true)"><i class="fas fa-save me-1"></i>Default speichern & RTSP</button>
             <button class="btn btn-primary btn-sm" type="button" onclick="saveTestRecognitionSettings(true)"><i class="fas fa-save me-1"></i>Speichern & RTSP anwenden</button>
             <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadTestRecognitionSettings()"><i class="fas fa-rotate me-1"></i>Laden</button>
         </div>
     </div>
     <div class="card-body">
         <div id="testSettingsStatus" class="alert alert-secondary py-2 small mb-3">Lade aktuelle Einstellungen...</div>
+        <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+            <span class="text-secondary small me-1">Schnellprofil:</span>
+            <button class="btn btn-outline-info btn-sm" type="button" onclick="applyRecognitionProfile('fast', false)">Schnell / CPU-schonend</button>
+            <button class="btn btn-outline-primary btn-sm" type="button" onclick="applyRecognitionProfile('balanced', false)">Ausgewogen</button>
+            <button class="btn btn-outline-success btn-sm" type="button" onclick="applyRecognitionProfile('strict', false)">Streng / sauber</button>
+            <button class="btn btn-outline-warning btn-sm" type="button" onclick="applyRecognitionProfile('night', false)">Nacht / schwierige Bilder</button>
+        </div>
         <div class="test-settings-grid">
             <div class="test-settings-section">
                 <h6><i class="fas fa-id-card text-success me-2"></i>YOLO Nummernschild-Detector</h6>
@@ -353,7 +361,19 @@
                     <div class="col-6"><label class="form-label">Crop Padding %</label><input class="form-control" type="number" min="0" max="40" step="0.5" id="testPlatePadding"></div>
                     <div class="col-6"><label class="form-label">Max Det.</label><input class="form-control" type="number" min="1" max="50" step="1" id="testPlateMaxDet"></div>
                 </div>
-                <div class="form-help-small mt-2">Funktionierende Demo-Werte: conf 0.25, IoU 0.45, imgsz 960, Padding 8%.</div>
+                <div class="row g-2 mt-2">
+                    <div class="col-6"><label class="form-label">Min. Breite</label><input class="form-control" type="number" min="1" max="300" step="1" id="testMinPlateWidth"></div>
+                    <div class="col-6"><label class="form-label">Min. Höhe</label><input class="form-control" type="number" min="1" max="200" step="1" id="testMinPlateHeight"></div>
+                    <div class="col-6"><label class="form-label">Aspect min</label><input class="form-control" type="number" min="0.5" max="10" step="0.1" id="testPlateAspectMin"></div>
+                    <div class="col-6"><label class="form-label">Aspect max</label><input class="form-control" type="number" min="1" max="20" step="0.1" id="testPlateAspectMax"></div>
+                    <div class="col-12"><label class="form-label">Scan-Strategie</label><select class="form-select" id="testPlateScanStrategy"><option value="full_frame_first">Ganzes Bild zuerst + Fahrzeug-Zoom</option><option value="full_frame_only">Nur ganzes Bild</option><option value="vehicle_zoom_first">Fahrzeug-Zoom zuerst</option></select></div>
+                    <div class="col-6"><label class="form-label">Zoom-Faktor</label><input class="form-control" type="number" min="1" max="6" step="0.1" id="testZoomFactor"></div>
+                    <div class="col-6"><label class="form-label">Zoom-Padding px</label><input class="form-control" type="number" min="0" max="500" step="5" id="testZoomPadding"></div>
+                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testZoomEnabled"><label class="form-check-label" for="testZoomEnabled">Fahrzeug-Zoom für kleine Kennzeichen verwenden</label></div></div>
+                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testScanFullFrameWhenVehicleFound"><label class="form-check-label" for="testScanFullFrameWhenVehicleFound">Ganzes Bild zusätzlich scannen, auch wenn Fahrzeug-Zoom aktiv ist</label></div></div>
+                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDeduplicatePlates"><label class="form-check-label" for="testDeduplicatePlates">Doppelte Kennzeichen im selben Bild überspringen</label></div></div>
+                </div>
+                <div class="form-help-small mt-2">Default-Werte wie im funktionierenden Demo-Modus: conf 0.25, IoU 0.45, imgsz 960, Padding 8%.</div>
             </div>
 
             <div class="test-settings-section">
@@ -361,8 +381,24 @@
                 <label class="form-label">Fahrzeug YOLO Modell</label>
                 <select class="form-select mb-2" id="testVehicleModel"></select>
                 <div class="row g-2">
-                    <div class="col-6"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testVehicleConf"></div>
-                    <div class="col-6"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testVehicleImgsz"></div>
+                    <div class="col-4"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testVehicleConf"></div>
+                    <div class="col-4"><label class="form-label">IoU</label><input class="form-control" type="number" min="0.05" max="0.95" step="0.01" id="testVehicleIou"></div>
+                    <div class="col-4"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testVehicleImgsz"></div>
+                    <div class="col-6"><label class="form-label">Min. Breite</label><input class="form-control" type="number" min="1" max="1000" step="1" id="testMinVehicleWidth"></div>
+                    <div class="col-6"><label class="form-label">Min. Höhe</label><input class="form-control" type="number" min="1" max="1000" step="1" id="testMinVehicleHeight"></div>
+                    <div class="col-12"><label class="form-label">Max. Fahrzeug-/Kennzeichen-Erkennungen pro Frame</label><input class="form-control" type="number" min="1" max="50" step="1" id="testMaxDetections"></div>
+                </div>
+                <div class="mt-2 small text-secondary">Fahrzeugklassen</div>
+                <div class="d-flex flex-wrap gap-3">
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassCar"><label class="form-check-label" for="testClassCar">Auto</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassTruck"><label class="form-check-label" for="testClassTruck">LKW</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassBus"><label class="form-check-label" for="testClassBus">Bus</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassMotorcycle"><label class="form-check-label" for="testClassMotorcycle">Motorrad</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassBicycle"><label class="form-check-label" for="testClassBicycle">Fahrrad</label></div>
+                </div>
+                <div class="row g-2 mt-2">
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testVehicleColorEnabled"><label class="form-check-label" for="testVehicleColorEnabled">Farbe berechnen</label></div></div>
+                    <div class="col-6"><label class="form-label">Farbpalette max.</label><input class="form-control" type="number" min="1" max="12" step="1" id="testVehicleColorPaletteMax"></div>
                 </div>
                 <div class="form-help-small mt-2">yolov8n.pt erkennt Fahrzeugtyp; Farbe wird aus dem Fahrzeugbild berechnet.</div>
             </div>
@@ -385,8 +421,37 @@
                     <div class="col-6"><label class="form-label">Device</label><select class="form-select" id="testFastPlateDevice"><option>auto</option><option>cpu</option><option>cuda</option></select></div>
                     <div class="col-6"><label class="form-label">Min. OCR</label><input class="form-control" type="number" min="0" max="1" step="0.01" id="testOcrMinConf"></div>
                 </div>
+                <label class="form-label mt-2">ONNX Provider Override</label>
+                <input class="form-control mb-2" type="text" id="testFastPlateProviders" placeholder="z.B. CUDAExecutionProvider,CPUExecutionProvider">
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Min. Textlänge</label><input class="form-control" type="number" min="1" max="20" step="1" id="testMinTextLength"></div>
+                    <div class="col-6"><label class="form-label">Max. OCR-Varianten</label><input class="form-control" type="number" min="1" max="20" step="1" id="testMaxVariants"></div>
+                </div>
                 <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testEasyBackup"><label class="form-check-label" for="testEasyBackup">EasyOCR als Backup verwenden</label></div>
                 <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRemovePad"><label class="form-check-label" for="testRemovePad">Padding-Zeichen entfernen</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testReturnConfidence"><label class="form-check-label" for="testReturnConfidence">Zeichen-Confidence ausgeben</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRotationVariants"><label class="form-check-label" for="testRotationVariants">Rotation-/Varianten-Test bei EasyOCR erlauben</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRetryOnFail"><label class="form-check-label" for="testRetryOnFail">OCR-Retry bei schlechtem Ergebnis</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testUppercaseOutput"><label class="form-check-label" for="testUppercaseOutput">Ausgabe gross schreiben</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testUseAllowlist"><label class="form-check-label" for="testUseAllowlist">Kennzeichen-Zeichenliste verwenden</label></div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-image text-info me-2"></i>Bildvorverarbeitung / OCR Backup</h6>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Resize Faktor</label><input class="form-control" type="number" min="1" max="8" step="0.1" id="testResizeFactor"></div>
+                    <div class="col-6"><label class="form-label">Zielhöhe px</label><input class="form-control" type="number" min="32" max="512" step="4" id="testTargetHeight"></div>
+                    <div class="col-6"><label class="form-label">Min. Breite px</label><input class="form-control" type="number" min="32" max="1000" step="4" id="testMinWidth"></div>
+                    <div class="col-6"><label class="form-label">Gamma</label><input class="form-control" type="number" min="0.2" max="3" step="0.1" id="testGamma"></div>
+                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPreprocessingEnabled"><label class="form-check-label" for="testPreprocessingEnabled">Vorverarbeitung aktiv</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDenoise"><label class="form-check-label" for="testDenoise">Rauschen entfernen</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSharpen"><label class="form-check-label" for="testSharpen">Schärfen</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testContrastEnhance"><label class="form-check-label" for="testContrastEnhance">Kontrast/CLAHE</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testAdaptiveThreshold"><label class="form-check-label" for="testAdaptiveThreshold">Adaptive Threshold</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDeskew"><label class="form-check-label" for="testDeskew">Deskew</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMorphology"><label class="form-check-label" for="testMorphology">Morphology</label></div></div>
+                </div>
+                <div class="form-help-small mt-2">Diese Werte wirken vor allem bei EasyOCR/Backup. fast-plate-ocr nutzt den YOLO-Kennzeichen-Crop direkt.</div>
             </div>
 
             <div class="test-settings-section">
@@ -397,13 +462,19 @@
                 <div class="row g-2">
                     <div class="col-6"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testPeopleConf"></div>
                     <div class="col-6"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testPeopleImgsz"></div>
+                    <div class="col-6"><label class="form-label">IoU</label><input class="form-control" type="number" min="0.05" max="0.95" step="0.01" id="testPeopleIou"></div>
+                    <div class="col-6"><label class="form-label">Max Personen</label><input class="form-control" type="number" min="1" max="100" step="1" id="testPeopleMaxPerFrame"></div>
+                    <div class="col-6"><label class="form-label">Min. Breite</label><input class="form-control" type="number" min="1" max="500" step="1" id="testPeopleMinWidth"></div>
+                    <div class="col-6"><label class="form-label">Min. Höhe</label><input class="form-control" type="number" min="1" max="800" step="1" id="testPeopleMinHeight"></div>
                     <div class="col-6"><label class="form-label">Zähllinie %</label><input class="form-control" type="number" min="1" max="99" step="1" id="testPeopleLine"></div>
                     <div class="col-6"><label class="form-label">Linie Schieber</label><input class="form-range mt-2" type="range" min="1" max="99" step="1" id="testPeopleLineRange"></div>
                     <div class="col-6"><label class="form-label">Achse</label><select class="form-select" id="testPeopleAxis"><option value="y">horizontal / oben-unten</option><option value="x">vertikal / links-rechts</option></select></div>
                     <div class="col-6"><label class="form-label">Richtung zählen</label><select class="form-select" id="testPeopleDirection"><option value="both">beide Richtungen</option><option value="down">runter</option><option value="up">hoch</option><option value="right">rechts</option><option value="left">links</option></select></div>
                     <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleLineRelative"><label class="form-check-label" for="testPeopleLineRelative">Zähllinie relativ zum Straßenbereich verwenden</label></div></div>
                 </div>
-                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testPeopleSaveAll"><label class="form-check-label" for="testPeopleSaveAll">Alle Personen mit Bild speichern</label></div>
+                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testPeopleTracker"><label class="form-check-label" for="testPeopleTracker">Tracker aktiv</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleCountOnce"><label class="form-check-label" for="testPeopleCountOnce">Person pro Track nur einmal zählen</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleSaveAll"><label class="form-check-label" for="testPeopleSaveAll">Alle Personen mit Bild speichern</label></div>
                 <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleSaveCrop"><label class="form-check-label" for="testPeopleSaveCrop">Personen-Crop speichern</label></div>
             </div>
 
@@ -414,8 +485,39 @@
                     <div class="col-6"><label class="form-label">Gehen nach min</label><input class="form-control" type="number" min="1" max="1440" step="1" id="testActiveTimeout"></div>
                     <div class="col-6"><label class="form-label">Fahrzeug-Achse</label><select class="form-select" id="testTrafficAxis"><option value="x">links/rechts</option><option value="y">oben/unten</option></select></div>
                     <div class="col-6"><label class="form-label">Bewegung %</label><input class="form-control" type="number" min="1" max="80" step="1" id="testTrafficMove"></div>
+                    <div class="col-6"><label class="form-label">Tageszählung</label><select class="form-select" id="testDailyCountMode"><option value="visits">Besuche</option><option value="detections">Erkennungen</option><option value="unique_plates">Einzigartige Kennzeichen</option></select></div>
+                    <div class="col-6"><label class="form-label">Richtungsmodus</label><select class="form-select" id="testDirectionMode"><option value="auto">automatisch</option><option value="axis">Bewegungsachse</option><option value="session">Session/Timeout</option></select></div>
+                    <div class="col-6"><label class="form-label">Kommen Label</label><input class="form-control" id="testArrivalLabel"></div>
+                    <div class="col-6"><label class="form-label">Gehen Label</label><input class="form-control" id="testDepartureLabel"></div>
+                    <div class="col-6"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testIgnoreUnknown"><label class="form-check-label" for="testIgnoreUnknown">Unbekannte Kennzeichen ignorieren</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testIncludeDuplicateEvents"><label class="form-check-label" for="testIncludeDuplicateEvents">Duplikate mitzählen</label></div></div>
                 </div>
                 <div class="form-help-small mt-2">Fahrzeug-Durchfahrten basieren auf Kennzeichen-Sessions. Personen werden über die Zähllinie gezählt.</div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-gauge-high text-warning me-2"></i>RTSP Performance & Straßenbereich</h6>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Frame-Intervall</label><input class="form-control" type="number" min="0.1" max="10" step="0.1" id="testProcessInterval"></div>
+                    <div class="col-6"><label class="form-label">ROI Padding %</label><input class="form-control" type="number" min="0" max="100" step="1" id="testRoiCropPadding"></div>
+                    <div class="col-6"><label class="form-label">ROI Min. Rand px</label><input class="form-control" type="number" min="0" max="1000" step="10" id="testRoiCropMinPx"></div>
+                    <div class="col-6"><label class="form-label">Idle-Scan Sek.</label><input class="form-control" type="number" min="1" max="120" step="1" id="testMotionIdleScan"></div>
+                    <div class="col-6"><label class="form-label">Motion Schwelle %</label><input class="form-control" type="number" min="0.01" max="10" step="0.01" id="testMotionThreshold"></div>
+                    <div class="col-6"><label class="form-label">Motion halten Sek.</label><input class="form-control" type="number" min="0" max="30" step="0.1" id="testMotionHold"></div>
+                </div>
+                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testCropBeforeDetection"><label class="form-check-label" for="testCropBeforeDetection">Straßenbereich vor YOLO als Crop verwenden</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMaskOutside"><label class="form-check-label" for="testMaskOutside">Außerhalb Straßenbereich maskieren</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMotionGate"><label class="form-check-label" for="testMotionGate">CPU-Sparmodus: YOLO nur bei Bewegung im Straßenbereich</label></div>
+                <div class="form-help-small mt-2">Diese Werte gelten nach dem Speichern für den RTSP-Loop und helfen, CPU-Last zu reduzieren.</div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-save text-success me-2"></i>Speichern & Anzeige</h6>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSavePlates"><label class="form-check-label" for="testSavePlates">Kennzeichen-Bilder speichern</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSaveVehicles"><label class="form-check-label" for="testSaveVehicles">Fahrzeug-Bilder speichern</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSaveFullFrame"><label class="form-check-label" for="testSaveFullFrame">Vollständigen Frame speichern</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testAnnotateFrames"><label class="form-check-label" for="testAnnotateFrames">Markierungen ins Ergebnisbild zeichnen</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDrawConfidence"><label class="form-check-label" for="testDrawConfidence">Confidence im Bild anzeigen</label></div>
             </div>
         </div>
     </div>
@@ -794,6 +896,23 @@
     function numVal(id, fallback) { const el = document.getElementById(id); const v = el ? Number(el.value) : NaN; return Number.isFinite(v) ? v : fallback; }
     function boolVal(id) { const el = document.getElementById(id); return !!(el && el.checked); }
     function selVal(id, fallback='') { const el = document.getElementById(id); return el && el.value ? el.value : fallback; }
+    function setVehicleClassChecks(classes) {
+        const set = new Set(classes && classes.length ? classes : ['car','truck','bus','motorcycle','bicycle']);
+        setChecked('testClassCar', set.has('car'));
+        setChecked('testClassTruck', set.has('truck'));
+        setChecked('testClassBus', set.has('bus'));
+        setChecked('testClassMotorcycle', set.has('motorcycle'));
+        setChecked('testClassBicycle', set.has('bicycle'));
+    }
+    function getVehicleClassChecks() {
+        const out = [];
+        if (boolVal('testClassCar')) out.push('car');
+        if (boolVal('testClassTruck')) out.push('truck');
+        if (boolVal('testClassBus')) out.push('bus');
+        if (boolVal('testClassMotorcycle')) out.push('motorcycle');
+        if (boolVal('testClassBicycle')) out.push('bicycle');
+        return out.length ? out : ['car','truck','bus','motorcycle','bicycle'];
+    }
     function normalizePeopleDirectionForAxis(value, axis) {
         const v = String(value || 'both');
         if (v === 'positive') return axis === 'x' ? 'right' : 'down';
@@ -842,9 +961,12 @@
             availableYoloModels = data.models || [];
             const detection = cfg.detection || {};
             const ocr = cfg.ocr || {};
+            const preprocessing = ocr.preprocessing || {};
             const models = cfg.models || {};
             const people = cfg.people || {};
             const traffic = cfg.traffic || {};
+            const rtsp = cfg.rtsp || {};
+            const area = rtsp.analysis_area || {};
             populateModelSelect('testPlateModel', models.license_plate_detector || 'models/license_plate_detector.pt', 'plate');
             populateModelSelect('testVehicleModel', models.vehicle_detector || 'models/yolov8n.pt', 'vehicle/general');
             populateModelSelect('testPersonModel', people.selected_model_file || people.custom_model_path || models.person_detector || models.vehicle_detector || 'models/yolov8n.pt', 'people');
@@ -853,46 +975,150 @@
             setVal('testPlateImgsz', detection.plate_detector_imgsz ?? 960);
             setVal('testPlatePadding', detection.plate_crop_padding_percent ?? 8);
             setVal('testPlateMaxDet', detection.plate_detector_max_det ?? 8);
+            setVal('testMinPlateWidth', detection.min_plate_width ?? 20);
+            setVal('testMinPlateHeight', detection.min_plate_height ?? 8);
+            setVal('testPlateAspectMin', detection.plate_aspect_ratio_min ?? 1.2);
+            setVal('testPlateAspectMax', detection.plate_aspect_ratio_max ?? 8.0);
+            setVal('testPlateScanStrategy', detection.plate_scan_strategy || 'full_frame_first');
+            setVal('testZoomFactor', detection.zoom_factor ?? 2.5);
+            setVal('testZoomPadding', detection.zoom_padding ?? 100);
+            setChecked('testZoomEnabled', detection.zoom_enabled !== false);
+            setChecked('testScanFullFrameWhenVehicleFound', detection.scan_full_frame_when_vehicle_found !== false);
+            setChecked('testDeduplicatePlates', detection.deduplicate_plates_per_frame !== false);
             setVal('testVehicleConf', detection.confidence_threshold ?? 0.5);
+            setVal('testVehicleIou', detection.vehicle_detector_iou ?? 0.45);
             setVal('testVehicleImgsz', detection.vehicle_detector_imgsz ?? 640);
+            setVal('testMinVehicleWidth', detection.min_vehicle_width ?? 80);
+            setVal('testMinVehicleHeight', detection.min_vehicle_height ?? 60);
+            setVal('testMaxDetections', detection.max_detections_per_frame ?? 8);
+            setChecked('testVehicleColorEnabled', detection.vehicle_color_enabled !== false);
+            setVal('testVehicleColorPaletteMax', detection.vehicle_color_palette_max ?? 5);
+            setVehicleClassChecks(detection.vehicle_class_filter || ['car','truck','bus','motorcycle','bicycle']);
             setVal('testOcrEngine', (ocr.engine || 'fast_plate_ocr').replace('-', '_'));
             setVal('testFastPlateModel', ocr.fast_plate_model || 'cct-s-v2-global-model');
             setVal('testFastPlateDevice', ocr.fast_plate_device || 'auto');
+            setVal('testFastPlateProviders', ocr.fast_plate_providers || '');
             setVal('testOcrMinConf', ocr.min_confidence ?? detection.ocr_min_confidence ?? 0.25);
+            setVal('testMinTextLength', ocr.min_text_length ?? 2);
+            setVal('testMaxVariants', ocr.max_variants_to_read ?? 8);
             setChecked('testEasyBackup', ocr.easyocr_backup_enabled !== false);
             setChecked('testRemovePad', ocr.fast_plate_remove_pad_char !== false);
+            setChecked('testReturnConfidence', ocr.fast_plate_return_confidence !== false);
+            setChecked('testRotationVariants', ocr.rotation_variants !== false);
+            setChecked('testRetryOnFail', ocr.retry_on_fail !== false);
+            setChecked('testUppercaseOutput', ocr.uppercase_output !== false);
+            setChecked('testUseAllowlist', ocr.use_allowlist !== false);
+            setChecked('testPreprocessingEnabled', preprocessing.enabled !== false);
+            setVal('testResizeFactor', preprocessing.resize_factor ?? 4.0);
+            setVal('testTargetHeight', preprocessing.target_height ?? 120);
+            setVal('testMinWidth', preprocessing.min_width ?? 200);
+            setVal('testGamma', preprocessing.gamma ?? 1.2);
+            setChecked('testDenoise', preprocessing.denoise !== false);
+            setChecked('testSharpen', preprocessing.sharpen !== false);
+            setChecked('testContrastEnhance', preprocessing.contrast_enhance !== false);
+            setChecked('testAdaptiveThreshold', preprocessing.adaptive_threshold !== false);
+            setChecked('testDeskew', preprocessing.deskew !== false);
+            setChecked('testMorphology', preprocessing.morphology !== false);
             setChecked('testPeopleEnabled', people.enabled !== false);
             setVal('testPeopleConf', people.confidence_threshold ?? 0.55);
             setVal('testPeopleImgsz', people.image_size ?? 640);
+            setVal('testPeopleIou', people.nms_iou_threshold ?? 0.45);
+            setVal('testPeopleMaxPerFrame', people.max_persons_per_frame ?? 30);
+            setVal('testPeopleMinWidth', people.min_person_width ?? 20);
+            setVal('testPeopleMinHeight', people.min_person_height ?? 40);
             setVal('testPeopleLine', people.virtual_line_position_percent ?? 50);
             setVal('testPeopleLineRange', people.virtual_line_position_percent ?? 50);
             setVal('testPeopleAxis', people.movement_axis || 'y');
             setVal('testPeopleDirection', normalizePeopleDirectionForAxis(people.crossing_direction || 'both', people.movement_axis || 'y'));
             setChecked('testPeopleLineRelative', people.line_relative_to_roi !== false);
             syncTestPeopleLineInputs();
+            setChecked('testPeopleTracker', people.tracker_enabled !== false);
+            setChecked('testPeopleCountOnce', people.count_once_per_track !== false);
             setChecked('testPeopleSaveAll', people.save_all_detections !== false);
             setChecked('testPeopleSaveCrop', people.save_person_crops !== false || people.image_history_store_crop !== false);
             setVal('testVisitGap', traffic.visit_gap_minutes ?? 15);
             setVal('testActiveTimeout', traffic.active_timeout_minutes ?? 30);
             setVal('testTrafficAxis', traffic.movement_axis || 'x');
             setVal('testTrafficMove', traffic.movement_threshold_percent ?? 8);
+            setVal('testDailyCountMode', traffic.daily_count_mode || 'visits');
+            setVal('testDirectionMode', traffic.direction_mode || 'auto');
+            setVal('testArrivalLabel', traffic.arrival_label || 'gekommen');
+            setVal('testDepartureLabel', traffic.departure_label || 'gegangen');
+            setChecked('testIgnoreUnknown', traffic.ignore_unknown_plates !== false);
+            setChecked('testIncludeDuplicateEvents', traffic.include_duplicate_events === true);
+            setVal('testDailyCountMode', traffic.daily_count_mode || 'visits');
+            setVal('testDirectionMode', traffic.direction_mode || 'auto');
+            setVal('testArrivalLabel', traffic.arrival_label || 'gekommen');
+            setVal('testDepartureLabel', traffic.departure_label || 'gegangen');
+            setChecked('testIgnoreUnknown', traffic.ignore_unknown_plates !== false);
+            setChecked('testIncludeDuplicateEvents', traffic.include_duplicate_events === true);
+            setVal('testProcessInterval', detection.process_interval ?? 0.8);
+            setVal('testRoiCropPadding', area.crop_padding_percent ?? 25);
+            setVal('testRoiCropMinPx', area.crop_min_padding_px ?? 120);
+            setVal('testMotionIdleScan', area.motion_gate_idle_scan_seconds ?? 5);
+            setVal('testMotionThreshold', area.motion_gate_threshold_percent ?? 0.20);
+            setVal('testMotionHold', area.motion_gate_hold_seconds ?? 2);
+            setChecked('testCropBeforeDetection', area.crop_before_detection !== false);
+            setChecked('testMaskOutside', area.mask_outside !== false);
+            setChecked('testMotionGate', area.motion_gate_enabled !== false);
+            setChecked('testSavePlates', detection.save_detected_plates !== false);
+            setChecked('testSaveVehicles', detection.save_detected_vehicles !== false);
+            setChecked('testSaveFullFrame', detection.save_full_frame !== false);
+            setChecked('testAnnotateFrames', detection.annotate_frames !== false);
+            setChecked('testDrawConfidence', detection.draw_confidence !== false);
             if (status) status.className = 'alert alert-success py-2 small mb-3', status.innerHTML = `<i class="fas fa-check me-1"></i>Aktive Werte geladen. Modelle gefunden: ${availableYoloModels.length}. OCR: <strong>${ocr.engine || 'fast_plate_ocr'}</strong>`;
         } catch (e) {
             if (status) status.className = 'alert alert-warning py-2 small mb-3', status.textContent = 'Einstellungen konnten nicht geladen werden.';
         }
     }
 
-    function applyDemoRecognitionDefaults() {
+    async function applyDefaultRecognitionSettings(saveAfterApply=false) {
         setVal('testPlateModel', 'models/license_plate_detector.pt');
         setVal('testVehicleModel', 'models/yolov8n.pt');
         setVal('testPlateConf', 0.25); setVal('testPlateIou', 0.45); setVal('testPlateImgsz', 960); setVal('testPlatePadding', 8); setVal('testPlateMaxDet', 8);
-        setVal('testVehicleConf', 0.5); setVal('testVehicleImgsz', 640);
-        setVal('testOcrEngine', 'fast_plate_ocr'); setVal('testFastPlateModel', 'cct-s-v2-global-model'); setVal('testFastPlateDevice', 'auto'); setVal('testOcrMinConf', 0.25);
-        setChecked('testEasyBackup', true); setChecked('testRemovePad', true);
-        setChecked('testPeopleEnabled', true); setVal('testPeopleConf', 0.55); setVal('testPeopleImgsz', 640); setVal('testPeopleLine', 50); setVal('testPeopleLineRange', 50); setVal('testPeopleAxis', 'y'); setVal('testPeopleDirection', 'both'); setChecked('testPeopleLineRelative', true); syncTestPeopleLineInputs();
-        setChecked('testPeopleSaveAll', true); setChecked('testPeopleSaveCrop', true);
-        setVal('testVisitGap', 15); setVal('testActiveTimeout', 30); setVal('testTrafficAxis', 'x'); setVal('testTrafficMove', 8);
-        showToast('Demo-Werte', 'Die funktionierenden Demo-Werte wurden eingetragen. Bitte speichern.', 'info');
+        setVal('testMinPlateWidth', 20); setVal('testMinPlateHeight', 8); setVal('testPlateAspectMin', 1.2); setVal('testPlateAspectMax', 8.0); setVal('testPlateScanStrategy', 'full_frame_first'); setVal('testZoomFactor', 2.5); setVal('testZoomPadding', 100); setChecked('testZoomEnabled', true); setChecked('testScanFullFrameWhenVehicleFound', true); setChecked('testDeduplicatePlates', true);
+        setVal('testVehicleConf', 0.5); setVal('testVehicleIou', 0.45); setVal('testVehicleImgsz', 640); setVal('testMinVehicleWidth', 80); setVal('testMinVehicleHeight', 60); setVal('testMaxDetections', 8); setChecked('testVehicleColorEnabled', true); setVal('testVehicleColorPaletteMax', 5); setVehicleClassChecks(['car','truck','bus','motorcycle','bicycle']);
+        setVal('testOcrEngine', 'fast_plate_ocr'); setVal('testFastPlateModel', 'cct-s-v2-global-model'); setVal('testFastPlateDevice', 'auto'); setVal('testFastPlateProviders', ''); setVal('testOcrMinConf', 0.25); setVal('testMinTextLength', 2); setVal('testMaxVariants', 8);
+        setChecked('testEasyBackup', true); setChecked('testRemovePad', true); setChecked('testReturnConfidence', true); setChecked('testRotationVariants', true); setChecked('testRetryOnFail', true); setChecked('testUppercaseOutput', true); setChecked('testUseAllowlist', true);
+        setChecked('testPreprocessingEnabled', true); setVal('testResizeFactor', 4.0); setVal('testTargetHeight', 120); setVal('testMinWidth', 200); setVal('testGamma', 1.2); setChecked('testDenoise', true); setChecked('testSharpen', true); setChecked('testContrastEnhance', true); setChecked('testAdaptiveThreshold', true); setChecked('testDeskew', true); setChecked('testMorphology', true);
+        setChecked('testPeopleEnabled', true); setVal('testPeopleConf', 0.55); setVal('testPeopleImgsz', 640); setVal('testPeopleIou', 0.45); setVal('testPeopleMaxPerFrame', 30); setVal('testPeopleMinWidth', 20); setVal('testPeopleMinHeight', 40); setVal('testPeopleLine', 50); setVal('testPeopleLineRange', 50); setVal('testPeopleAxis', 'y'); setVal('testPeopleDirection', 'both'); setChecked('testPeopleLineRelative', true); syncTestPeopleLineInputs();
+        setChecked('testPeopleTracker', true); setChecked('testPeopleCountOnce', true); setChecked('testPeopleSaveAll', true); setChecked('testPeopleSaveCrop', true);
+        setVal('testVisitGap', 15); setVal('testActiveTimeout', 30); setVal('testTrafficAxis', 'x'); setVal('testTrafficMove', 8); setVal('testDailyCountMode', 'visits'); setVal('testDirectionMode', 'auto'); setVal('testArrivalLabel', 'gekommen'); setVal('testDepartureLabel', 'gegangen'); setChecked('testIgnoreUnknown', true); setChecked('testIncludeDuplicateEvents', false);
+        setVal('testProcessInterval', 0.8); setVal('testRoiCropPadding', 25); setVal('testRoiCropMinPx', 120); setVal('testMotionIdleScan', 5); setVal('testMotionThreshold', 0.20); setVal('testMotionHold', 2); setChecked('testCropBeforeDetection', true); setChecked('testMaskOutside', true); setChecked('testMotionGate', true);
+        setChecked('testSavePlates', true); setChecked('testSaveVehicles', true); setChecked('testSaveFullFrame', true); setChecked('testAnnotateFrames', true); setChecked('testDrawConfidence', true);
+        showToast('Default-Einstellungen', saveAfterApply ? 'Standardwerte werden gespeichert...' : 'Standardwerte wurden eingetragen. Bitte speichern.', 'info');
+        if (saveAfterApply) {
+            try {
+                await saveTestRecognitionSettings(true);
+            } catch (err) {
+                showToast('Fehler', err.message || 'Default-Einstellungen konnten nicht gespeichert werden', 'danger');
+            }
+        }
+    }
+
+    function applyDemoRecognitionDefaults() { return applyDefaultRecognitionSettings(false); }
+
+    function applyRecognitionProfile(profile, saveAfterApply=false) {
+        const profiles = {
+            fast: {vehicleConf:0.60, plateConf:0.30, ocrMin:0.35, interval:1.5, imgsz:768, motion:true, idle:8, label:'Schnell / CPU-schonend'},
+            balanced: {vehicleConf:0.50, plateConf:0.25, ocrMin:0.25, interval:0.8, imgsz:960, motion:true, idle:5, label:'Ausgewogen'},
+            strict: {vehicleConf:0.65, plateConf:0.40, ocrMin:0.55, interval:1.0, imgsz:960, motion:true, idle:6, label:'Streng / sauber'},
+            night: {vehicleConf:0.35, plateConf:0.15, ocrMin:0.18, interval:1.0, imgsz:1280, motion:false, idle:4, label:'Nacht / schwierige Bilder'}
+        };
+        const p = profiles[profile] || profiles.balanced;
+        setVal('testVehicleConf', p.vehicleConf);
+        setVal('testPlateConf', p.plateConf);
+        setVal('testOcrMinConf', p.ocrMin);
+        setVal('testProcessInterval', p.interval);
+        setVal('testPlateImgsz', p.imgsz);
+        setVal('testVehicleImgsz', Math.min(p.imgsz, 960));
+        setChecked('testZoomEnabled', true);
+        setChecked('testScanFullFrameWhenVehicleFound', true);
+        setChecked('testMotionGate', p.motion);
+        setVal('testMotionIdleScan', p.idle);
+        setVal('testPlateScanStrategy', 'full_frame_first');
+        showToast('Profil gesetzt', p.label + (saveAfterApply ? ' wird gespeichert.' : ' wurde eingetragen.'), 'info');
+        if (saveAfterApply) return saveTestRecognitionSettings(true);
     }
 
     async function saveTestRecognitionSettings(showMessage=true) {
@@ -910,19 +1136,62 @@
                 plate_detector_imgsz: numVal('testPlateImgsz', 960),
                 plate_crop_padding_percent: numVal('testPlatePadding', 8),
                 plate_detector_max_det: numVal('testPlateMaxDet', 8),
+                min_plate_width: numVal('testMinPlateWidth', 20),
+                min_plate_height: numVal('testMinPlateHeight', 8),
+                plate_aspect_ratio_min: numVal('testPlateAspectMin', 1.2),
+                plate_aspect_ratio_max: numVal('testPlateAspectMax', 8.0),
+                plate_scan_strategy: selVal('testPlateScanStrategy', 'full_frame_first'),
+                zoom_enabled: boolVal('testZoomEnabled'),
+                zoom_factor: numVal('testZoomFactor', 2.5),
+                zoom_padding: numVal('testZoomPadding', 100),
+                scan_full_frame_when_vehicle_found: boolVal('testScanFullFrameWhenVehicleFound'),
+                deduplicate_plates_per_frame: boolVal('testDeduplicatePlates'),
+                duplicate_cooldown_per_frame: boolVal('testDeduplicatePlates'),
                 confidence_threshold: numVal('testVehicleConf', 0.5),
+                vehicle_detector_iou: numVal('testVehicleIou', 0.45),
                 vehicle_detector_imgsz: numVal('testVehicleImgsz', 640),
-                ocr_min_confidence: numVal('testOcrMinConf', 0.25),
-                plate_scan_strategy: 'full_frame_first'
+                min_vehicle_width: numVal('testMinVehicleWidth', 80),
+                min_vehicle_height: numVal('testMinVehicleHeight', 60),
+                vehicle_class_filter: getVehicleClassChecks(),
+                vehicle_color_enabled: boolVal('testVehicleColorEnabled'),
+                vehicle_color_palette_max: numVal('testVehicleColorPaletteMax', 5),
+                max_detections_per_frame: numVal('testMaxDetections', 8),
+                process_interval: numVal('testProcessInterval', 0.8),
+                save_detected_plates: boolVal('testSavePlates'),
+                save_detected_vehicles: boolVal('testSaveVehicles'),
+                save_full_frame: boolVal('testSaveFullFrame'),
+                annotate_frames: boolVal('testAnnotateFrames'),
+                draw_confidence: boolVal('testDrawConfidence'),
+                ocr_min_confidence: numVal('testOcrMinConf', 0.25)
             },
             ocr: {
                 engine: selVal('testOcrEngine', 'fast_plate_ocr'),
                 fast_plate_model: selVal('testFastPlateModel', 'cct-s-v2-global-model'),
                 fast_plate_device: selVal('testFastPlateDevice', 'auto'),
+                fast_plate_providers: selVal('testFastPlateProviders', ''),
                 easyocr_backup_enabled: boolVal('testEasyBackup'),
                 fast_plate_remove_pad_char: boolVal('testRemovePad'),
-                fast_plate_return_confidence: true,
-                min_confidence: numVal('testOcrMinConf', 0.25)
+                fast_plate_return_confidence: boolVal('testReturnConfidence'),
+                rotation_variants: boolVal('testRotationVariants'),
+                retry_on_fail: boolVal('testRetryOnFail'),
+                uppercase_output: boolVal('testUppercaseOutput'),
+                use_allowlist: boolVal('testUseAllowlist'),
+                min_text_length: numVal('testMinTextLength', 2),
+                max_variants_to_read: numVal('testMaxVariants', 8),
+                min_confidence: numVal('testOcrMinConf', 0.25),
+                preprocessing: {
+                    enabled: boolVal('testPreprocessingEnabled'),
+                    resize_factor: numVal('testResizeFactor', 4.0),
+                    target_height: numVal('testTargetHeight', 120),
+                    min_width: numVal('testMinWidth', 200),
+                    gamma: numVal('testGamma', 1.2),
+                    denoise: boolVal('testDenoise'),
+                    sharpen: boolVal('testSharpen'),
+                    contrast_enhance: boolVal('testContrastEnhance'),
+                    adaptive_threshold: boolVal('testAdaptiveThreshold'),
+                    deskew: boolVal('testDeskew'),
+                    morphology: boolVal('testMorphology')
+                }
             },
             people: {
                 enabled: boolVal('testPeopleEnabled'),
@@ -933,6 +1202,12 @@
                 model_path: personModel,
                 confidence_threshold: numVal('testPeopleConf', 0.55),
                 image_size: numVal('testPeopleImgsz', 640),
+                nms_iou_threshold: numVal('testPeopleIou', 0.45),
+                max_persons_per_frame: numVal('testPeopleMaxPerFrame', 30),
+                min_person_width: numVal('testPeopleMinWidth', 20),
+                min_person_height: numVal('testPeopleMinHeight', 40),
+                tracker_enabled: boolVal('testPeopleTracker'),
+                count_once_per_track: boolVal('testPeopleCountOnce'),
                 line_crossing_enabled: true,
                 virtual_line_position_percent: numVal('testPeopleLine', 50),
                 movement_axis: selVal('testPeopleAxis', 'y'),
@@ -950,7 +1225,25 @@
                 visit_gap_minutes: numVal('testVisitGap', 15),
                 active_timeout_minutes: numVal('testActiveTimeout', 30),
                 movement_axis: selVal('testTrafficAxis', 'x'),
-                movement_threshold_percent: numVal('testTrafficMove', 8)
+                movement_threshold_percent: numVal('testTrafficMove', 8),
+                daily_count_mode: selVal('testDailyCountMode', 'visits'),
+                direction_mode: selVal('testDirectionMode', 'auto'),
+                arrival_label: selVal('testArrivalLabel', 'gekommen'),
+                departure_label: selVal('testDepartureLabel', 'gegangen'),
+                ignore_unknown_plates: boolVal('testIgnoreUnknown'),
+                include_duplicate_events: boolVal('testIncludeDuplicateEvents')
+            },
+            rtsp: {
+                analysis_area: {
+                    crop_before_detection: boolVal('testCropBeforeDetection'),
+                    mask_outside: boolVal('testMaskOutside'),
+                    crop_padding_percent: numVal('testRoiCropPadding', 25),
+                    crop_min_padding_px: numVal('testRoiCropMinPx', 120),
+                    motion_gate_enabled: boolVal('testMotionGate'),
+                    motion_gate_threshold_percent: numVal('testMotionThreshold', 0.20),
+                    motion_gate_hold_seconds: numVal('testMotionHold', 2),
+                    motion_gate_idle_scan_seconds: numVal('testMotionIdleScan', 5)
+                }
             }
         };
         const response = await fetch('/api/test/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
