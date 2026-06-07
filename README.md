@@ -383,7 +383,7 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 - Fahrzeug- und Kennzeichen-YOLO verwenden die im Testmodus gespeicherten Modell-/ImgSz-/Confidence-Werte konsistent.
 
 
-## Version 0.8.25
+## Version 0.8.26
 
 - Personen-Zähllinie auf der Personenanalyse-Seite wieder direkt einstellbar.
 - Linienposition, Achse, Richtung und ROI-Bezug können gespeichert und sofort für RTSP angewendet werden.
