@@ -30,6 +30,17 @@ Drittanbietern. Die Projektlizenz ersetzt deren eigene Lizenzbedingungen nicht.
 - Hinweis: Die Modelle basieren auf Ultralytics YOLOv8; anwendbare
   Ultralytics-Lizenzpflichten bleiben zusätzlich zu beachten.
 
+
+## fast-plate-ocr
+
+- Komponente: Python-Paket `fast-plate-ocr` und dessen OCR-Modellkonfigurationen
+- Projekt: https://github.com/ankandrew/fast-plate-ocr
+- Urheberhinweis: Copyright (c) 2024 ankandrew
+- Lizenz: MIT
+- Mitgelieferter Lizenztext: `third_party_licenses/fast-plate-ocr-MIT.txt`
+- Hinweis: Ein ausgewähltes OCR-Modell kann beim ersten Einsatz durch das Paket
+  heruntergeladen und lokal zwischengespeichert werden.
+
 ## Weitere Python-Abhängigkeiten
 
 Die übrigen Bibliotheken sind in `platevision/src/requirements.txt` aufgeführt

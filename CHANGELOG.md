@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.10.0
+
+### Stabilität und Sicherheit
+
+- Konfiguration, Kennzeichenhistorie, Watchlist und Personenhistorie werden atomar gespeichert und erhalten eine `.bak`-Sicherung.
+- Beschädigte JSON-Dateien können beim Start automatisch aus der letzten Sicherung wiederhergestellt werden.
+- Frische Installationen starten nicht mehr automatisch mit der Platzhalter-RTSP-Adresse; Autostart erfordert ein aktiviertes RTSP-Modul und eine echte URL.
+- Modell-Uploads werden zunächst temporär gespeichert, danach auf tatsächliche Grösse geprüft und atomar übernommen.
+- Nach einem Modell-Upload wird die SHA-256-Prüfsumme angezeigt; die Oberfläche warnt vor nicht vertrauenswürdigen `.pt`-Dateien.
+- Socket.IO akzeptiert standardmässig nur Same-Origin-Verbindungen; zusätzliche Ursprünge können über `PLATEVISION_CORS_ORIGINS` gesetzt werden.
+- Sicherheitsheader, Request-ID und ein verständlicher 413-Fehler für zu grosse Uploads ergänzt.
+- Modellpfade im Health-Check werden über die tatsächlichen Laufzeitpfade aufgelöst.
+- Docker-Healthcheck und Home-Assistant-Watchdog ergänzt.
+- Doppelte Modellpfad-Hilfsfunktionen und ungenutzte Python-Abhängigkeiten entfernt.
+- `repository.yaml`, `SECURITY.md`, Upgrade-Anleitung und automatischer statischer Release-Validator ergänzt.
+
 ## 0.9.0
 
 - PlateVision für neue Veröffentlichungen auf `AGPL-3.0-only` umgestellt.

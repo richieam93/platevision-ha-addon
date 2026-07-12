@@ -4,10 +4,10 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.9.0 FastPlateOCR Vehicle Intelligence
+Version 0.10.0 Stability & Safety
 """
 
-from flask import Flask, render_template, request, jsonify, Response, send_from_directory, redirect, url_for
+from flask import Flask, render_template, request, jsonify, Response, send_from_directory, redirect, url_for, g
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 import cv2
@@ -28,12 +28,13 @@ import logging
 import re
 import hashlib
 import secrets
+import shutil
 
-APP_VERSION = '0.9.0'
-APP_EDITION = 'FastPlateOCR + YOLO Vehicle Intelligence'
+APP_VERSION = '0.10.0'
+APP_EDITION = 'Stability, Safety & YOLO Vehicle Intelligence'
 APP_LICENSE = 'AGPL-3.0-only'
 APP_LICENSE_SINCE = '0.9.0'
-APP_SOURCE_URL = 'https://github.com/richieam93/platevision-ha-addon'
+APP_SOURCE_URL = os.environ.get('PLATEVISION_SOURCE_URL', 'https://github.com/richieam93/platevision-ha-addon/tree/main')
 import csv
 from difflib import SequenceMatcher
 from collections import Counter, defaultdict
@@ -74,7 +75,9 @@ app = Flask(__name__,
 app.config['SECRET_KEY'] = _load_or_create_secret_key()
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max upload
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+_cors_env = os.environ.get('PLATEVISION_CORS_ORIGINS', '').strip()
+_socketio_origins = [item.strip() for item in _cors_env.split(',') if item.strip()] if _cors_env else None
+socketio = SocketIO(app, cors_allowed_origins=_socketio_origins, async_mode='threading')
 
 # Logging konfigurieren
 logging.basicConfig(
@@ -82,6 +85,95 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# ROBUSTE DATEIABLAGE & HTTP-BASISSCHUTZ
+# ============================================================
+
+def _json_clone(value):
+    """Return a JSON-compatible deep copy without sharing nested references."""
+    return json.loads(json.dumps(value, ensure_ascii=False))
+
+
+def _atomic_write_json(path_value, payload):
+    """Write JSON atomically and keep one last-known-good .bak copy.
+
+    A power loss or container restart during json.dump previously could leave
+    config/history files truncated. The temporary file is written in the same
+    directory and then swapped into place with os.replace().
+    """
+    target = Path(path_value)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_name(f'.{target.name}.{os.getpid()}.{threading.get_ident()}.tmp')
+    backup = target.with_name(f'{target.name}.bak')
+    try:
+        with temp.open('w', encoding='utf-8') as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False)
+            handle.write('\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        if target.exists():
+            try:
+                shutil.copy2(target, backup)
+            except OSError as exc:
+                logger.warning('Backup fuer %s konnte nicht erstellt werden: %s', target, exc)
+        os.replace(temp, target)
+    finally:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _load_json_with_backup(path_value, default):
+    """Load JSON and transparently recover from the .bak file when necessary."""
+    target = Path(path_value)
+    backup = target.with_name(f'{target.name}.bak')
+    for candidate in (target, backup):
+        if not candidate.is_file():
+            continue
+        try:
+            with candidate.open('r', encoding='utf-8') as handle:
+                value = json.load(handle)
+            if candidate == backup:
+                logger.warning('Verwende Sicherungskopie fuer beschaedigte/fehlende Datei: %s', target)
+            return value
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            logger.error('JSON-Datei %s konnte nicht gelesen werden: %s', candidate, exc)
+    return _json_clone(default)
+
+
+def _sha256_file(path_value, chunk_size=1024 * 1024):
+    path = Path(path_value)
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@app.before_request
+def _begin_request_context():
+    g.request_id = request.headers.get('X-Request-ID') or uuid.uuid4().hex
+    g.request_started_at = time.perf_counter()
+
+
+@app.after_request
+def _apply_response_headers(response):
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+    response.headers.setdefault('Referrer-Policy', 'same-origin')
+    response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+    response.headers['X-Request-ID'] = getattr(g, 'request_id', '')
+    if request.path.startswith('/api/'):
+        response.headers.setdefault('Cache-Control', 'no-store')
+    return response
 
 # ============================================================
 # VERZEICHNISSE ERSTELLEN
@@ -362,10 +454,10 @@ class ConfigManager:
             'enabled': False,
             # Startet den Live-/RTSP-Stream automatisch nach Docker- oder Home-Assistant-Neustart.
             # Kann in den Einstellungen deaktiviert werden.
-            'auto_start': True,
+            'auto_start': False,
             'auto_start_delay_seconds': 3,
             'auto_start_retry_seconds': 30,
-            'autostart_enabled': True,
+            'autostart_enabled': False,
             'autostart_delay_seconds': 3,
             'reconnect_delay': 5,
             'buffer_size': 10,
@@ -406,8 +498,6 @@ class ConfigManager:
         },
         'detection': {
             'confidence_threshold': 0.5,
-            'vehicle_detector_iou': 0.45,
-            'vehicle_detector_imgsz': 640,
             'car_detection_enabled': True,
             'zoom_enabled': True,
             'zoom_factor': 2.5,
@@ -742,20 +832,17 @@ class ConfigManager:
     }
     
     def __init__(self):
+        self.lock = threading.RLock()
         self.config = self.load_config()
     
     def load_config(self):
-        if os.path.exists(self.CONFIG_FILE):
-            try:
-                with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    saved_config = json.load(f)
-                merged = self._merge_configs(self.DEFAULT_CONFIG, saved_config)
-                merged = self._migrate_config_for_0821(merged, saved_config)
-                return self._normalize_analysis_area(merged)
-            except Exception as e:
-                logger.error(f"Fehler beim Laden der Konfiguration: {e}")
-                return self._normalize_analysis_area(json.loads(json.dumps(self.DEFAULT_CONFIG)))
-        return self._normalize_analysis_area(json.loads(json.dumps(self.DEFAULT_CONFIG)))
+        saved_config = _load_json_with_backup(self.CONFIG_FILE, {})
+        if not isinstance(saved_config, dict):
+            logger.error('Konfiguration hat kein gueltiges Objektformat; Standardwerte werden verwendet.')
+            saved_config = {}
+        merged = self._merge_configs(self.DEFAULT_CONFIG, saved_config)
+        merged = self._migrate_config_for_0821(merged, saved_config)
+        return self._normalize_analysis_area(merged)
     
     def _migrate_config_for_0821(self, config, saved_config=None):
         """Apply safe defaults for the 0.8.24 OCR/vehicle pipeline.
@@ -1019,9 +1106,9 @@ class ConfigManager:
     
     def save_config(self):
         try:
-            self.config = self._normalize_analysis_area(self.config)
-            with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, indent=4, ensure_ascii=False)
+            with self.lock:
+                self.config = self._normalize_analysis_area(self.config)
+                _atomic_write_json(self.CONFIG_FILE, self.config)
             return True
         except Exception as e:
             logger.error(f"Fehler beim Speichern der Konfiguration: {e}")
@@ -1039,11 +1126,14 @@ class ConfigManager:
         return value
     
     def set(self, value, *keys):
-        config = self.config
-        for key in keys[:-1]:
-            config = config.setdefault(key, {})
-        config[keys[-1]] = value
-        self.save_config()
+        if not keys:
+            raise ValueError('Mindestens ein Konfigurationsschluessel ist erforderlich')
+        with self.lock:
+            config = self.config
+            for key in keys[:-1]:
+                config = config.setdefault(key, {})
+            config[keys[-1]] = value
+            self.save_config()
 
 
 # ============================================================
@@ -1060,18 +1150,12 @@ class HistoryManager:
         self.lock = threading.Lock()
     
     def load_history(self):
-        if os.path.exists(self.HISTORY_FILE):
-            try:
-                with open(self.HISTORY_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(f"Fehler beim Laden der Historie: {e}")
-        return []
+        value = _load_json_with_backup(self.HISTORY_FILE, [])
+        return value if isinstance(value, list) else []
     
     def save_history(self):
         try:
-            with open(self.HISTORY_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.history, f, indent=2, ensure_ascii=False)
+            _atomic_write_json(self.HISTORY_FILE, self.history)
             return True
         except Exception as e:
             logger.error(f"Fehler beim Speichern der Historie: {e}")
@@ -1745,18 +1829,12 @@ class WatchlistManager:
         self.lock = threading.Lock()
 
     def load(self):
-        if os.path.exists(self.WATCHLIST_FILE):
-            try:
-                with open(self.WATCHLIST_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(f"Fehler beim Laden der Watchlist: {e}")
-        return []
+        value = _load_json_with_backup(self.WATCHLIST_FILE, [])
+        return value if isinstance(value, list) else []
 
     def save(self):
         try:
-            with open(self.WATCHLIST_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.items, f, indent=2, ensure_ascii=False)
+            _atomic_write_json(self.WATCHLIST_FILE, self.items)
             return True
         except Exception as e:
             logger.error(f"Fehler beim Speichern der Watchlist: {e}")
@@ -1828,19 +1906,12 @@ class PersonHistoryManager:
         self._last_auto_cleanup_ts = 0
 
     def load_history(self):
-        if os.path.exists(self.HISTORY_FILE):
-            try:
-                with open(self.HISTORY_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(f"Fehler beim Laden der Personen-Historie: {e}")
-        return []
+        value = _load_json_with_backup(self.HISTORY_FILE, [])
+        return value if isinstance(value, list) else []
 
     def save_history(self):
         try:
-            Path(self.HISTORY_FILE).parent.mkdir(parents=True, exist_ok=True)
-            with open(self.HISTORY_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.history, f, indent=2, ensure_ascii=False)
+            _atomic_write_json(self.HISTORY_FILE, self.history)
             return True
         except Exception as e:
             logger.error(f"Fehler beim Speichern der Personen-Historie: {e}")
@@ -5264,41 +5335,6 @@ def _candidate_model_directories(*extra_values):
     return dirs
 
 
-def _resolve_model_path(path_value):
-    """Resolve model paths stored as models/best.pt, /data/models/best.pt or repo-relative paths."""
-    if not path_value:
-        return None
-    raw = str(path_value).strip().replace('\\', '/')
-    if not raw:
-        return None
-    p = Path(raw).expanduser()
-    app_dir = Path(__file__).resolve().parent
-    candidates = []
-    if p.is_absolute():
-        candidates.append(p)
-    else:
-        candidates.extend([
-            Path.cwd() / p,
-            app_dir / p,
-            Path('/app') / p,
-            Path('/data') / p,
-        ])
-        # Common user/GitHub layout: platevision/src/models/best.pt. At runtime this becomes /app/models/best.pt or /data/models/best.pt.
-        if p.name:
-            candidates.extend([Path('/data/models') / p.name, Path('/app/models') / p.name, app_dir / 'models' / p.name, Path.cwd() / 'models' / p.name])
-    for candidate in candidates:
-        try:
-            if candidate.exists():
-                return str(candidate)
-        except Exception:
-            continue
-    return raw
-
-
-def _model_path_exists(path_value):
-    resolved = _resolve_model_path(path_value)
-    return bool(resolved and Path(resolved).exists())
-
 
 def _bool_from_request(value, default=False):
     if value is None:
@@ -5867,9 +5903,25 @@ def api_models_upload():
         target = target_dir / original_name
         if target.exists() and not overwrite:
             target = target_dir / f"{target.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{target.suffix}"
-        upload.save(str(target))
+
+        temp_target = target.with_name(f'.{target.name}.{uuid.uuid4().hex}.upload')
+        try:
+            upload.save(str(temp_target))
+            actual_size = temp_target.stat().st_size
+            if actual_size <= 0:
+                raise ValueError('Die hochgeladene Modelldatei ist leer.')
+            if max_mb > 0 and actual_size > max_mb * 1024 * 1024:
+                raise ValueError(f'Datei ist größer als das Limit von {max_mb:g} MB.')
+            os.replace(temp_target, target)
+        finally:
+            try:
+                temp_target.unlink(missing_ok=True)
+            except OSError:
+                pass
 
         info = _model_info_from_path(target, selected_for_people=(role == 'people' and select_after_upload))
+        info['sha256'] = _sha256_file(target)
+        info['security_warning'] = 'Nur Modelle aus vertrauenswürdigen Quellen laden. PyTorch-.pt-Dateien können ausführbaren Python-Code enthalten.'
         cfg_models = config_manager.config.setdefault('models', {})
         cfg_models['last_uploaded_model'] = info
         cfg_models['last_model_upload_at'] = datetime.now().isoformat()
@@ -6359,16 +6411,6 @@ MODEL_PROVENANCE = {
 }
 
 
-def _sha256_file(path):
-    path = Path(path)
-    if not path.is_file():
-        return None
-    digest = hashlib.sha256()
-    with path.open('rb') as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
-
 
 def _model_license_status():
     rows = []
@@ -6393,6 +6435,7 @@ LEGAL_DOCUMENTS = {
     'THIRD_PARTY_NOTICES.md': 'THIRD_PARTY_NOTICES.md',
     'MODEL_PROVENANCE.md': 'MODEL_PROVENANCE.md',
     'PlateVision-MIT-through-0.8.30.txt': 'legacy_licenses/PlateVision-MIT-through-0.8.30.txt',
+    'fast-plate-ocr-MIT.txt': 'third_party_licenses/fast-plate-ocr-MIT.txt',
 }
 
 
@@ -7299,7 +7342,26 @@ def api_people_cleanup():
 
 @app.route('/api/people/test/simulate', methods=['POST'])
 def api_people_test_simulate():
-    return jsonify({'success': False, 'error': 'Demo-Daten wurden in Version 0.8.30 entfernt. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
+    return jsonify({'success': False, 'error': 'Demo-Daten sind deaktiviert. Bitte echte Foto-/RTSP-Tests verwenden.'}), 410
+
+@app.route('/api/system/live')
+def api_system_live():
+    """Lightweight liveness probe for Docker and Home Assistant Supervisor."""
+    return jsonify({'ok': True, 'name': 'PlateVision', 'version': APP_VERSION})
+
+
+@app.route('/api/system/version')
+def api_system_version():
+    return jsonify({
+        'name': 'PlateVision',
+        'version': APP_VERSION,
+        'edition': APP_EDITION,
+        'license': APP_LICENSE,
+        'license_since': APP_LICENSE_SINCE,
+        'source_url': APP_SOURCE_URL,
+        'python': os.sys.version.split()[0],
+    })
+
 
 @app.route('/api/system/health')
 def api_system_health():
@@ -7307,17 +7369,20 @@ def api_system_health():
     def add(name, ok, detail=''):
         checks.append({'name': name, 'ok': bool(ok), 'detail': detail})
     add('models_directory', os.path.isdir('models'), 'models/')
-    add('vehicle_model', os.path.exists(config_manager.get('models', 'vehicle_detector') or ''), config_manager.get('models', 'vehicle_detector') or '')
-    add('plate_model', os.path.exists(config_manager.get('models', 'license_plate_detector') or ''), config_manager.get('models', 'license_plate_detector') or '')
+    vehicle_model = _resolve_model_path(config_manager.get('models', 'vehicle_detector') or '')
+    add('vehicle_model', bool(vehicle_model and Path(vehicle_model).is_file()), vehicle_model or '')
+    plate_model = _resolve_model_path(config_manager.get('models', 'license_plate_detector') or '')
+    add('plate_model', bool(plate_model and Path(plate_model).is_file()), plate_model or '')
     add('history_writable', os.access(os.path.dirname(history_manager.HISTORY_FILE), os.W_OK), history_manager.HISTORY_FILE)
     add('watchlist_writable', os.access(os.path.dirname(watchlist_manager.WATCHLIST_FILE), os.W_OK), watchlist_manager.WATCHLIST_FILE)
     add('people_history_writable', os.access(os.path.dirname(person_history_manager.HISTORY_FILE), os.W_OK), person_history_manager.HISTORY_FILE)
-    add('person_model_path', bool(config_manager.get('people', 'model_mode') == 'coco_person' or os.path.exists(config_manager.get('people', 'custom_model_path') or '')), config_manager.get('people', 'custom_model_path') or 'COCO person class')
+    person_model = _resolve_model_path(config_manager.get('people', 'custom_model_path') or '')
+    add('person_model_path', bool(config_manager.get('people', 'model_mode') == 'coco_person' or (person_model and Path(person_model).is_file())), person_model or 'COCO person class')
     add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
     add('rtsp_autostart', True, 'aktiv' if config_manager.get('rtsp', 'autostart_enabled') else 'deaktiviert')
     add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
     ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': APP_VERSION})
+    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': APP_VERSION, 'license': APP_LICENSE, 'source_url': APP_SOURCE_URL})
 
 
 @app.route('/api/system/audit')
@@ -7373,6 +7438,14 @@ def page_not_found(e):
         return jsonify({'error': 'Nicht gefunden'}), 404
     return render_template('404.html', page='error'), 404
 
+@app.errorhandler(413)
+def request_too_large(e):
+    message = 'Upload ist größer als das erlaubte Limit.'
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'error': message}), 413
+    return render_template('500.html', page='error', error_message=message), 413
+
+
 @app.errorhandler(500)
 def internal_error(e):
     logger.error(f"Internal Error: {e}")
@@ -7390,12 +7463,13 @@ def _maybe_autostart_stream():
     """Starts the RTSP stream after app boot when configured by the user."""
     try:
         rtsp_cfg = config_manager.get('rtsp') or {}
-        enabled = bool(rtsp_cfg.get('autostart_enabled', rtsp_cfg.get('auto_start', False)))
+        enabled = bool(rtsp_cfg.get('enabled')) and bool(rtsp_cfg.get('autostart_enabled', rtsp_cfg.get('auto_start', False)))
         if not enabled:
-            logger.info('RTSP Autostart deaktiviert')
+            logger.info('RTSP Autostart deaktiviert oder RTSP-Modul nicht aktiviert')
             return
-        if not rtsp_cfg.get('url'):
-            logger.warning('RTSP Autostart aktiviert, aber keine RTSP URL konfiguriert')
+        rtsp_url = str(rtsp_cfg.get('url') or '').strip()
+        if not rtsp_url or rtsp_url == ConfigManager.DEFAULT_CONFIG['rtsp']['url']:
+            logger.warning('RTSP Autostart aktiviert, aber keine echte RTSP URL konfiguriert')
             return
         delay = max(0.0, float(rtsp_cfg.get('autostart_delay_seconds', rtsp_cfg.get('auto_start_delay_seconds', 3)) or 3))
 
@@ -7427,7 +7501,7 @@ def api_system_compatibility():
         '/api/stream/start', '/api/stream/stop', '/api/stream/status', '/api/stream/resolution', '/api/stream/feed', '/api/stream/snapshot',
         '/api/config', '/api/config/rtsp', '/api/config/detection', '/api/config/ocr', '/api/config/history',
         '/api/history', '/api/history/statistics', '/api/storage/info', '/api/process/image', '/api/latest',
-        '/api/system/licenses', '/api/models/status', '/api/models/reload', '/api/models/available', '/api/models/people/options', '/api/models/people/select', '/api/config/validate', '/api/people/presence', '/api/people/cleanup', '/api/system/info', '/api/process/video', '/api/process/jobs'
+        '/api/system/licenses', '/api/system/live', '/api/system/version', '/api/models/status', '/api/models/reload', '/api/models/available', '/api/models/people/options', '/api/models/people/select', '/api/config/validate', '/api/people/presence', '/api/people/cleanup', '/api/system/info', '/api/process/video', '/api/process/jobs'
     ]
     available_routes = sorted(str(rule.rule) for rule in app.url_map.iter_rules())
     missing_sections = [section for section in original_config_sections if section not in config_manager.config]

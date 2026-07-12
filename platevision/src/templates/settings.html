@@ -1566,6 +1566,10 @@
                             <i class="fas fa-info-circle me-2"></i>
                             Hochgeladene Modelle werden bevorzugt unter <code>/data/models</code> gespeichert und bleiben dadurch bei Add-on-Updates erhalten. Für Personenmodelle kannst du z.B. <code>best.pt</code> oder <code>last.pt</code> hochladen und direkt auswählen.
                         </div>
+                        <div class="alert alert-warning">
+                            <i class="fas fa-shield-halved me-2"></i>
+                            <strong>Sicherheit:</strong> Lade nur Modelle aus Quellen hoch, denen du vertraust. Besonders PyTorch-Dateien mit <code>.pt</code> können beim Laden ausführbaren Python-Code enthalten. PlateVision zeigt nach dem Upload deshalb zusätzlich die SHA-256-Prüfsumme an.
+                        </div>
                         <form id="modelUploadForm" enctype="multipart/form-data">
                             <div class="row g-3">
                                 <div class="col-lg-6">
@@ -3622,7 +3626,7 @@
                 showToast('Fehler', data.error || 'Upload fehlgeschlagen', 'danger');
                 return;
             }
-            if (resultBox) resultBox.innerHTML = `<div class="alert alert-success"><strong>${data.model?.name || 'Modell'}</strong> wurde hochgeladen.<br><small>Pfad: <code>${data.model?.path || '-'}</code>${data.selected ? ' · ausgewählt' : ''}${data.reload ? ' · Reload gestartet' : ''}</small></div>`;
+            if (resultBox) resultBox.innerHTML = `<div class="alert alert-success"><strong>${data.model?.name || 'Modell'}</strong> wurde hochgeladen.<br><small>Pfad: <code>${data.model?.path || '-'}</code>${data.selected ? ' · ausgewählt' : ''}${data.reload ? ' · Reload gestartet' : ''}</small>${data.model?.sha256 ? `<br><small>SHA-256: <code class="user-select-all">${data.model.sha256}</code></small>` : ''}</div>`;
             renderModelInventory(data.models || [], 'modelUploadInventory');
             await loadPeopleModelOptions();
             loadModelStatus();

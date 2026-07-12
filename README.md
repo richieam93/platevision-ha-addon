@@ -6,9 +6,9 @@
 
 🚗 **Automatische Kennzeichenerkennung für Home Assistant**
 
-> ⚠️ **Current Status:** German UI only | CPU only (GPU coming soon)
+> ⚠️ **Current Status:** German-first UI | Standard add-on build uses CPU; GPU requires a compatible custom runtime
 
-> ⚠️ **Aktueller Status:** Nur deutsche Oberfläche | Nur CPU (GPU kommt bald)
+> ⚠️ **Aktueller Status:** Deutsch als Hauptsprache | Das Standard-Add-on nutzt CPU; GPU benötigt eine passende eigene Laufzeitumgebung
 
 [English](#-english) | [Deutsch](#-deutsch)
 
@@ -44,10 +44,10 @@ PlateVision connects to your **RTSP camera** and automatically recognizes licens
 - **Camera crop** adjustable (saves computing power)
 
 ### 🤖 Recognition
-- **YOLO-based** – runs 100% locally on CPU or GPU
-- **EasyOCR** for text recognition
+- **YOLO-based** – runs 100% locally; the standard add-on uses CPU
+- **FastPlateOCR/EasyOCR** for text recognition
 - **Vehicle type detection** (car, truck, motorcycle, etc.)
-- **CPU/GPU selectable** in web interface
+- **Processing device selectable**; GPU requires a compatible custom runtime
 
 ### 🖥️ Web UI
 - **Live view** of camera
@@ -218,10 +218,10 @@ PlateVision verbindet sich mit deiner **RTSP-Kamera** und erkennt automatisch Nu
 - **Kamera-Zuschnitt** einstellbar (spart Rechenleistung)
 
 ### 🤖 Erkennung
-- **YOLO-basiert** – läuft 100% lokal auf CPU oder GPU
-- **EasyOCR** für Texterkennung
+- **YOLO-basiert** – läuft 100% lokal; das Standard-Add-on verwendet CPU
+- **FastPlateOCR/EasyOCR** für Texterkennung
 - **Fahrzeugtyp-Erkennung** (Auto, LKW, Motorrad, etc.)
-- **CPU/GPU wählbar** im Webinterface
+- **Verarbeitungsgerät wählbar**; GPU benötigt eine kompatible eigene Laufzeitumgebung
 
 ### 🖥️ Web UI
 - **Live-View** der Kamera
@@ -315,7 +315,7 @@ PlateVision verbindet sich mit deiner **RTSP-Kamera** und erkennt automatisch Nu
 
 This project is **100% free and open source**. Dieses Projekt ist **100% gratis und Open Source**.
 
-Over ** several hours of development** went into PlateVision. Über **Mehre Stunden Entwicklung** stecken in PlateVision.
+Many hours of development went into PlateVision. In PlateVision stecken viele Stunden Entwicklung.
 
 If it helps you, I'd appreciate a coffee. Wenn es dir hilft, freue ich mich über einen Kaffee:
 
@@ -349,7 +349,7 @@ hier dokumentiert:
 - [`MODEL_PROVENANCE.md`](MODEL_PROVENANCE.md)
 - [`third_party_licenses/`](third_party_licenses/)
 - [`legacy_licenses/PlateVision-MIT-through-0.8.30.txt`](legacy_licenses/PlateVision-MIT-through-0.8.30.txt)
-- [`RELEASE_CHECKLIST_0.9.0.md`](RELEASE_CHECKLIST_0.9.0.md)
+- [`RELEASE_CHECKLIST_0.10.0.md`](RELEASE_CHECKLIST_0.10.0.md)
 
 Die AGPL erlaubt Nutzung, Änderung, Weitergabe und auch entgeltliche
 Weitergabe. Dabei müssen die anwendbaren Lizenzbedingungen, insbesondere die
@@ -388,6 +388,16 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 - Neuer Einstellungs-Tab **Modelle hochladen** für `.pt`, `.onnx` und `.engine`.
 - Hochgeladene Modelle werden bevorzugt unter `/data/models` gespeichert, damit sie Add-on-Updates überstehen.
 - Personenmodelle können nach dem Upload automatisch ausgewählt und optional direkt neu geladen werden.
+
+## Version 0.10.0
+
+- Atomare Speicherung und automatische `.bak`-Wiederherstellung für Konfiguration, Watchlist und Historien.
+- Sicherere Modell-Uploads mit tatsächlicher Grössenprüfung, temporärer Datei und SHA-256-Ausgabe.
+- RTSP-Autostart startet nur bei aktivierter Kamera und einer echten RTSP-URL.
+- Sicherheitsheader, Request-ID, Same-Origin-Standard für Socket.IO und verständlicher 413-Fehler ergänzt.
+- Docker-Healthcheck, Home-Assistant-Watchdog und neue API `/api/system/version` ergänzt.
+- Automatischer statischer Release-Validator und GitHub-Workflow prüfen Python, Templates, Metadaten und Modell-Hashes.
+- Details: [`CHANGELOG.md`](CHANGELOG.md), [`SECURITY.md`](SECURITY.md), [`UPGRADE_0.10.0.md`](UPGRADE_0.10.0.md).
 
 ## Version 0.9.0
 

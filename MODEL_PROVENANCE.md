@@ -25,3 +25,14 @@ Die Lizenz eines Repositorys, die Lizenz des Trainingsframeworks, die Lizenz
 eines Basismodells und die Bedingungen des Trainingsdatensatzes können
 nebeneinander gelten. Diese Dokumentation ist eine nachvollziehbare
 Bestandsaufnahme, aber keine verbindliche Rechtsberatung.
+
+## Laufzeit-OCR-Modell von fast-plate-ocr
+
+PlateVision verwendet standardmässig `cct-s-v2-global-model` über das Paket
+`fast-plate-ocr`. Dieses OCR-Modell ist nicht als `.pt`-Datei im Repository
+enthalten. Je nach Paketcache kann es beim ersten Einsatz heruntergeladen werden.
+Das Paket und seine veröffentlichten Modellkonfigurationen stammen aus
+https://github.com/ankandrew/fast-plate-ocr und stehen dort unter MIT.
+Der zugehörige Lizenztext wird unter
+`third_party_licenses/fast-plate-ocr-MIT.txt` mitgeliefert.
+

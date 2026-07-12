@@ -1,9 +1,15 @@
 FROM python:3.10-slim
 
+ARG BUILD_VERSION=0.10.0
+ARG BUILD_ARCH=amd64
+
 LABEL org.opencontainers.image.title="PlateVision" \
-      org.opencontainers.image.version="0.9.0" \
+      org.opencontainers.image.version="${BUILD_VERSION}" \
       org.opencontainers.image.source="https://github.com/richieam93/platevision-ha-addon" \
-      org.opencontainers.image.licenses="AGPL-3.0-only"
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      io.hass.version="${BUILD_VERSION}" \
+      io.hass.type="app" \
+      io.hass.arch="${BUILD_ARCH}"
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
@@ -40,4 +46,8 @@ COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
 EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
+  CMD python -c "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:5000/api/system/live', timeout=8)); raise SystemExit(0 if data.get('ok') else 1)"
+
 CMD ["/run.sh"]

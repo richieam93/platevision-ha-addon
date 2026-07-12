@@ -1,12 +1,14 @@
 name: "PlateVision"
 slug: platevision
 description: Lokale Kennzeichen-, Fahrzeug- und Personenerkennung für Home Assistant
-version: "0.9.0"
+version: "0.10.0"
 url: "https://github.com/richieam93/platevision-ha-addon"
 arch:
   - amd64
 startup: services
 boot: auto
+stage: stable
+watchdog: "http://[HOST]:[PORT:5000]/api/system/live"
 init: false
 
 ports:
@@ -15,3 +17,5 @@ ports_description:
   5000/tcp: PlateVision Web UI
 
 webui: "http://[HOST]:[PORT:8087]"
+panel_icon: "mdi:license"
+panel_title: "PlateVision"
