@@ -1,7 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2025-2026 Richard Amrein
+
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.8.30 FastPlateOCR Vehicle Intelligence
+Version 0.9.0 FastPlateOCR Vehicle Intelligence
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory, redirect, url_for
@@ -23,9 +26,14 @@ import io
 import queue
 import logging
 import re
+import hashlib
+import secrets
 
-APP_VERSION = '0.8.30'
+APP_VERSION = '0.9.0'
 APP_EDITION = 'FastPlateOCR + YOLO Vehicle Intelligence'
+APP_LICENSE = 'AGPL-3.0-only'
+APP_LICENSE_SINCE = '0.9.0'
+APP_SOURCE_URL = 'https://github.com/richieam93/platevision-ha-addon'
 import csv
 from difflib import SequenceMatcher
 from collections import Counter, defaultdict
@@ -35,10 +43,35 @@ from pathlib import Path
 # KONFIGURATION & INITIALISIERUNG
 # ============================================================
 
-app = Flask(__name__, 
-            static_folder='static', 
+def _load_or_create_secret_key():
+    """Use an environment key or a persistent random key instead of a public constant."""
+    env_key = os.environ.get('PLATEVISION_SECRET_KEY', '').strip()
+    if env_key:
+        return env_key
+
+    secret_path = Path(os.environ.get('PLATEVISION_SECRET_FILE', '/data/.platevision_secret'))
+    try:
+        secret_path.parent.mkdir(parents=True, exist_ok=True)
+        if secret_path.exists():
+            saved = secret_path.read_text(encoding='utf-8').strip()
+            if saved:
+                return saved
+        generated = secrets.token_urlsafe(48)
+        secret_path.write_text(generated, encoding='utf-8')
+        try:
+            secret_path.chmod(0o600)
+        except OSError:
+            pass
+        return generated
+    except OSError as exc:
+        logging.getLogger(__name__).warning('Persistenter Flask-Schluessel konnte nicht gespeichert werden: %s', exc)
+        return secrets.token_urlsafe(48)
+
+
+app = Flask(__name__,
+            static_folder='static',
             template_folder='templates')
-app.config['SECRET_KEY'] = 'platevision_secret_2024'
+app.config['SECRET_KEY'] = _load_or_create_secret_key()
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max upload
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
@@ -704,7 +737,7 @@ class ConfigManager:
             'support_url': '',
             'documentation_url': '',
             'release_channel': 'stable',
-            'license_notice': 'MIT'
+            'license_notice': 'AGPL-3.0-only'
         }
     }
     
@@ -863,6 +896,13 @@ class ConfigManager:
             dashboard_cfg.setdefault('show_latest_vehicle', True)
             dashboard_cfg.setdefault('show_latest_person', True)
             dashboard_cfg.setdefault('show_today_summary', True)
+
+            # 0.9.0: Der Lizenzhinweis ist Teil der Software-Metadaten und kein
+            # frei editierbarer Benutzerwert. Alte MIT-Defaults werden migriert.
+            about_cfg = config.setdefault('about', {})
+            if str(about_cfg.get('license_notice') or '').strip() in ('', 'MIT', 'MIT License'):
+                about_cfg['license_notice'] = APP_LICENSE
+            migration_cfg['agpl_license_notice_applied_v1'] = True
         except Exception as exc:
             logger.warning(f"0.8.24 Config-Migration konnte nicht vollständig angewendet werden: {exc}")
         return config
@@ -4358,6 +4398,7 @@ def api_save_models_config():
 def api_save_about_config():
     try:
         data = request.get_json(silent=True) or {}
+        data['license_notice'] = APP_LICENSE
         config_manager.config.setdefault('about', {})
         config_manager.config['about'].update(data)
         config_manager.save_config()
@@ -6275,6 +6316,9 @@ def api_system_about():
         'name': 'PlateVision',
         'version': APP_VERSION,
         'edition': APP_EDITION,
+        'license': APP_LICENSE,
+        'license_since': APP_LICENSE_SINCE,
+        'source_url': APP_SOURCE_URL,
         'features': [
             'RTSP Live Stream', 'Einheitlicher Straßen-ROI', 'Fahrzeugerkennung', 'Kennzeichenerkennung',
             'Statistik', 'Suche', 'Watchlist', 'Mehrsprachige Einstellungen',
@@ -6284,6 +6328,120 @@ def api_system_about():
         'models_loaded': detector.models_loaded,
         'history_count': len(history_manager.history),
         'people_history_count': len(person_history_manager.history)
+    })
+
+
+MODEL_PROVENANCE = {
+    'yolov8n.pt': {
+        'purpose': 'Fahrzeug- und COCO-Objekterkennung',
+        'source': 'https://github.com/ultralytics/ultralytics',
+        'source_license': 'AGPL-3.0 oder Ultralytics Enterprise',
+        'expected_sha256': '31e20dde3def09e2cf938c7be6fe23d9150bbbe503982af13345706515f2ef95',
+    },
+    'license_plate_detector.pt': {
+        'purpose': 'Kennzeichen-Lokalisierung',
+        'source': 'https://github.com/Muhammad-Zeerak-Khan/Automatic-License-Plate-Recognition-using-YOLOv8',
+        'source_license': 'MIT im Ursprungsrepository; zusätzlich Ultralytics beachten',
+        'expected_sha256': '8ec3b254a6c87610f037a90957462cafa11a9c03224e33a28c6a1d1ac2ac51b0',
+    },
+    'best.pt': {
+        'purpose': 'Personenerkennung (bester Checkpoint)',
+        'source': 'https://github.com/J3lly-Been/YOLOv8-HumanDetection',
+        'source_license': 'GPL-3.0 im Ursprungsrepository; zusätzlich Ultralytics beachten',
+        'expected_sha256': 'a6aead7bf0eccb35bd56731bfaa6ea19a4645a66150d2d0b19dd3fb1b116ef43',
+    },
+    'last.pt': {
+        'purpose': 'Personenerkennung (letzter Checkpoint)',
+        'source': 'https://github.com/J3lly-Been/YOLOv8-HumanDetection',
+        'source_license': 'GPL-3.0 im Ursprungsrepository; zusätzlich Ultralytics beachten',
+        'expected_sha256': 'db0f2dfe996d997cd33388003069a4685215c84dbca0f7a6de4b66c9d915f85f',
+    },
+}
+
+
+def _sha256_file(path):
+    path = Path(path)
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _model_license_status():
+    rows = []
+    for filename, metadata in MODEL_PROVENANCE.items():
+        model_path = Path('models') / filename
+        actual_hash = _sha256_file(model_path)
+        row = dict(metadata)
+        row.update({
+            'filename': filename,
+            'path': str(model_path),
+            'present': actual_hash is not None,
+            'actual_sha256': actual_hash,
+            'hash_matches': actual_hash == metadata['expected_sha256'] if actual_hash else False,
+        })
+        rows.append(row)
+    return rows
+
+
+LEGAL_DOCUMENTS = {
+    'LICENSE': 'LICENSE',
+    'NOTICE.md': 'NOTICE.md',
+    'THIRD_PARTY_NOTICES.md': 'THIRD_PARTY_NOTICES.md',
+    'MODEL_PROVENANCE.md': 'MODEL_PROVENANCE.md',
+    'PlateVision-MIT-through-0.8.30.txt': 'legacy_licenses/PlateVision-MIT-through-0.8.30.txt',
+}
+
+
+def _legal_root():
+    candidates = [Path('/app'), Path(__file__).resolve().parent.parent]
+    for candidate in candidates:
+        if (candidate / 'LICENSE').is_file():
+            return candidate
+    return Path(__file__).resolve().parent.parent
+
+
+@app.route('/legal/document/<name>')
+def legal_document(name):
+    relative_path = LEGAL_DOCUMENTS.get(name)
+    if not relative_path:
+        return jsonify({'success': False, 'error': 'Unbekanntes Lizenzdokument'}), 404
+    target = _legal_root() / relative_path
+    if not target.is_file():
+        return jsonify({'success': False, 'error': 'Lizenzdokument nicht gefunden'}), 404
+    return send_from_directory(str(target.parent), target.name, as_attachment=False)
+
+
+@app.route('/legal')
+def legal_page():
+    return render_template(
+        'legal.html',
+        page='legal',
+        models=_model_license_status(),
+        project_license=APP_LICENSE,
+        license_since=APP_LICENSE_SINCE,
+        source_url=APP_SOURCE_URL,
+    )
+
+
+@app.route('/api/system/licenses')
+def api_system_licenses():
+    return jsonify({
+        'name': 'PlateVision',
+        'version': APP_VERSION,
+        'project_license': APP_LICENSE,
+        'license_since': APP_LICENSE_SINCE,
+        'source_url': APP_SOURCE_URL,
+        'models': _model_license_status(),
+        'notice_files': [
+            '/app/LICENSE',
+            '/app/NOTICE.md',
+            '/app/THIRD_PARTY_NOTICES.md',
+            '/app/MODEL_PROVENANCE.md',
+        ],
     })
 
 
@@ -6333,6 +6491,9 @@ def inject_i18n_helpers():
         'translations': translations,
         'app_version': APP_VERSION,
         'app_edition': APP_EDITION,
+        'app_license': APP_LICENSE,
+        'app_license_since': APP_LICENSE_SINCE,
+        'app_source_url': APP_SOURCE_URL,
         'app_config': config_manager.config,
         'people_menu_enabled': bool(config_manager.get('people', 'enabled') is not False),
     }
@@ -7262,11 +7423,11 @@ def api_system_compatibility():
     """Reports whether original PlateVision routes and config sections are still present."""
     original_config_sections = ['rtsp', 'detection', 'ocr', 'general', 'history', 'models']
     original_routes = [
-        '/', '/dashboard', '/history', '/rtsp-settings', '/settings', '/test', '/live', '/latest',
+        '/', '/dashboard', '/history', '/rtsp-settings', '/settings', '/test', '/live', '/latest', '/legal', '/legal/document/<name>',
         '/api/stream/start', '/api/stream/stop', '/api/stream/status', '/api/stream/resolution', '/api/stream/feed', '/api/stream/snapshot',
         '/api/config', '/api/config/rtsp', '/api/config/detection', '/api/config/ocr', '/api/config/history',
         '/api/history', '/api/history/statistics', '/api/storage/info', '/api/process/image', '/api/latest',
-        '/api/models/status', '/api/models/reload', '/api/models/available', '/api/models/people/options', '/api/models/people/select', '/api/config/validate', '/api/people/presence', '/api/people/cleanup', '/api/system/info', '/api/process/video', '/api/process/jobs'
+        '/api/system/licenses', '/api/models/status', '/api/models/reload', '/api/models/available', '/api/models/people/options', '/api/models/people/select', '/api/config/validate', '/api/people/presence', '/api/people/cleanup', '/api/system/info', '/api/process/video', '/api/process/jobs'
     ]
     available_routes = sorted(str(rule.rule) for rule in app.url_map.iter_rules())
     missing_sections = [section for section in original_config_sections if section not in config_manager.config]
@@ -7278,14 +7439,14 @@ def api_system_compatibility():
         'missing_config_sections': missing_sections,
         'missing_routes': missing_routes,
         'mode': 'additive-extension',
-        'note': 'Original sections/routes are preserved; ProTraffic settings are added on top.'
+        'note': 'Original sections and routes are preserved; the current features are added on top.'
     })
 
 if __name__ == '__main__':
-    print("""
+    print(f"""
     ╔══════════════════════════════════════════════════════════╗
     ║     PLATEVISION - LICENSE PLATE DETECTION SYSTEM         ║
-    ║     Version 0.8.30 FastPlateOCR Vehicle Intelligence                                    ║
+    ║     Version {APP_VERSION} - {APP_EDITION}
     ╠══════════════════════════════════════════════════════════╣
     ║     Dashboard:     http://localhost:5000                 ║
     ║     Live Stream:   http://localhost:5000/live            ║

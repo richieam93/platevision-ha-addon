@@ -332,7 +332,28 @@ If it helps you, I'd appreciate a coffee. Wenn es dir hilft, freue ich mich übe
 
 ## 📜 License / Lizenz
 
-MIT License – see LICENSE
+PlateVision wird ab Version **0.9.0** unter der **GNU Affero General Public
+License Version 3** (`AGPL-3.0-only`) veröffentlicht. Der vollständige Text
+befindet sich in [`LICENSE`](LICENSE).
+
+Frühere Versionen, die bereits unter MIT veröffentlicht wurden, bleiben für
+die damals erhaltenen Kopien unter MIT nutzbar. Der Wechsel gilt nicht
+rückwirkend.
+
+PlateVision verwendet Ultralytics YOLO und mitgelieferte Modelle aus weiteren
+Open-Source-Projekten. Die Quellen, SHA-256-Prüfsummen und Lizenzhinweise sind
+hier dokumentiert:
+
+- [`NOTICE.md`](NOTICE.md)
+- [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+- [`MODEL_PROVENANCE.md`](MODEL_PROVENANCE.md)
+- [`third_party_licenses/`](third_party_licenses/)
+- [`legacy_licenses/PlateVision-MIT-through-0.8.30.txt`](legacy_licenses/PlateVision-MIT-through-0.8.30.txt)
+- [`RELEASE_CHECKLIST_0.9.0.md`](RELEASE_CHECKLIST_0.9.0.md)
+
+Die AGPL erlaubt Nutzung, Änderung, Weitergabe und auch entgeltliche
+Weitergabe. Dabei müssen die anwendbaren Lizenzbedingungen, insbesondere die
+Bereitstellung des entsprechenden Quellcodes, eingehalten werden.
 
 ---
 
@@ -367,6 +388,16 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 - Neuer Einstellungs-Tab **Modelle hochladen** für `.pt`, `.onnx` und `.engine`.
 - Hochgeladene Modelle werden bevorzugt unter `/data/models` gespeichert, damit sie Add-on-Updates überstehen.
 - Personenmodelle können nach dem Upload automatisch ausgewählt und optional direkt neu geladen werden.
+
+## Version 0.9.0
+
+- Projektlizenz für neue Veröffentlichungen auf `AGPL-3.0-only` umgestellt.
+- Herkunft, Lizenzen und SHA-256-Prüfsummen aller vier mitgelieferten Modelle dokumentiert.
+- Originale MIT-, GPL-3.0- und AGPL-3.0-Lizenztexte werden mit Repository und Docker-Image ausgeliefert.
+- Neue Webseite `/legal` und API `/api/system/licenses` prüfen die tatsächlich installierten Modell-Dateien.
+- Versionsanzeigen im Webinterface auf gemeinsame App-Metadaten umgestellt.
+- Öffentlich bekannten festen Flask-Schlüssel durch persistenten Zufallsschlüssel ersetzt.
+- Abhängigkeiten mit sicheren Major-Version-Obergrenzen versehen, um unerwartete Breaking Changes zu vermeiden.
 
 ## Version 0.8.24
 

@@ -26,3 +26,11 @@ Aktuelle Home-Assistant-Beispiele findest du im Ordner `examples/`.
 ## 0.8.30
 
 Neue RTSP-Leistungsoptionen befinden sich unter Einstellungen -> Dashboard & Layout + Allgemein. Praktische YOLO/OCR/Personenwerte werden im Test & Upload Menü gespeichert und für RTSP verwendet.
+
+
+## Lizenz und Modellherkunft
+
+- Weboberfläche: `/legal`
+- Maschinenlesbare Übersicht: `/api/system/licenses`
+- Projektlizenz ab Version 0.9.0: `AGPL-3.0-only`
+- Modellquellen und Prüfsummen: `MODEL_PROVENANCE.md`

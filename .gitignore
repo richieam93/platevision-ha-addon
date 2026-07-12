@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.log
+.DS_Store
+.env
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Runtime data must not be committed
+platevision/src/data/
+platevision/src/uploads/

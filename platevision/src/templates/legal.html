@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Lizenz & Modelle - PlateVision{% endblock %}
+{% block page_title %}Lizenz & Modelle{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <h4><i class="fas fa-scale-balanced me-2 text-primary"></i>PlateVision {{ app_version }}</h4>
+                <p class="text-secondary mb-2">
+                    Copyright (C) 2025–2026 Richard Amrein<br>
+                    PlateVision wird ab Version {{ license_since }} unter
+                    <strong>{{ project_license }}</strong> veröffentlicht.
+                </p>
+                <p class="mb-3">
+                    Die Software wird ohne Gewährleistung bereitgestellt. Drittanbieter-Bibliotheken
+                    und Modellgewichte bleiben ihren jeweiligen Lizenzen unterstellt.
+                </p>
+                <div class="d-flex flex-wrap gap-2">
+                    <a class="btn btn-outline-primary" href="{{ source_url }}" target="_blank" rel="noopener noreferrer">
+                        <i class="fab fa-github me-2"></i>Quellcode
+                    </a>
+                    <a class="btn btn-outline-secondary" href="{{ url_for('legal_document', name='LICENSE') }}" target="_blank" rel="noopener noreferrer">
+                        <i class="fas fa-scale-balanced me-2"></i>AGPL-3.0 lesen
+                    </a>
+                    <a class="btn btn-outline-secondary" href="{{ url_for('legal_document', name='THIRD_PARTY_NOTICES.md') }}" target="_blank" rel="noopener noreferrer">
+                        <i class="fas fa-box-open me-2"></i>Drittanbieter
+                    </a>
+                    <a class="btn btn-outline-secondary" href="/api/system/licenses" target="_blank" rel="noopener noreferrer">
+                        <i class="fas fa-code me-2"></i>Lizenz-API
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header"><strong>Mitgelieferte Modelle und Prüfsummen</strong></div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Datei</th>
+                                <th>Verwendung</th>
+                                <th>Quelle / Lizenz</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for model in models %}
+                            <tr>
+                                <td>
+                                    <code>{{ model.filename }}</code>
+                                    <div class="small text-secondary text-break">{{ model.actual_sha256 or 'Datei nicht gefunden' }}</div>
+                                </td>
+                                <td>{{ model.purpose }}</td>
+                                <td>
+                                    <a href="{{ model.source }}" target="_blank" rel="noopener noreferrer">Ursprungsprojekt</a>
+                                    <div class="small text-secondary">{{ model.source_license }}</div>
+                                </td>
+                                <td>
+                                    {% if not model.present %}
+                                        <span class="badge bg-danger">Fehlt</span>
+                                    {% elif model.hash_matches %}
+                                        <span class="badge bg-success">Hash geprüft</span>
+                                    {% else %}
+                                        <span class="badge bg-warning text-dark">Abweichende Datei</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="alert alert-info mb-0">
+            <i class="fas fa-circle-info me-2"></i>
+            Frühere PlateVision-Versionen, die bereits unter MIT veröffentlicht wurden,
+            bleiben für die damals erhaltenen Kopien unter MIT nutzbar. Der Wechsel auf
+            AGPL-3.0-only gilt für Version {{ license_since }} und spätere Veröffentlichungen.
+        </div>
+    </div>
+</div>
+{% endblock %}

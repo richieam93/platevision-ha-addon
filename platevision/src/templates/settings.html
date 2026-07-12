@@ -2299,7 +2299,7 @@
                                 <table class="table table-sm text-start">
                                     <tr>
                                         <td class="text-secondary">Version</td>
-                                        <td class="fw-bold">0.8.30 FastPlateOCR + YOLO Vehicle Intelligence</td>
+                                        <td class="fw-bold">{{ app_version }} {{ app_edition }}</td>
                                     </tr>
                                     <tr>
                                         <td class="text-secondary">YOLO Version</td>
@@ -2343,7 +2343,7 @@
                                     <div class="setting-group-title"><i class="fas fa-circle-info"></i>Über-Seite & Support</div>
                                     <div class="settings-pro-grid">
                                         <div><label class="form-label">Release-Kanal</label>{% set release_channel = config.about.release_channel if config.about is defined and config.about.release_channel is defined else 'stable' %}<select class="form-select" id="releaseChannel">{% for c in ['stable','beta','dev'] %}<option value="{{ c }}" {% if release_channel == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></div>
-                                        <div><label class="form-label">Lizenzhinweis</label><input type="text" class="form-control" id="licenseNotice" value="{{ config.about.license_notice if config.about is defined and config.about.license_notice is defined else 'MIT' }}"></div>
+                                        <div><label class="form-label">Lizenzhinweis</label><input type="text" class="form-control" id="licenseNotice" value="{{ app_license }}" readonly></div>
                                         <div><label class="form-label">Support URL</label><input type="url" class="form-control" id="supportUrl" value="{{ config.about.support_url if config.about is defined and config.about.support_url is defined else '' }}"></div>
                                         <div><label class="form-label">Dokumentation URL</label><input type="url" class="form-control" id="documentationUrl" value="{{ config.about.documentation_url if config.about is defined and config.about.documentation_url is defined else '' }}"></div>
                                     </div>
@@ -2357,7 +2357,7 @@
                         </div>
 
                         <div class="mt-5">
-                            <a href="https://github.com" target="_blank" class="btn btn-outline-primary me-2">
+                            <a href="{{ app_source_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary me-2">
                                 <i class="fab fa-github me-2"></i>GitHub
                             </a>
                             <a href="/api/system/info" target="_blank" class="btn btn-outline-secondary">
@@ -2815,7 +2815,7 @@
             .then(config => {
                 const exportData = {
                     exported_at: new Date().toISOString(),
-                    version: '0.8.30-fastplateocr-yolo-vehicle-intelligence',
+                    version: '{{ app_version }}-fastplateocr-yolo-vehicle-intelligence',
                     config: config
                 };
                 
@@ -3858,7 +3858,7 @@
                 support_url: pvStr('supportUrl', ''),
                 documentation_url: pvStr('documentationUrl', ''),
                 release_channel: pvStr('releaseChannel', 'stable'),
-                license_notice: pvStr('licenseNotice', 'MIT')
+                license_notice: '{{ app_license }}'
             })
         })
         .then(response => response.json())

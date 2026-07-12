@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.0
+
+- PlateVision für neue Veröffentlichungen auf `AGPL-3.0-only` umgestellt.
+- Drittanbieter-Lizenztexte und Modellherkunft mit SHA-256-Prüfsummen ergänzt.
+- Neue Seite `/legal` und neue API `/api/system/licenses` hinzugefügt.
+- Lizenzhinweis ist nicht mehr frei editierbar und alte MIT-Defaultwerte werden automatisch migriert.
+- Lizenz- und Herkunftsdateien werden in das Docker-Image kopiert.
+- Feste öffentliche Flask-Secret-Key-Konstante durch persistenten Zufallsschlüssel ersetzt.
+- Versionsanzeige und Einstellungs-Export auf die zentrale App-Version umgestellt.
+- Python-Abhängigkeiten gegen unerwartete neue Hauptversionen begrenzt.
+
 ## 0.8.30
 - Einstellungen-Menü erweitert und verbessert: Module & Autostart, Stream-Retry, Reconnect, Buffer, Stream-Auflösung, sichere Defaults und Test/RTSP-Defaults.
 - Test & Upload erweitert: Schnellprofile, Kennzeichen-Scanstrategie, Fahrzeugfilter, Fahrzeugfarbe, OCR-Detailwerte, Bildvorverarbeitung, Personen-Zählung, Verkehrslogik, RTSP-CPU-Sparmodus und Speicheroptionen.

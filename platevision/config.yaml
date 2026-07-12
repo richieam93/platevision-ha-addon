@@ -1,7 +1,8 @@
 name: "PlateVision"
 slug: platevision
-description: PlateVision 
-version: "0.8.30"
+description: Lokale Kennzeichen-, Fahrzeug- und Personenerkennung für Home Assistant
+version: "0.9.0"
+url: "https://github.com/richieam93/platevision-ha-addon"
 arch:
   - amd64
 startup: services
