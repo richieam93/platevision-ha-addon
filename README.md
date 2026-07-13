@@ -1,453 +1,415 @@
 # PlateVision – Home Assistant Add-on
 
-**Aktuelle Version: 0.12.0**  
-![Version](https://img.shields.io/badge/version-0.12.0-blue) ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
+![Version](https://img.shields.io/badge/version-0.12.0-blue)
+![License](https://img.shields.io/badge/license-AGPL--3.0--only-blue)
+![Architecture](https://img.shields.io/badge/architecture-amd64-lightgrey)
 
-🚗 **Automatic License Plate Recognition for Home Assistant**
+**PlateVision** ist ein Home-Assistant-Add-on für lokale Kennzeichen-, Fahrzeug- und Personenerkennung mit RTSP-Kameras.
 
-🚗 **Automatische Kennzeichenerkennung für Home Assistant**
+Die Erkennung und Datenspeicherung laufen auf dem eigenen System. Es gibt keinen verpflichtenden Cloud-Dienst und kein Abonnement.
 
-> ⚠️ **Current Status:** German-first UI | Standard add-on build uses CPU; GPU requires a compatible custom runtime
+> **Aktueller Stand:** Die Bedienoberfläche ist hauptsächlich deutsch. Das Standard-Add-on verwendet die CPU. GPU-Beschleunigung benötigt eine dafür angepasste Laufzeitumgebung.
 
-> ⚠️ **Aktueller Status:** Deutsch als Hauptsprache | Das Standard-Add-on nutzt CPU; GPU benötigt eine passende eigene Laufzeitumgebung
+## Inhalt
 
-[English](#-english) | [Deutsch](#-deutsch)
-
----
-
-# 🇬🇧 English
-
-PlateVision is a license plate recognition webapp (Flask + Socket.IO + OpenCV + Ultralytics/YOLO + EasyOCR), packaged as a **Home Assistant Add-on**.
-
-**100% local** – no cloud, no subscription, your data stays with you.
-
----
-
-## 🎯 What does PlateVision do?
-
-PlateVision connects to your **RTSP camera** and automatically recognizes license plates in real-time.
-
-| Use Cases | |
-|-----------|---|
-| 🚘 Monitor driveway | Who comes and goes? |
-| 🚗 Manage parking | Automatic detection |
-| 🔓 Open garage door | When known plate is detected |
-| 📊 Statistics | Which vehicles, how often, when? |
+- [Funktionen](#funktionen)
+- [Voraussetzungen](#voraussetzungen)
+- [Installation](#installation)
+- [Erste Einrichtung](#erste-einrichtung)
+- [Personenbilder und Aufbewahrung](#personenbilder-und-aufbewahrung)
+- [Home-Assistant-Integration](#home-assistant-integration)
+- [Daten und Backups](#daten-und-backups)
+- [Datenschutz und Sicherheit](#datenschutz-und-sicherheit)
+- [API](#api)
+- [Fehlerbehebung](#fehlerbehebung)
+- [Lizenz und Modellherkunft](#lizenz-und-modellherkunft)
+- [English summary](#english-summary)
 
 ---
 
-## ✨ Features
+## Funktionen
 
-### 📹 RTSP Camera Integration (Main Feature)
-- **Live connection** to any RTSP-capable camera
-- **Automatic analysis** – runs in background
-- **Real-time recognition** of license plates
-- **Camera crop** adjustable (saves computing power)
+### Kennzeichen- und Fahrzeugerkennung
 
-### 🤖 Recognition
-- **YOLO-based** – runs 100% locally; the standard add-on uses CPU
-- **FastPlateOCR/EasyOCR** for text recognition
-- **Vehicle type detection** (car, truck, motorcycle, etc.)
-- **Processing device selectable**; GPU requires a compatible custom runtime
+- RTSP-Livestream mit Start, Stopp, Status und Snapshot
+- lokale YOLO-Erkennung für Fahrzeuge und Kennzeichen
+- OCR mit FastPlateOCR sowie optionalem EasyOCR-Fallback
+- Kennzeichen-Normalisierung und typische OCR-Korrekturen
+- Länder- und Formathinweise für CH, DE und AT
+- Fahrzeugtyp-Erkennung, beispielsweise Auto, Motorrad, Bus oder LKW
+- optionale Fahrzeugfarben-Analyse
+- einstellbare Konfidenzen, Bildgrössen, IoU-Werte und Scanstrategien
+- Analysebereich als Rechteck oder Polygon
+- CPU-Sparmodus durch Crop- und Bewegungsfilter
+- Schutz vor doppelten Erkennungen im selben Bild und innerhalb eines Zeitfensters
 
-### 🖥️ Web UI
-- **Live view** of camera
-- **Detected plates** with timestamp
-- **Statistics & history**
-- **Settings** directly in browser
+### Historie, Suche und Verkehrsauswertung
 
-### 🔌 Home Assistant Integration
-- **JSON API** for REST sensors
-- **Automations** possible (e.g., open gate)
-- **Persistent data** – survives updates
-
-
-### 🧠 Pro-Erkennung & Analyse (v0.7.2)
-- Verbesserte Kennzeichen-Normalisierung mit OCR-Korrekturen für typische Verwechslungen wie O/0, I/1, S/5
-- Länder-/Format-Hinweis für CH/DE/AT sowie automatische Format-Erkennung
-- Erweiterte Suche mit Fuzzy-Suche, Regex, Datum, Konfidenz, Quelle, Fahrzeugtyp, Farbe und eindeutigen Kennzeichen
-- CSV/JSON-Export der Historie inklusive Filter
+- Kennzeichenhistorie mit Bildern, Zeitstempel und technischen Metadaten
+- Suche nach Kennzeichen, Datum, Quelle, Fahrzeugtyp, Farbe und Konfidenz
+- Fuzzy-Suche, Regex-Suche und Anzeige eindeutiger Kennzeichen
 - Watchlist für bekannte oder wichtige Kennzeichen
-- Neues Dashboard Pro mit Live-Kennzahlen, Charts, Top-Kennzeichen und Schnellaktionen
-- Neue Pro-Einstellungen für OCR-Logik, Suche, Dashboard-Refresh und Benachrichtigungen
+- Besuchs- und Session-Gruppierung
+- Kommen-/Gehen-Auswertung
+- Tages-, Stunden- und Wiederkehrerstatistiken
+- CSV- und JSON-Export
+- automatische und manuelle Bereinigung alter Daten
 
-### 🧪 Test Mode
-- **Upload function** for images/videos
-- Perfect for **testing and adjusting** recognition
-- **Optimize** crop and settings before going live
+### Personenerkennung
+
+- Personenerkennung über die COCO-Personenklasse oder ein eigenes Human-Modell
+- virtuelle Zähllinie mit Richtungserkennung
+- Tracking, Debounce und Schutz vor Mehrfachzählungen
+- einstellbare Personen-Zone und Grössenfilter
+- Anwesenheits- und Belegungsabschätzung
+- Personenhistorie mit serverseitiger Filterung und Seitennavigation
+- Sitzungsgruppierung nach Track, Position und Zeitabstand
+- Detailansicht mit Crop, annotiertem Bild und Vollbild
+- Labels, Notizen und Prüfstatus pro Ereignis
+- Sammelauswahl und Sammellöschen
+- CSV- und JSON-Export
+
+> Die Sitzungsgruppierung ist keine Gesichtserkennung. Sie verwendet Track-ID, Position, Grösse, Quelle und Zeitabstand.
+
+### Personenbilder
+
+- eigenes Menü **Personenbilder** unter `/people/gallery`
+- Tagesnavigation und Kalender
+- Anzeige aller Tage mit gespeicherten Bildern
+- separate Ansicht für Crop, annotiertes Bild und Vollbild
+- frei einstellbare Aufbewahrungsfrist
+- automatisches oder manuelles Löschen abgelaufener Bilder
+- Bildaufbewahrung unabhängig von der statistischen Personenhistorie
+
+Bei Neuinstallationen gelten standardmässig:
+
+| Einstellung | Standard |
+|---|---:|
+| Aufbewahrung der Personenbilder | 10 Tage |
+| Automatische Bildbereinigung | aktiviert |
+| Personenhistorie | 90 Tage |
+| Maximale Personenereignisse | 20.000 |
+
+### Test und Diagnose
+
+- Testanalyse für einzelne Bilder
+- Videoverarbeitung mit Jobstatus
+- separater Personentest
+- Modell-Upload für `.pt`, `.onnx` und `.engine`
+- Modellstatus und manuelles Neuladen
+- Systemstatus, Healthcheck und Home-Assistant-Watchdog
+- Lizenz- und Modellprüfung unter `/legal`
+- Konfigurations-Export und -Import
+- Diagnose- und Audit-Endpunkte
+
+### Bedienoberfläche
+
+Das Seitenmenü enthält aktuell:
+
+- Dashboard
+- Live-Ansicht
+- Historie
+- Suche
+- Statistik
+- Personen
+- Personenbilder
+- Letzte Erkennung
+- Test & Upload
+- RTSP Stream
+- Einstellungen
+- Lizenz & Modelle
 
 ---
 
-## 📋 Requirements
+## Voraussetzungen
 
-| Requirement | Details |
-|-------------|---------|
-| **Home Assistant** | OS / Supervised with Add-on Support |
-| **Architecture** | amd64 (x86_64) |
-| **Camera** | RTSP-capable (most IP cameras) |
-| **Hardware** | Min. Intel i3 or comparable recommended |
+| Anforderung | Beschreibung |
+|---|---|
+| Home Assistant | Home Assistant OS oder Supervised mit Add-on-Unterstützung |
+| Architektur | `amd64` / x86-64 |
+| Kamera | RTSP-Stream, der über FFmpeg/OpenCV erreichbar ist |
+| Netzwerk | Home Assistant muss die Kamera erreichen können |
+| Hardware | Ausreichend CPU und RAM für Torch, YOLO und OCR |
 
-> ⚠️ **Note:** First build may take longer depending on hardware/RAM (Torch/Ultralytics/EasyOCR).
+Die erste Installation kann länger dauern, weil unter anderem Torch, Ultralytics, OpenCV und OCR-Bibliotheken installiert werden.
 
----
-
-## 📸 Screenshots
-
-| Dashboard | RTSP Stream | Erkennung |
-|-----------|-------------|-----------|
-| ![Dashboard](Bilder/dashboard.JPG) | ![RTSP](Bilder/rtsp.JPG) | ![Erkennung](Bilder/Letzte%20Erkennung.JPG) |
-
-| Historie | Einstellungen | Test-Modus |
-|----------|---------------|------------|
-| ![Historie](Bilder/Historie.JPG) | ![Einstellungen](Bilder/einstellungen.JPG) | ![Test](Bilder/test.JPG) |
-
-
-## 🚀 Installation
-
-1. In Home Assistant open:
-   - **Settings → Add-ons → Add-on Store**
-2. Top right **(⋮) → Repositories**
-3. Add repo URL: https://github.com/richieam93/platevision-ha-addon
-4. **Reload** Add-on Store
-5. Install and start **PlateVision**
+Das Standard-Image enthält keine speziell konfigurierte CUDA-Laufzeit. Eine in der Oberfläche auswählbare GPU funktioniert nur, wenn die verwendete Umgebung und die installierten Bibliotheken diese tatsächlich unterstützen.
 
 ---
 
-## ⚙️ Setup
+## Installation
 
-### Connect RTSP Camera
+1. In Home Assistant **Einstellungen → Add-ons → Add-on Store** öffnen.
+2. Oben rechts **⋮ → Repositories** auswählen.
+3. Folgende Repository-Adresse hinzufügen:
 
-1. Open Web UI: http://<HA-IP>:8087
-2. Go to **Settings**
-3. Enter your RTSP URL, e.g.: rtsp://user:password@192.168.1.100:554/stream
-4. **Adjust crop** – only analyze relevant area
-5. Select **CPU/GPU**
-6. Save – done! 🎉
+   ```text
+   https://github.com/richieam93/platevision-ha-addon
+   ```
 
----
+4. Den Add-on Store neu laden.
+5. **PlateVision** auswählen, installieren und starten.
+6. Das Webinterface über **Web UI öffnen** oder direkt über Port `8087` aufrufen.
 
-## 🌐 Ports / Web UI
+```text
+http://HOME-ASSISTANT-IP:8087
+```
 
-| Internal (Container) | External (Host) |
-|---------------------|-----------------|
+| Container-Port | Standardmässiger Host-Port |
+|---:|---:|
 | 5000 | 8087 |
 
-**Web UI:** http://<HA-IP>:8087
+---
+
+## Erste Einrichtung
+
+### 1. RTSP-Kamera verbinden
+
+1. **RTSP Stream** öffnen.
+2. RTSP-Adresse eintragen, beispielsweise:
+
+   ```text
+   rtsp://benutzer:passwort@192.168.1.100:554/stream
+   ```
+
+3. Verbindung testen.
+4. Auflösung und Analysebereich kontrollieren.
+5. Stream aktivieren und bei Bedarf Autostart einschalten.
+
+Eine neue Installation startet nicht automatisch mit der Beispieladresse. Der Autostart wird erst verwendet, wenn RTSP aktiviert und eine echte URL gespeichert wurde.
+
+### 2. Erkennung einstellen
+
+Unter **Einstellungen** können unter anderem angepasst werden:
+
+- Erkennungsprofile: schnell, ausgewogen, streng und Nacht
+- Fahrzeug- und Kennzeichenmodell
+- OCR-Engine und Vorverarbeitung
+- Konfidenz- und IoU-Grenzen
+- Fahrzeugklassen und Fahrzeugfarbe
+- Historie, Speicher und Datenschutz
+- Personenmodell, Zähllinie und Bildaufbewahrung
+- RTSP-Wiederverbindung, Puffer und CPU-Sparfunktionen
+
+### 3. Mit einem Testbild prüfen
+
+Unter **Test & Upload** zuerst ein typisches Bild aus der späteren Kameraperspektive hochladen. Dort lassen sich Kennzeichen-, Fahrzeug- und Personenanalyse kontrollieren, bevor die Live-Verarbeitung dauerhaft gestartet wird.
 
 ---
 
-## 🏠 Home Assistant Integration
+## Personenbilder und Aufbewahrung
 
-### Ready-to-use Examples / Fertige Beispiele
+Die Galerie ist über **Personenbilder** oder direkt über diese Adresse erreichbar:
 
-In folder **[/examples](https://github.com/richieam93/platevision-ha-addon/tree/main/examples)** you'll find:
+```text
+http://HOME-ASSISTANT-IP:8087/people/gallery
+```
 
-Im Ordner **[/examples](https://github.com/richieam93/platevision-ha-addon/tree/main/examples)** findest du:
+Dort kann die Aufbewahrungsfrist zwischen einem festen Zeitraum und unbegrenzter Speicherung gewählt werden. `0 Tage` bedeutet unbegrenzt.
 
-#### ⚙️ Configuration / Konfiguration
+Beim Löschen abgelaufener Bilder bleiben die statistischen Ereignisse erhalten. Entfernt werden nur die zugehörigen Bilddateien, sofern nicht ausdrücklich das vollständige Ereignis gelöscht wird.
 
-| File / Datei | Description / Beschreibung |
-|--------------|---------------------------|
-| 📄 [configuration.yaml](examples/configuration.yaml) | Basic configuration / Grundkonfiguration |
-| 📄 [Zusammenfassung der Entity-IDs.txt](examples/Zusammenfassung%20der%20Entity-IDs.txt) | Entity ID overview / Entity-ID Übersicht |
+Die Bereinigung wird ausgeführt:
 
-#### 🤖 Automations / Automatisierungen
+- beim Start von PlateVision
+- beim Speichern neuer Personenereignisse
+- beim Öffnen der Galerie
+- über **Jetzt bereinigen**
 
-| File / Datei | Description / Beschreibung |
-|--------------|---------------------------|
-| 📄 [automations_Bekanntes Kennzeichen.yaml](examples/automations_%20Bekanntes%20Kennzeichen.yaml) | Trigger on known plate / Bei bekanntem Kennzeichen |
-| 📄 [automations_Neue Erkennung.yaml](examples/automations_Neue%20Erkennung.yaml) | Trigger on new detection / Bei neuer Erkennung |
-
-#### 🖼️ Lovelace Cards / Dashboard-Karten
-
-| File / Datei | Description / Beschreibung |
-|--------------|---------------------------|
-| 📄 [lovelace_card-Dashboard Karte.yaml](examples/lovelace_card-%20Dashboard%20Karte.yaml) | Standard dashboard card / Standard Dashboard-Karte |
-| 📄 [lovelace_mini_card_Kompakte_Karte.yaml](examples/lovelace_mini_card_Kompakte_Karte.yaml) | Compact card / Kompakte Karte |
-| 📄 [lovelace_picture_elements_Erweiterte Karte.yaml](examples/lovelace_picture_elements_Erweiterte%20Karte.yaml) | Advanced card / Erweiterte Karte |
-
-#### 📜 Scripts
-
-| File / Datei | Description / Beschreibung |
-|--------------|---------------------------|
-| 📄 [scripts_Nützliche Scripts.yaml](examples/scripts_N%C3%BCtzliche%20Scripts.yaml) | Useful scripts / Nützliche Scripts |
-
-#### 📡 API
-
-| File / Datei | Description / Beschreibung |
-|--------------|---------------------------|
-| 📄 [Alle API-Endpunkte - Vollständige Übersicht.txt](examples/Alle%20API-Endpunkte%20-%20Vollst%C3%A4ndige%20%C3%9Cbersicht.txt) | All API endpoints / Alle API-Endpunkte |
----
-
-## 💾 Persistent Data
-
-| App Path | Persistent |
-|----------|------------|
-| /app/uploads | /data/uploads |
-| /app/models | /data/models |
-| /app/data | /data/data |
+Vor einer langen Aufbewahrungszeit sollte der verfügbare Speicherplatz geprüft werden.
 
 ---
 
-# 🇩🇪 Deutsch
+## Home-Assistant-Integration
 
-PlateVision ist eine Kennzeichen-Erkennungs-Webapp (Flask + Socket.IO + OpenCV + Ultralytics/YOLO + EasyOCR), verpackt als **Home Assistant Add-on**.
+PlateVision stellt JSON-Endpunkte bereit, die sich für REST-Sensoren, Automatisierungen und Lovelace-Karten verwenden lassen.
 
-**100% lokal** – keine Cloud, kein Abo, deine Daten bleiben bei dir.
+Aktuelle Beispiele befinden sich im Ordner [`examples/`](examples/):
 
----
+- [`examples/README.md`](examples/README.md)
+- [`examples/configuration.yaml`](examples/configuration.yaml)
+- [`examples/automations.yaml`](examples/automations.yaml)
+- [`examples/lovelace_dashboard.yaml`](examples/lovelace_dashboard.yaml)
+- [`examples/scripts.yaml`](examples/scripts.yaml)
+- [`examples/api_endpunkte.md`](examples/api_endpunkte.md)
+- [`examples/entity_ids.md`](examples/entity_ids.md)
 
-## 🎯 Was macht PlateVision?
+Typische Anwendungen:
 
-PlateVision verbindet sich mit deiner **RTSP-Kamera** und erkennt automatisch Nummernschilder in Echtzeit.
+- Garagentor bei einem bekannten Kennzeichen öffnen
+- Benachrichtigung bei einem Watchlist-Treffer senden
+- letztes Kennzeichen und letzte Person im Dashboard anzeigen
+- Tagesstatistik als Sensor übernehmen
+- Systemzustand und Streamstatus überwachen
 
-| Anwendungsbeispiele | |
-|---------------------|---|
-| 🚘 Einfahrt überwachen | Wer kommt und geht? |
-| 🚗 Parkplatz verwalten | Automatische Erfassung |
-| 🔓 Garagentor öffnen | Wenn bekanntes Kennzeichen erkannt |
-| 📊 Statistiken | Welche Fahrzeuge, wie oft, wann? |
-
----
-
-## ✨ Features
-
-### 📹 RTSP Kamera-Integration (Hauptfunktion)
-- **Live-Verbindung** zu jeder RTSP-fähigen Kamera
-- **Automatische Analyse** – läuft im Hintergrund
-- **Echtzeit-Erkennung** von Nummernschildern
-- **Kamera-Zuschnitt** einstellbar (spart Rechenleistung)
-
-### 🤖 Erkennung
-- **YOLO-basiert** – läuft 100% lokal; das Standard-Add-on verwendet CPU
-- **FastPlateOCR/EasyOCR** für Texterkennung
-- **Fahrzeugtyp-Erkennung** (Auto, LKW, Motorrad, etc.)
-- **Verarbeitungsgerät wählbar**; GPU benötigt eine kompatible eigene Laufzeitumgebung
-
-### 🖥️ Web UI
-- **Live-View** der Kamera
-- **Erkannte Kennzeichen** mit Zeitstempel
-- **Statistiken & History**
-- **Einstellungen** direkt im Browser
-
-### 🔌 Home Assistant Integration
-- **JSON API** für REST-Sensoren
-- **Automatisierungen** möglich (z.B. Tor öffnen)
-- **Persistente Daten** – bleibt bei Updates erhalten
-
-### 🧪 Test-Modus
-- **Upload-Funktion** für Bilder/Videos
-- Perfekt zum **Testen und Einstellen** der Erkennung
-- **Optimiere** Zuschnitt und Einstellungen bevor du live gehst
+Die Beispiele müssen an die eigene Home-Assistant-Adresse, Entity-IDs und Sicherheitsanforderungen angepasst werden.
 
 ---
 
-## 📋 Voraussetzungen
+## Daten und Backups
 
-| Anforderung | Details |
-|-------------|---------|
-| **Home Assistant** | OS / Supervised mit Add-on Support |
-| **Architektur** | amd64 (x86_64) |
-| **Kamera** | RTSP-fähig (die meisten IP-Kameras) |
-| **Hardware** | Min. Intel i3 oder vergleichbar empfohlen |
+PlateVision verwendet unter Home Assistant den persistenten Ordner `/data`.
 
-> ⚠️ **Hinweis:** Der erste Build kann je nach Hardware/RAM länger dauern (Torch/Ultralytics/EasyOCR).
+| Zweck | Persistenter Pfad |
+|---|---|
+| Uploads und erkannte Bilder | `/data/uploads` |
+| mitgelieferte und hochgeladene Modelle | `/data/models` |
+| Konfiguration, Historien und Metadaten | `/data/data` |
+
+Konfiguration, Kennzeichenhistorie, Watchlist und Personenhistorie werden atomar gespeichert. Zusätzlich werden `.bak`-Sicherungen verwendet, aus denen beschädigte JSON-Dateien wiederhergestellt werden können.
+
+Vor grösseren Updates empfiehlt sich trotzdem ein Home-Assistant-Backup.
 
 ---
 
-## 📸 Screenshots
+## Datenschutz und Sicherheit
 
-| Dashboard | RTSP Stream | Erkennung |
-|-----------|-------------|-----------|
-| ![Dashboard](Bilder/dashboard.JPG) | ![RTSP](Bilder/rtsp.JPG) | ![Erkennung](Bilder/Letzte%20Erkennung.JPG) |
+- Kamera möglichst nur auf den eigenen, erforderlichen Bereich ausrichten.
+- Gesetzliche Vorgaben zur Videoüberwachung, Information betroffener Personen und Speicherdauer beachten.
+- RTSP-Zugangsdaten nicht in Screenshots, Issues oder öffentlichen Logs veröffentlichen.
+- Das Webinterface nur in einem vertrauenswürdigen Netzwerk oder hinter einer geeigneten Authentifizierung beziehungsweise einem Reverse Proxy betreiben.
+- Nur Modelle aus vertrauenswürdigen Quellen hochladen. PyTorch-Modelle können beim Laden ausführbaren Python-/Pickle-Inhalt enthalten.
+- Aufbewahrungsfristen so kurz wie für den Zweck notwendig einstellen.
 
-| Historie | Einstellungen | Test-Modus |
-|----------|---------------|------------|
+Die Erkennung und die gespeicherten Daten bleiben lokal. Die aktuelle Weboberfläche lädt jedoch einige Frontend-Ressourcen wie Bootstrap, Font Awesome, Google Fonts und Socket.IO von öffentlichen CDNs. Ohne Internetzugang können deshalb Teile der Darstellung oder Bedienung eingeschränkt sein, obwohl die Erkennungslogik lokal läuft.
+
+Sicherheitsprobleme bitte gemäss [`SECURITY.md`](SECURITY.md) melden.
+
+---
+
+## API
+
+Einige wichtige Endpunkte:
+
+| Endpunkt | Zweck |
+|---|---|
+| `/api/system/live` | leichter Healthcheck für Watchdog |
+| `/api/system/health` | ausführlicher Systemstatus |
+| `/api/system/version` | Version und Edition |
+| `/api/system/licenses` | Lizenz- und Modellprüfung |
+| `/api/stream/status` | Streamstatus |
+| `/api/latest/full` | letzte vollständige Erkennung |
+| `/api/history` | Kennzeichenhistorie |
+| `/api/statistics/traffic` | Verkehrsauswertung |
+| `/api/people/history` | Personenhistorie |
+| `/api/people/sessions` | gruppierte Personensitzungen |
+| `/api/people/images/days` | verfügbare Bildtage |
+
+Die vollständige Übersicht befindet sich in [`examples/api_endpunkte.md`](examples/api_endpunkte.md).
+
+---
+
+## Screenshots
+
+Die folgenden Bilder zeigen zentrale Bereiche. Einzelne Details können sich je nach Konfiguration unterscheiden.
+
+| Dashboard | RTSP Stream | Letzte Erkennung |
+|---|---|---|
+| ![Dashboard](Bilder/dashboard.JPG) | ![RTSP](Bilder/rtsp.JPG) | ![Letzte Erkennung](Bilder/Letzte%20Erkennung.JPG) |
+
+| Historie | Einstellungen | Test & Upload |
+|---|---|---|
 | ![Historie](Bilder/Historie.JPG) | ![Einstellungen](Bilder/einstellungen.JPG) | ![Test](Bilder/test.JPG) |
 
 ---
 
+## Fehlerbehebung
 
-## 🚀 Installation
+### Der Stream startet nicht
 
-1. In Home Assistant öffnen:
-   - **Einstellungen → Add-ons → Add-on Store**
-2. Oben rechts **(⋮) → Repositories**
-3. Repo-URL hinzufügen: https://github.com/richieam93/platevision-ha-addon
-4. **Reload** im Add-on Store
-5. Add-on **PlateVision** installieren und starten
+- RTSP-Adresse mit VLC oder FFmpeg testen.
+- Benutzername, Passwort, Port und Stream-Pfad prüfen.
+- Erreichbarkeit aus dem Home-Assistant-Netz kontrollieren.
+- Unter **RTSP Stream** Status und Snapshot testen.
+- Logs des Add-ons prüfen.
 
----
+### Home Assistant zeigt keine neue Version
 
-## ⚙️ Einrichtung
+- Add-on Store neu laden.
+- Repository entfernen und erneut hinzufügen, falls der Cache hängen bleibt.
+- Prüfen, ob `platevision/config.yaml` die erwartete Versionsnummer enthält.
 
-### RTSP-Kamera verbinden
+### Erkennung ist langsam
 
-1. Öffne das Web UI: http://<HA-IP>:8087
-2. Gehe zu **Einstellungen**
-3. Trage deine RTSP-URL ein, z.B.: rtsp://benutzer:passwort@192.168.1.100:554/stream
-4. **Zuschnitt anpassen** – nur den relevanten Bereich analysieren
-5. **CPU/GPU** auswählen
-6. Speichern – fertig! 🎉
+- Analysebereich verkleinern.
+- Bewegungsfilter aktivieren.
+- Bildgrössen und Erkennungsintervall reduzieren.
+- nicht benötigte Fahrzeug- oder Personenfunktionen deaktivieren.
+- ein schnelleres Erkennungsprofil auswählen.
 
----
+### Es werden zu viele Bilder gespeichert
 
-## 🌐 Ports / Web UI
-
-| Intern (Container) | Extern (Host) |
-|--------------------|---------------|
-| 5000 | 8087 |
-
-**Web UI:** http://<HA-IP>:8087
+- Aufbewahrungsfrist unter **Personenbilder** oder **Einstellungen** reduzieren.
+- automatische Bereinigung aktivieren.
+- nicht benötigte Vollbilder oder annotierte Bilder deaktivieren.
+- Speicherübersicht kontrollieren.
 
 ---
 
-## 💾 Persistente Daten
+## Entwicklung und Prüfung
 
-| App-Pfad | Persistent |
-|----------|------------|
-| /app/uploads | /data/uploads |
-| /app/models | /data/models |
-| /app/data | /data/data |
+Lokale statische Prüfung:
 
----
+```bash
+python3 tools/validate_release.py
+python3 tools/test_people_history.py
+```
 
-## ☕ Support this Project / Unterstütze dieses Projekt
+Änderungen und bekannte Versionshinweise stehen in:
 
-This project is **100% free and open source**. Dieses Projekt ist **100% gratis und Open Source**.
+- [`CHANGELOG.md`](CHANGELOG.md)
+- [`UPGRADE_0.12.0.md`](UPGRADE_0.12.0.md)
+- [`RELEASE_CHECKLIST_0.12.0.md`](RELEASE_CHECKLIST_0.12.0.md)
 
-Many hours of development went into PlateVision. In PlateVision stecken viele Stunden Entwicklung.
-
-If it helps you, I'd appreciate a coffee. Wenn es dir hilft, freue ich mich über einen Kaffee:
-
-<a href="https://www.buymeacoffee.com/geartec" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50"></a>
+Fehler und Funktionswünsche können über [GitHub Issues](https://github.com/richieam93/platevision-ha-addon/issues) gemeldet werden.
 
 ---
 
-## 📝 Feedback & Support
+## Lizenz und Modellherkunft
 
-- 🐛 **Issues:** [GitHub Issues](https://github.com/richieam93/platevision-ha-addon/issues)
-- 💬 **Questions / Fragen:** Just open an issue!
+PlateVision wird unter der **GNU Affero General Public License Version 3** (`AGPL-3.0-only`) veröffentlicht. Der vollständige Lizenztext befindet sich in [`LICENSE`](LICENSE).
 
----
-
-## 📜 License / Lizenz
-
-PlateVision wird unter der **GNU Affero General Public License Version 3**
-(`AGPL-3.0-only`) veröffentlicht. Der vollständige Text
-befindet sich in [`LICENSE`](LICENSE).
-
-
-PlateVision verwendet Ultralytics YOLO und mitgelieferte Modelle aus weiteren
-Open-Source-Projekten. Die Quellen, SHA-256-Prüfsummen und Lizenzhinweise sind
-hier dokumentiert:
+Das Projekt verwendet Drittanbieterbibliotheken und mitgelieferte Modelle mit eigenen Lizenzbedingungen. Herkunft, Prüfsummen und Lizenztexte sind dokumentiert in:
 
 - [`NOTICE.md`](NOTICE.md)
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 - [`MODEL_PROVENANCE.md`](MODEL_PROVENANCE.md)
 - [`third_party_licenses/`](third_party_licenses/)
-- [`RELEASE_CHECKLIST_0.12.0.md`](RELEASE_CHECKLIST_0.12.0.md)
-- [`UPGRADE_0.12.0.md`](UPGRADE_0.12.0.md)
 
-Die AGPL erlaubt Nutzung, Änderung, Weitergabe und auch entgeltliche
-Weitergabe. Dabei müssen die anwendbaren Lizenzbedingungen, insbesondere die
-Bereitstellung des entsprechenden Quellcodes, eingehalten werden.
+Die Lizenz- und Modellinformationen können in der laufenden Anwendung zusätzlich unter `/legal` kontrolliert werden.
+
+Copyright © 2025–2026 `richieam93`
 
 ---
 
+## Unterstützung
 
+PlateVision ist frei verfügbar. Wer die Entwicklung unterstützen möchte:
 
-
-- Neue Statistik-Seite `/statistics` mit Autos pro Tag, eindeutigen Fahrzeugen und Roh-Erkennungen.
-- Wiederkehrer-Analyse: zeigt, wie oft dasselbe Kennzeichen erkannt wurde.
-- Besuchs-/Session-Logik: Mehrfach-Erkennungen eines Autos werden zu einem Besuch gruppiert.
-- Kommen/Gehen-Auswertung: explizite Richtung wird genutzt; ohne Richtung wird „gegangen“ nach Timeout angenommen.
-- CSV-/JSON-Export für Tagesstatistik und Top-Kennzeichen.
-- Neue Traffic-Einstellungen für Besuchslücke, Timeout, Mindestkonfidenz und Bewegungsachse.
-
-
-- Neue Personenanalyse mit eigenem Menüpunkt `/people`.
-- Aktivierbare Personenerkennung mit YOLOv8 COCO-Personenklasse oder eigenem HumanDetection-Modell.
-- Eigene Personen-Historie, Tagesstatistik, Stundenverteilung, Richtung und Export.
-- Virtuelle Zähllinie, Tracking, Zählstrategie und Testumgebung über die Einstellungen.
-- Bestehende Original-Einstellungen bleiben erhalten und werden nur erweitert.
-
-
-- Personenmodell-Auswahl direkt in den Einstellungen mit Modellscan für `models/`.
-- Neue Endpunkte für Modellliste, Modellauswahl, Config-Validierung, Personen-Anwesenheit, Cleanup und Simulation.
-- Erweiterte Personenerkennung mit Bildgröße, IoU, Flächen-/Seitenverhältnisfilter, optionaler Personen-Zone, Track-Alter und Debounce.
-- Config-Merge bewahrt unbekannte/alte Custom-Keys, damit Updates keine Einstellungen verstecken.
-
-
-- Neue Test-Funktion unter `/test`: Foto hochladen und ausschließlich die Personenanalyse prüfen.
-- Der Personen-Test zeigt erkannte Personen, gezählte Personen, Track-ID, Ereignistyp, Richtung und ein annotiertes Ergebnisbild.
-- Die Personenerkennung kann für den Einzeltest temporär aktiviert werden, ohne die gespeicherte Live-Einstellung zu ändern.
-- Neuer Einstellungs-Tab **Modelle hochladen** für `.pt`, `.onnx` und `.engine`.
-- Hochgeladene Modelle werden bevorzugt unter `/data/models` gespeichert, damit sie Add-on-Updates überstehen.
-- Personenmodelle können nach dem Upload automatisch ausgewählt und optional direkt neu geladen werden.
-
-## Version 0.12.0
-
-- Neue Personenbild-Galerie unter `/people/gallery` mit Tagesnavigation und Kalender.
-- Personenbilder bleiben bei Neuinstallationen standardmässig 10 Tage erhalten.
-- Aufbewahrungsfrist und automatisches Löschen können direkt in der Galerie oder in den Einstellungen angepasst werden.
-- Tage mit gespeicherten Bildern werden als navigierbares Archiv angezeigt.
-- Die Personen-Historie verwendet standardmässig bis zu 20’000 Ereignisse, damit mehrere Bildtage nicht schon durch die bisherige globale 1’000er-Grenze verschwinden.
-
-- Vollständig überarbeitete Personen-Historie mit serverseitigen Filtern und Pagination.
-- Personen-Sitzungen gruppieren zusammengehörige Erkennungen nach Track, Position und Zeitabstand.
-- Detailansicht mit Personen-Crop, annotiertem Bild, Vollbild und technischen Metadaten.
-- Eigene Labels, Notizen und Prüfstatus pro Personenereignis.
-- Sammelauswahl und Sammellöschen mehrerer Ereignisse inklusive Bilder.
-- Filter nach Zeitraum, Richtung, Ereignistyp, Zählstatus, Prüfstatus, Quelle, Track-ID, Bildern und Freitext.
-- Erweiterte Statistik mit aktiven Personen, Sitzungen, blockierten Wiederholungen, Bildereignissen, Quellen und Spitzenstunde.
-- Verbesserte Datensicherheit bei History-Cleanup und sicherere Dateipfadprüfung.
-- Neue API-Endpunkte für Sitzungen, Ereignisdetails, Bearbeitung und Sammellöschen.
-- Details: [`CHANGELOG.md`](CHANGELOG.md), [`SECURITY.md`](SECURITY.md), [`UPGRADE_0.12.0.md`](UPGRADE_0.12.0.md).
-
-## Version 0.9.0
-
-- Projektlizenz für neue Veröffentlichungen auf `AGPL-3.0-only` umgestellt.
-- Herkunft, Lizenzen und SHA-256-Prüfsummen aller vier mitgelieferten Modelle dokumentiert.
-- Originale MIT-, GPL-3.0- und AGPL-3.0-Lizenztexte werden mit Repository und Docker-Image ausgeliefert.
-- Neue Webseite `/legal` und API `/api/system/licenses` prüfen die tatsächlich installierten Modell-Dateien.
-- Versionsanzeigen im Webinterface auf gemeinsame App-Metadaten umgestellt.
-- Öffentlich bekannten festen Flask-Schlüssel durch persistenten Zufallsschlüssel ersetzt.
-- Abhängigkeiten mit sicheren Major-Version-Obergrenzen versehen, um unerwartete Breaking Changes zu vermeiden.
-
-## Version 0.8.24
-
-- Neue Paketversion auf Basis der funktionierenden 0.8.22 CPU-/RTSP-Korrektur.
-- Straßenbereich/Polygon bleibt als RTSP-Analysebereich aktiv, mit CPU-Gate und gepuffertem ROI-Crop.
-- Test & Upload, Modelle, Personen-Crops und neue OCR-/YOLO-Pipeline bleiben enthalten.
-
-- Webinterface-Stabilisierung: Settings-Formulare werden nicht mehr durch fehlende/verschobene UI-Elemente blockiert.
-- Sichtbare UI-Fehlermeldungen im Browser, damit stille JavaScript-Fehler sofort auffallen.
-- Personen-Test und Personen-Fotoanalyse speichern erkannte Personen jetzt zuverlässig als Crop-Bilder in der Personenanalyse.
-- Personen-Bild-History zeigt standardmäßig alle gespeicherten Personen-Crops, nicht nur gezählte Linienereignisse.
-- Historie und Suche: „Nur einzigartige“ funktioniert mit normalisierten/fuzzy Kennzeichen; doppelte Kennzeichen werden in der Anzeige zusammengefasst.
-- RTSP-Quelle und Fahrzeugtyp-Filter wurden an die tatsächlich gespeicherten Werte angepasst.
-- Fahrzeug- und Kennzeichen-YOLO verwenden die im Testmodus gespeicherten Modell-/ImgSz-/Confidence-Werte konsistent.
-
-
-## Version 0.8.26
-
-- Personen-Zähllinie auf der Personenanalyse-Seite wieder direkt einstellbar.
-- Linienposition, Achse, Richtung und ROI-Bezug können gespeichert und sofort für RTSP angewendet werden.
-- Test & Upload synchronisiert die Personen-Linie wieder sauber mit dem RTSP-Profil.
-
-
-## Version 0.8.30
-
-- Dashboard komplett vereinfacht: letztes Auto, letzte Person und Tageszahlen ohne Modell-Details.
-- RTSP/Webstream-Autostart nach Docker-/Home-Assistant-Neustart als Einstellung ergänzt.
-- Beispiele im Ordner `examples/` aktualisiert und veraltete Beispiele entfernt.
-
-
-### Version 0.8.30
-
-Diese Version erweitert Einstellungen und Test & Upload. Zusätzliche RTSP-Leistungswerte, OCR-/YOLO-Filter, Fahrzeugfarbe, Personenfilter und Verkehrslogik können jetzt im Webinterface gesetzt und für den RTSP-Stream gespeichert werden.
+<a href="https://www.buymeacoffee.com/geartec" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50"></a>
 
 ---
 
-Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 🇨🇭
+## English summary
+
+PlateVision is an `amd64` Home Assistant add-on for local RTSP-based license plate, vehicle and person detection.
+
+Main features include:
+
+- RTSP live stream and configurable analysis area
+- local YOLO vehicle, plate and person detection
+- FastPlateOCR with optional EasyOCR fallback
+- plate history, search, watchlist and traffic statistics
+- person counting, tracking, review workflow and sessions
+- person image gallery with configurable retention, defaulting to 10 days on new installations
+- JSON APIs for Home Assistant REST sensors and automations
+- persistent storage under `/data`
+- health, diagnostics, model provenance and license pages
+
+The standard add-on is CPU-based and supports `amd64`. Detection and stored data remain local, while parts of the current web interface load frontend assets from public CDNs.
+
+Installation repository:
+
+```text
+https://github.com/richieam93/platevision-ha-addon
+```
