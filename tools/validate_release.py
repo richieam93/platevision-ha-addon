@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = '0.10.0'
+EXPECTED_VERSION = '0.12.0'
 EXPECTED_MODELS = {
     'yolov8n.pt': '31e20dde3def09e2cf938c7be6fe23d9150bbbe503982af13345706515f2ef95',
     'license_plate_detector.pt': '8ec3b254a6c87610f037a90957462cafa11a9c03224e33a28c6a1d1ac2ac51b0',
@@ -50,7 +50,7 @@ config=(ROOT/'platevision/config.yaml').read_text(encoding='utf-8')
 docker=(ROOT/'platevision/Dockerfile').read_text(encoding='utf-8')
 app=(ROOT/'platevision/src/app.py').read_text(encoding='utf-8')
 require(f'version: "{EXPECTED_VERSION}"' in config, 'config.yaml hat nicht die erwartete Version')
-require('ARG BUILD_VERSION=0.10.0' in docker, 'Docker BUILD_VERSION fehlt oder ist falsch')
+require('ARG BUILD_VERSION=0.12.0' in docker, 'Docker BUILD_VERSION fehlt oder ist falsch')
 require('io.hass.version="${BUILD_VERSION}"' in docker, 'Home-Assistant-Version-Label fehlt')
 require('io.hass.type="app"' in docker, 'Home-Assistant-Typ-Label fehlt')
 require('io.hass.arch="${BUILD_ARCH}"' in docker, 'Home-Assistant-Architektur-Label fehlt')
@@ -58,6 +58,16 @@ require('/api/system/live' in docker, 'Docker-Healthcheck verwendet nicht den Li
 require('/api/system/live' in config, 'Home-Assistant-Watchdog verwendet nicht den Liveness-Endpunkt')
 require(f"APP_VERSION = '{EXPECTED_VERSION}'" in app, 'app.py hat nicht die erwartete Version')
 require("@app.route('/api/system/live')" in app, 'Liveness-Route fehlt')
+require("@app.route('/api/people/sessions')" in app, 'Personen-Sitzungsroute fehlt')
+require("@app.route('/people/gallery')" in app, 'Personenbild-Galerieseite fehlt')
+require("@app.route('/api/people/images/days')" in app, 'Personenbild-Tagesindex fehlt')
+require((ROOT/'platevision/src/templates/people_gallery.html').is_file(), 'Template people_gallery.html fehlt')
+require("'image_history_retention_days': 10" in app, 'Standard-Bildaufbewahrung ist nicht 10 Tage')
+require("'max_history_entries': 20000" in app, 'Personen-Historienlimit fehlt')
+require((ROOT/'CHANGELOG.md').read_text(encoding='utf-8').count('## 0.12.0') == 1, 'CHANGELOG enthält die aktuelle Version mehrfach')
+require("@app.route('/api/people/history/bulk-delete', methods=['POST'])" in app, 'Personen-Sammellöschung fehlt')
+require("methods=['GET', 'PATCH']" in app and "/api/people/history/<event_id>" in app, 'Personen-Detail-/Review-Route fehlt')
+require('richieam93' in (ROOT/'NOTICE.md').read_text(encoding='utf-8'), 'Projektpseudonym fehlt in NOTICE.md')
 require('GNU AFFERO GENERAL PUBLIC LICENSE' in (ROOT/'LICENSE').read_text(encoding='utf-8'), 'Root-LICENSE ist nicht AGPL-3.0')
 require((ROOT/'third_party_licenses/fast-plate-ocr-MIT.txt').is_file(), 'fast-plate-ocr-Lizenz fehlt im Repository')
 require((ROOT/'platevision/third_party_licenses/fast-plate-ocr-MIT.txt').is_file(), 'fast-plate-ocr-Lizenz fehlt im Docker-Build-Kontext')

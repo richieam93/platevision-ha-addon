@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-ARG BUILD_VERSION=0.10.0
+ARG BUILD_VERSION=0.12.0
 ARG BUILD_ARCH=amd64
 
 LABEL org.opencontainers.image.title="PlateVision" \
@@ -36,7 +36,6 @@ COPY NOTICE.md /app/NOTICE.md
 COPY THIRD_PARTY_NOTICES.md /app/THIRD_PARTY_NOTICES.md
 COPY MODEL_PROVENANCE.md /app/MODEL_PROVENANCE.md
 COPY third_party_licenses/ /app/third_party_licenses/
-COPY legacy_licenses/ /app/legacy_licenses/
 
 # App-Code
 COPY src/ /app/

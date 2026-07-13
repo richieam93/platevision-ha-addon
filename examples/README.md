@@ -1,6 +1,6 @@
 # PlateVision Beispiele für Home Assistant
 
-Diese Beispiele passen zu PlateVision **0.10.0**.
+Diese Beispiele passen zu PlateVision **0.12.0**.
 
 Passe in allen Dateien zuerst die Basis-URL an:
 

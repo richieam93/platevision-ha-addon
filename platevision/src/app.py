@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright (C) 2025-2026 Richard Amrein
+# Copyright (C) 2025-2026 richieam93
 
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.10.0 Stability & Safety
+Version 0.12.0 People Image Archive
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory, redirect, url_for, g
@@ -30,8 +30,8 @@ import hashlib
 import secrets
 import shutil
 
-APP_VERSION = '0.10.0'
-APP_EDITION = 'Stability, Safety & YOLO Vehicle Intelligence'
+APP_VERSION = '0.12.0'
+APP_EDITION = 'People History, Review & Workflow'
 APP_LICENSE = 'AGPL-3.0-only'
 APP_LICENSE_SINCE = '0.9.0'
 APP_SOURCE_URL = os.environ.get('PLATEVISION_SOURCE_URL', 'https://github.com/richieam93/platevision-ha-addon/tree/main')
@@ -678,6 +678,7 @@ class ConfigManager:
         'people': {
             'enabled': True,
             'history_enabled': True,
+            'max_history_entries': 20000,
             'show_on_live': True,
             'draw_boxes': True,
             'confidence_threshold': 0.55,
@@ -740,8 +741,8 @@ class ConfigManager:
             'image_history_store_annotated': False,
             'image_history_store_full_frame': False,
             'image_history_jpeg_quality': 85,
-            'image_history_retention_days': 90,
-            'image_history_auto_cleanup_enabled': False,
+            'image_history_retention_days': 10,
+            'image_history_auto_cleanup_enabled': True,
             'image_history_cleanup_on_add': True,
             'image_history_last_cleanup': '',
             'test_environment_enabled': True,
@@ -973,6 +974,17 @@ class ConfigManager:
                 people_cfg['save_full_frame'] = False
                 people_cfg['image_history_store_full_frame'] = False
                 migration_cfg['people_crop_only_display_applied_v1'] = True
+
+            # 0.12.0: New installations keep person images for ten days by
+            # default. Existing explicit values are preserved so upgrades do not
+            # unexpectedly delete an established archive.
+            saved_people_cfg = (saved_config or {}).get('people') or {}
+            if 'image_history_retention_days' not in saved_people_cfg:
+                people_cfg['image_history_retention_days'] = 10
+            if 'image_history_auto_cleanup_enabled' not in saved_people_cfg:
+                people_cfg['image_history_auto_cleanup_enabled'] = True
+            people_cfg.setdefault('image_history_cleanup_on_add', True)
+            migration_cfg['people_image_archive_defaults_applied_v1'] = True
 
             rtsp_cfg = config.setdefault('rtsp', {})
             if 'autostart_enabled' not in rtsp_cfg:
@@ -1904,6 +1916,12 @@ class PersonHistoryManager:
         self.history = self.load_history()
         self.lock = threading.RLock()
         self._last_auto_cleanup_ts = 0
+        # Remove expired image files once at startup when automatic cleanup is
+        # enabled. Statistical events remain unless event retention is enabled.
+        try:
+            self._maybe_auto_cleanup_images(force=True)
+        except Exception as exc:
+            logger.warning(f"Start-Cleanup Personenbilder fehlgeschlagen: {exc}")
 
     def load_history(self):
         value = _load_json_with_backup(self.HISTORY_FILE, [])
@@ -2082,18 +2100,18 @@ class PersonHistoryManager:
             try:
                 target = (self.IMAGE_ROOT / str(rel)).resolve()
                 root = self.IMAGE_ROOT.resolve()
-                if str(target).startswith(str(root)) and target.exists() and target.is_file():
+                if target.is_relative_to(root) and target.exists() and target.is_file():
                     target.unlink()
                     deleted += 1
             except Exception as exc:
                 logger.warning(f"Personenbild konnte nicht gelöscht werden: {rel} - {exc}")
         return deleted
 
-    def _maybe_auto_cleanup_images(self):
+    def _maybe_auto_cleanup_images(self, force=False):
         cfg = self._cfg()
         if not cfg.get('image_history_auto_cleanup_enabled') and not cfg.get('auto_cleanup_enabled'):
             return
-        if not cfg.get('image_history_cleanup_on_add', True):
+        if not force and not cfg.get('image_history_cleanup_on_add', True):
             return
         now = time.time()
         if now - float(getattr(self, '_last_auto_cleanup_ts', 0) or 0) < 3600:
@@ -2117,6 +2135,9 @@ class PersonHistoryManager:
             item.setdefault('counted', True)
             item.setdefault('confidence', 0)
             item.setdefault('track_id', None)
+            item.setdefault('label', '')
+            item.setdefault('note', '')
+            item.setdefault('review_status', 'unreviewed')
             if item.get('counted'):
                 match = self._recent_counted_match(item)
                 if match:
@@ -2129,7 +2150,8 @@ class PersonHistoryManager:
                     item['note'] = f"Nicht erneut gezählt: ähnliche Person/Track innerhalb von {item['repeat_block_minutes']} Minuten."
             self.attach_images(item, frame=frame, annotated_frame=annotated_frame)
             self.history.insert(0, item)
-            max_entries = int(config_manager.get('general', 'max_history_entries') or 1000)
+            max_entries = int(config_manager.get('people', 'max_history_entries') or config_manager.get('general', 'max_history_entries') or 20000)
+            max_entries = max(100, min(max_entries, 200000))
             if len(self.history) > max_entries:
                 removed = self.history[max_entries:]
                 for old in removed:
@@ -2139,8 +2161,177 @@ class PersonHistoryManager:
             self._maybe_auto_cleanup_images()
             return item
 
+    def _public_item(self, item):
+        row = dict(item or {})
+        images = dict(row.get('images') or {})
+        row['image_count'] = len(images)
+        row['image_urls'] = {key: f"/api/people/images/{value}" for key, value in images.items()}
+        return row
+
     def get_all(self, limit=100, offset=0):
-        return self.history[offset:offset + limit]
+        limit = max(1, min(int(limit or 100), 500))
+        offset = max(0, int(offset or 0))
+        return [self._public_item(item) for item in self.history[offset:offset + limit]]
+
+    def get_event(self, event_id):
+        for item in self.history:
+            if str(item.get('id')) == str(event_id):
+                return self._public_item(item)
+        return None
+
+    def update_event(self, event_id, payload):
+        payload = dict(payload or {})
+        allowed_status = {'unreviewed', 'confirmed', 'needs_review', 'ignored'}
+        with self.lock:
+            for item in self.history:
+                if str(item.get('id')) != str(event_id):
+                    continue
+                if 'label' in payload:
+                    item['label'] = str(payload.get('label') or '').strip()[:120]
+                if 'note' in payload:
+                    item['note'] = str(payload.get('note') or '').strip()[:2000]
+                if 'review_status' in payload:
+                    status = str(payload.get('review_status') or 'unreviewed').strip().lower()
+                    if status not in allowed_status:
+                        raise ValueError('Ungültiger Prüfstatus')
+                    item['review_status'] = status
+                item['updated_at'] = datetime.now().isoformat()
+                self.save_history()
+                return self._public_item(item)
+        return None
+
+    def bulk_delete(self, event_ids, delete_images=True):
+        ids = {str(value) for value in (event_ids or []) if str(value).strip()}
+        if not ids:
+            return {'success': True, 'deleted': 0, 'deleted_images': 0, 'remaining': len(self.history)}
+        if len(ids) > 500:
+            raise ValueError('Maximal 500 Ereignisse pro Vorgang')
+        with self.lock:
+            kept = []
+            deleted = 0
+            deleted_images = 0
+            for item in self.history:
+                if str(item.get('id')) in ids:
+                    deleted += 1
+                    if delete_images:
+                        deleted_images += self._delete_images_for_item(item)
+                else:
+                    kept.append(item)
+            if deleted:
+                self.history = kept
+                self.save_history()
+            return {'success': True, 'deleted': deleted, 'deleted_images': deleted_images, 'remaining': len(self.history)}
+
+    def paginated_history(self, filters=None):
+        filters = dict(filters or {})
+        limit = max(1, min(int(filters.get('limit') or 50), 200))
+        offset = max(0, int(filters.get('offset') or 0))
+        rows = self.search(filters)
+        total = len(rows)
+        return {
+            'entries': [self._public_item(item) for item in rows[offset:offset + limit]],
+            'total': total,
+            'limit': limit,
+            'offset': offset,
+            'has_more': offset + limit < total,
+            'filters': {key: (value.isoformat() if isinstance(value, datetime) else value) for key, value in self._filters(filters).items()},
+        }
+
+    def get_sessions(self, filters=None):
+        filters = dict(filters or {})
+        filters.setdefault('counted_only', 'false')
+        rows = list(reversed(self.search(filters)))
+        gap_minutes = max(1, min(int(filters.get('session_gap_minutes') or self._cfg().get('session_gap_minutes') or 5), 240))
+        gap = timedelta(minutes=gap_minutes)
+        current_by_key = {}
+        sessions = []
+
+        def identity(item):
+            source = item.get('source') or 'unknown'
+            track_id = item.get('track_id')
+            if track_id is not None and str(track_id) != '':
+                return f"track:{source}:{track_id}"
+            bbox = item.get('bbox') or []
+            if len(bbox) == 4 or item.get('center_x') is not None or item.get('center_y') is not None:
+                return self._position_signature(item)
+            return f"event:{item.get('id') or uuid.uuid4()}"
+
+        for item in rows:
+            ts = self._event_dt(item)
+            if not ts:
+                continue
+            ts = ts.replace(tzinfo=None) if getattr(ts, 'tzinfo', None) else ts
+            key = identity(item)
+            session = current_by_key.get(key)
+            if session is None or ts - session['_last_dt'] > gap:
+                sid = hashlib.sha1(f"{key}:{ts.isoformat()}".encode('utf-8')).hexdigest()[:16]
+                session = {
+                    'id': sid,
+                    'identity': key,
+                    'source': item.get('source') or 'unknown',
+                    'track_id': item.get('track_id'),
+                    'first_seen': item.get('timestamp'),
+                    'last_seen': item.get('timestamp'),
+                    'event_count': 0,
+                    'counted_events': 0,
+                    'line_crossings': 0,
+                    'repeat_blocked': 0,
+                    'directions': Counter(),
+                    'event_types': Counter(),
+                    'confidence_sum': 0.0,
+                    'max_confidence': 0.0,
+                    'image_count': 0,
+                    'preview': None,
+                    'last_event_id': item.get('id'),
+                    '_first_dt': ts,
+                    '_last_dt': ts,
+                }
+                current_by_key[key] = session
+                sessions.append(session)
+            session['_last_dt'] = ts
+            session['last_seen'] = item.get('timestamp')
+            session['last_event_id'] = item.get('id')
+            session['event_count'] += 1
+            session['counted_events'] += 1 if item.get('counted') else 0
+            session['line_crossings'] += 1 if item.get('event_type') == 'line_crossing' else 0
+            session['repeat_blocked'] += 1 if item.get('repeat_blocked') or item.get('event_type') == 'repeat_blocked' else 0
+            session['directions'][item.get('direction') or 'unknown'] += 1
+            session['event_types'][item.get('event_type') or 'unknown'] += 1
+            confidence = float(item.get('confidence') or 0)
+            session['confidence_sum'] += confidence
+            session['max_confidence'] = max(session['max_confidence'], confidence)
+            images = item.get('images') or {}
+            session['image_count'] += len(images)
+            if images.get('crop'):
+                session['preview'] = f"/api/people/images/{images['crop']}"
+
+        now = datetime.now()
+        active_cutoff = now - timedelta(minutes=int(self._cfg().get('present_timeout_minutes') or 10))
+        result = []
+        for session in sessions:
+            duration = max(0, int((session['_last_dt'] - session['_first_dt']).total_seconds()))
+            event_count = max(1, session['event_count'])
+            result.append({
+                key: value for key, value in session.items()
+                if not key.startswith('_') and key != 'confidence_sum'
+            } | {
+                'duration_seconds': duration,
+                'average_confidence': round(session['confidence_sum'] / event_count, 4),
+                'directions': dict(session['directions']),
+                'event_types': dict(session['event_types']),
+                'active': session['_last_dt'] >= active_cutoff,
+            })
+        result.sort(key=lambda row: row.get('last_seen') or '', reverse=True)
+        limit = max(1, min(int(filters.get('limit') or 30), 200))
+        offset = max(0, int(filters.get('offset') or 0))
+        return {
+            'sessions': result[offset:offset + limit],
+            'total': len(result),
+            'limit': limit,
+            'offset': offset,
+            'has_more': offset + limit < len(result),
+            'session_gap_minutes': gap_minutes,
+        }
 
     def clear_history(self, delete_images=True):
         with self.lock:
@@ -2190,23 +2381,72 @@ class PersonHistoryManager:
             self.save_history()
             return {'success': True, 'deleted': 1, 'deleted_images': deleted_images, 'item': deleted}
 
+    def image_days(self, filters=None):
+        """Return available image days for calendar-style archive navigation."""
+        self._maybe_auto_cleanup_images(force=True)
+        filters = dict(filters or {})
+        filters.setdefault('counted_only', 'false')
+        # A wide date range is intentional here; only events that still have image
+        # files are included, so the result remains small and useful.
+        filters.setdefault('days', 3650)
+        grouped = defaultdict(lambda: {'count': 0, 'crop_count': 0, 'annotated_count': 0, 'full_frame_count': 0})
+        for item in self.search(filters):
+            images = item.get('images') or {}
+            if not images:
+                continue
+            dt = self._event_dt(item)
+            if not dt:
+                continue
+            day = dt.date().isoformat()
+            grouped[day]['count'] += 1
+            for key in ('crop', 'annotated', 'full_frame'):
+                if images.get(key):
+                    grouped[day][f'{key}_count'] += 1
+        days = []
+        for day in sorted(grouped.keys(), reverse=True):
+            row = {'date': day, **grouped[day]}
+            days.append(row)
+        cfg = self._cfg()
+        return {
+            'days': days,
+            'total_days': len(days),
+            'total_events_with_images': sum(item['count'] for item in days),
+            'newest_date': days[0]['date'] if days else None,
+            'oldest_date': days[-1]['date'] if days else None,
+            'retention_days': int(cfg.get('image_history_retention_days') or 0),
+            'auto_cleanup_enabled': bool(cfg.get('image_history_auto_cleanup_enabled')),
+            'image_history_enabled': bool(cfg.get('image_history_enabled', True)),
+        }
+
     def image_history(self, filters=None):
+        self._maybe_auto_cleanup_images(force=True)
         filters = dict(filters or {})
         # Image galleries should show every stored crop, even if the event was not
         # counted by the line-crossing logic. Otherwise Test & Upload can save
         # six person entries but the /people image gallery appears empty.
         filters.setdefault('counted_only', 'false')
-        limit = int(filters.get('limit') or 60)
-        offset = int(filters.get('offset') or 0)
+        limit = max(1, min(int(filters.get('limit') or 60), 200))
+        offset = max(0, int(filters.get('offset') or 0))
         rows = []
         for item in self.search(filters):
             images = item.get('images') or {}
             if not images:
                 continue
             row = dict(item)
+            row['image_count'] = len(images)
             row['image_urls'] = {k: f"/api/people/images/{v}" for k, v in images.items()}
             rows.append(row)
-        return {'entries': rows[offset:offset + limit], 'total': len(rows), 'limit': limit, 'offset': offset}
+        page = rows[offset:offset + limit]
+        return {
+            'entries': [self._public_item(item) for item in page],
+            'total': len(rows),
+            'limit': limit,
+            'offset': offset,
+            'has_more': offset + limit < len(rows),
+            'date_from': filters.get('date_from'),
+            'date_to': filters.get('date_to'),
+            'retention_days': int(self._cfg().get('image_history_retention_days') or 0),
+        }
 
     def cleanup_images(self, retention_days=None, delete_orphan_files=True, delete_records=False):
         """Delete old person image files. By default keep the statistical person events."""
@@ -2249,7 +2489,8 @@ class PersonHistoryManager:
     def _filters(self, filters=None):
         filters = filters or {}
         now = datetime.now()
-        days = int(filters.get('days') or config_manager.get('dashboard', 'default_range_days') or 7)
+        days = max(1, min(int(filters.get('days') or config_manager.get('dashboard', 'default_range_days') or 7), 3650))
+
         def parse(value):
             if not value:
                 return None
@@ -2260,19 +2501,50 @@ class PersonHistoryManager:
                 return dt.replace(tzinfo=None) if getattr(dt, 'tzinfo', None) else dt
             except Exception:
                 return None
+
         date_to = parse(filters.get('date_to')) or now
         if filters.get('date_to') and len(str(filters.get('date_to'))) <= 10:
             date_to = date_to.replace(hour=23, minute=59, second=59)
         date_from = parse(filters.get('date_from'))
         if not date_from:
             date_from = date_to.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=max(days - 1, 0))
+
+        if 'counted' in filters:
+            counted_text = str(filters.get('counted') or 'all').strip().lower()
+            if counted_text in ('all', '', 'any'):
+                counted = None
+            elif counted_text in ('1', 'true', 'yes', 'ja', 'counted'):
+                counted = True
+            elif counted_text in ('0', 'false', 'no', 'nein', 'uncounted'):
+                counted = False
+            else:
+                counted = None
+        else:
+            # Backwards compatibility: counted_only=false historically means
+            # "show all", not "show only uncounted".
+            counted_only_text = str(filters.get('counted_only', 'true')).strip().lower()
+            counted = None if counted_only_text in ('0', 'false', 'no', 'nein', 'all', 'any') else True
+
+        has_images_text = str(filters.get('has_images', 'all')).strip().lower()
+        has_images = None
+        if has_images_text in ('1', 'true', 'yes', 'ja'):
+            has_images = True
+        elif has_images_text in ('0', 'false', 'no', 'nein'):
+            has_images = False
+
         return {
             'date_from': date_from,
             'date_to': date_to,
-            'min_confidence': float(filters.get('min_confidence') or config_manager.get('people', 'confidence_threshold') or 0),
-            'counted_only': str(filters.get('counted_only', 'true')).lower() not in ('0', 'false', 'no', 'nein'),
-            'event_type': filters.get('event_type') or '',
-            'direction': filters.get('direction') or ''
+            'min_confidence': max(0.0, min(float(filters.get('min_confidence') or 0), 1.0)),
+            'counted': counted,
+            'event_type': str(filters.get('event_type') or '').strip(),
+            'direction': str(filters.get('direction') or '').strip(),
+            'source': str(filters.get('source') or '').strip(),
+            'track_id': str(filters.get('track_id') or '').strip(),
+            'query': str(filters.get('query') or '').strip().lower(),
+            'has_images': has_images,
+            'review_status': str(filters.get('review_status') or '').strip().lower(),
+            'sort': 'asc' if str(filters.get('sort') or '').lower() == 'asc' else 'desc',
         }
 
     def search(self, filters=None):
@@ -2289,13 +2561,30 @@ class PersonHistoryManager:
                 continue
             if float(item.get('confidence') or 0) < f['min_confidence']:
                 continue
-            if f['counted_only'] and not item.get('counted', True):
+            if f['counted'] is not None and bool(item.get('counted', True)) != f['counted']:
                 continue
-            if f['event_type'] and item.get('event_type') != f['event_type']:
+            if f['event_type'] and f['event_type'] != 'all' and item.get('event_type') != f['event_type']:
                 continue
             if f['direction'] and f['direction'] != 'all' and item.get('direction') != f['direction']:
                 continue
+            if f['source'] and f['source'] != 'all' and str(item.get('source') or '') != f['source']:
+                continue
+            if f['track_id'] and f['track_id'].lower() not in str(item.get('track_id') or '').lower():
+                continue
+            images = item.get('images') or {}
+            if f['has_images'] is not None and bool(images) != f['has_images']:
+                continue
+            status = str(item.get('review_status') or 'unreviewed').lower()
+            if f['review_status'] and f['review_status'] != 'all' and status != f['review_status']:
+                continue
+            if f['query']:
+                haystack = ' '.join(str(item.get(key) or '') for key in (
+                    'id', 'track_id', 'source', 'event_type', 'direction', 'label', 'note', 'filename'
+                )).lower()
+                if f['query'] not in haystack:
+                    continue
             rows.append(item)
+        rows.sort(key=lambda item: item.get('timestamp') or '', reverse=f['sort'] != 'asc')
         return rows
 
     def cleanup(self, retention_days=None):
@@ -2306,14 +2595,16 @@ class PersonHistoryManager:
         with self.lock:
             before = len(self.history)
             kept = []
+            deleted_images = 0
             for item in self.history:
                 ts = self._parse_datetime(item.get('timestamp'))
                 if ts and ts.replace(tzinfo=None) < cutoff:
+                    deleted_images += self._delete_images_for_item(item)
                     continue
                 kept.append(item)
             self.history = kept
             self.save_history()
-        return {'removed': before - len(self.history), 'remaining': len(self.history), 'retention_days': retention_days}
+        return {'removed': before - len(self.history), 'deleted_images': deleted_images, 'remaining': len(self.history), 'retention_days': retention_days}
 
     def get_presence(self):
         timeout = int(config_manager.get('people', 'present_timeout_minutes') or 10)
@@ -2326,7 +2617,7 @@ class PersonHistoryManager:
             ts = ts.replace(tzinfo=None) if getattr(ts, 'tzinfo', None) else ts
             if ts < cutoff:
                 continue
-            track_key = str(item.get('track_id') if item.get('track_id') is not None else item.get('id'))
+            track_key = f"{item.get('source') or 'unknown'}:{item.get('track_id') if item.get('track_id') is not None else item.get('id')}"
             if track_key not in active_tracks or ts > active_tracks[track_key]['timestamp_dt']:
                 active_tracks[track_key] = dict(item, timestamp_dt=ts)
         rows = []
@@ -2337,13 +2628,22 @@ class PersonHistoryManager:
         return {'active_count': len(rows), 'timeout_minutes': timeout, 'active': rows[:100]}
 
     def get_statistics(self, filters=None):
+        filters = dict(filters or {})
+        filters.setdefault('counted_only', 'false')
         rows = self.search(filters)
-        daily = defaultdict(lambda: {'date': '', 'persons': 0, 'detections': 0, 'line_crossings': 0, 'appearances': 0, 'directions': Counter()})
+        daily = defaultdict(lambda: {
+            'date': '', 'persons': 0, 'detections': 0, 'line_crossings': 0,
+            'appearances': 0, 'repeat_blocked': 0, 'images': 0, 'directions': Counter()
+        })
         hourly = defaultdict(int)
         directions = Counter()
         event_types = Counter()
+        sources = Counter()
         tracks = set()
         confidences = []
+        image_events = 0
+        repeat_blocked = 0
+        uncounted = 0
         for item in rows:
             ts = self._parse_datetime(item.get('timestamp'))
             if not ts:
@@ -2355,17 +2655,28 @@ class PersonHistoryManager:
             if item.get('counted', True):
                 daily[day]['persons'] += 1
                 hourly[ts.strftime('%Y-%m-%d %H:00')] += 1
+            else:
+                uncounted += 1
             if item.get('event_type') == 'line_crossing':
                 daily[day]['line_crossings'] += 1
             if item.get('event_type') == 'appearance':
                 daily[day]['appearances'] += 1
+            if item.get('repeat_blocked') or item.get('event_type') == 'repeat_blocked':
+                daily[day]['repeat_blocked'] += 1
+                repeat_blocked += 1
+            images = item.get('images') or {}
+            if images:
+                daily[day]['images'] += 1
+                image_events += 1
             direction = item.get('direction') or 'unknown'
             daily[day]['directions'][direction] += 1
             directions[direction] += 1
             event_types[item.get('event_type') or 'unknown'] += 1
+            sources[item.get('source') or 'unknown'] += 1
             if item.get('track_id') is not None:
-                tracks.add(str(item.get('track_id')))
+                tracks.add(f"{item.get('source') or 'unknown'}:{item.get('track_id')}")
             confidences.append(float(item.get('confidence') or 0))
+
         daily_items = []
         for _, row in sorted(daily.items()):
             daily_items.append({
@@ -2374,25 +2685,37 @@ class PersonHistoryManager:
                 'detections': row['detections'],
                 'line_crossings': row['line_crossings'],
                 'appearances': row['appearances'],
+                'repeat_blocked': row['repeat_blocked'],
+                'images': row['images'],
                 'directions': dict(row['directions'])
             })
         today = datetime.now().date().isoformat()
         today_persons = next((d['persons'] for d in daily_items if d['date'] == today), 0)
+        peak_hour = max(hourly.items(), key=lambda pair: pair[1], default=(None, 0))
+        session_data = self.get_sessions({**filters, 'limit': 1, 'offset': 0})
+        presence = self.get_presence()
         return {
             'summary': {
                 'total_persons': sum(d['persons'] for d in daily_items),
                 'today_persons': today_persons,
                 'events': len(rows),
+                'uncounted_events': uncounted,
+                'repeat_blocked': repeat_blocked,
                 'unique_tracks': len(tracks),
+                'session_count': session_data.get('total', 0),
+                'active_now': presence.get('active_count', 0),
+                'image_events': image_events,
                 'average_confidence': round(sum(confidences) / len(confidences), 4) if confidences else 0,
                 'busiest_day': max(daily_items, key=lambda x: x['persons'], default=None),
+                'peak_hour': {'hour': peak_hour[0], 'count': peak_hour[1]} if peak_hour[0] else None,
                 'note': 'Für genaue Durchgangszählung sollte die virtuelle Linie passend zur Kameraposition eingestellt werden.'
             },
             'daily': daily_items,
-            'hourly': [{'hour': k, 'count': v} for k, v in sorted(hourly.items())],
+            'hourly': [{'hour': key, 'count': value} for key, value in sorted(hourly.items())],
             'directions': dict(directions),
             'event_types': dict(event_types),
-            'latest': rows[:100],
+            'sources': dict(sources),
+            'latest': [self._public_item(item) for item in rows[:100]],
             'config': config_manager.get('people') or {}
         }
 
@@ -3938,6 +4261,15 @@ def people_page():
                           stream_status=stream_manager.get_status(),
                           config=config_manager.config)
 
+@app.route('/people/gallery')
+def people_gallery_page():
+    if not config_manager.get('people', 'enabled'):
+        return redirect(url_for('settings') + '#dashboardUiSettings')
+    return render_template('people_gallery.html',
+                          page='people_gallery',
+                          stream_status=stream_manager.get_status(),
+                          config=config_manager.config)
+
 @app.route('/rtsp-settings')
 def rtsp_settings():
     return render_template('rtsp_settings.html',
@@ -5199,7 +5531,7 @@ def api_latest_person_image():
         if rel:
             root = person_history_manager.IMAGE_ROOT.resolve()
             target = (root / str(rel)).resolve()
-            if str(target).startswith(str(root)) and target.exists() and target.is_file():
+            if target.is_relative_to(root) and target.exists() and target.is_file():
                 return send_from_directory(str(root), str(rel))
     img = np.zeros((260, 180, 3), dtype=np.uint8)
     img[:] = (30, 30, 30)
@@ -5726,6 +6058,7 @@ def _people_settings_summary(cfg=None):
     return {
         'enabled': bool(cfg.get('enabled')),
         'history_enabled': cfg.get('history_enabled') is not False,
+        'max_history_entries': cfg.get('max_history_entries'),
         'model_mode': cfg.get('model_mode') or 'coco_person',
         'selected_model': cfg.get('selected_model_file') or cfg.get('custom_model_path') or cfg.get('model_path') or 'COCO Person-Klasse',
         'confidence_threshold': cfg.get('confidence_threshold'),
@@ -5752,6 +6085,8 @@ def _people_settings_summary(cfg=None):
         'auto_cleanup_enabled': bool(cfg.get('auto_cleanup_enabled')),
         'image_history_enabled': bool(cfg.get('image_history_enabled')),
         'image_history_retention_days': cfg.get('image_history_retention_days'),
+        'image_history_auto_cleanup_enabled': bool(cfg.get('image_history_auto_cleanup_enabled')),
+        'image_history_cleanup_on_add': bool(cfg.get('image_history_cleanup_on_add', True)),
         'person_recount_block_enabled': bool(cfg.get('person_recount_block_enabled')),
         'person_recount_block_minutes': cfg.get('person_recount_block_minutes'),
         'person_recount_identity_mode': cfg.get('person_recount_identity_mode'),
@@ -6434,7 +6769,6 @@ LEGAL_DOCUMENTS = {
     'NOTICE.md': 'NOTICE.md',
     'THIRD_PARTY_NOTICES.md': 'THIRD_PARTY_NOTICES.md',
     'MODEL_PROVENANCE.md': 'MODEL_PROVENANCE.md',
-    'PlateVision-MIT-through-0.8.30.txt': 'legacy_licenses/PlateVision-MIT-through-0.8.30.txt',
     'fast-plate-ocr-MIT.txt': 'third_party_licenses/fast-plate-ocr-MIT.txt',
 }
 
@@ -7126,9 +7460,40 @@ def api_people_statistics():
 
 @app.route('/api/people/history')
 def api_people_history():
-    limit = request.args.get('limit', 100, type=int)
-    offset = request.args.get('offset', 0, type=int)
-    return jsonify({'entries': person_history_manager.get_all(limit=limit, offset=offset), 'total': len(person_history_manager.history)})
+    filters = request.args.to_dict()
+    filters.setdefault('counted_only', 'false')
+    return jsonify(person_history_manager.paginated_history(filters))
+
+@app.route('/api/people/history/<event_id>', methods=['GET', 'PATCH'])
+def api_people_history_event(event_id):
+    if request.method == 'GET':
+        item = person_history_manager.get_event(event_id)
+        if item is None:
+            return jsonify({'success': False, 'error': 'Ereignis nicht gefunden'}), 404
+        return jsonify({'success': True, 'event': item})
+    try:
+        item = person_history_manager.update_event(event_id, request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    if item is None:
+        return jsonify({'success': False, 'error': 'Ereignis nicht gefunden'}), 404
+    return jsonify({'success': True, 'event': item})
+
+@app.route('/api/people/history/bulk-delete', methods=['POST'])
+def api_people_history_bulk_delete():
+    data = request.get_json(silent=True) or {}
+    ids = data.get('ids') or data.get('event_ids') or []
+    if isinstance(ids, str):
+        ids = [ids]
+    try:
+        result = person_history_manager.bulk_delete(ids, delete_images=data.get('delete_images', True))
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    return jsonify(result)
+
+@app.route('/api/people/sessions')
+def api_people_sessions():
+    return jsonify(person_history_manager.get_sessions(request.args.to_dict()))
 
 @app.route('/api/people/history/clear', methods=['POST'])
 def api_people_history_clear():
@@ -7147,11 +7512,15 @@ def api_people_history_delete_event(event_id):
 def api_people_images_history():
     return jsonify(person_history_manager.image_history(request.args.to_dict()))
 
+@app.route('/api/people/images/days')
+def api_people_images_days():
+    return jsonify(person_history_manager.image_days(request.args.to_dict()))
+
 @app.route('/api/people/images/<path:filename>')
 def api_people_images_file(filename):
     root = person_history_manager.IMAGE_ROOT.resolve()
     target = (root / filename).resolve()
-    if not str(target).startswith(str(root)) or not target.exists() or not target.is_file():
+    if not target.is_relative_to(root) or not target.exists() or not target.is_file():
         return jsonify({'success': False, 'error': 'Bild nicht gefunden'}), 404
     return send_from_directory(str(root), filename)
 
@@ -7184,7 +7553,7 @@ def api_people_export():
     filename = f"platevision_people_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     if fmt == 'json':
         return Response(json.dumps(rows, indent=2, ensure_ascii=False), mimetype='application/json', headers={'Content-Disposition': f'attachment; filename={filename}.json'})
-    fields = ['timestamp', 'event_type', 'counted', 'direction', 'track_id', 'confidence', 'bbox', 'source', 'filename']
+    fields = ['id', 'timestamp', 'event_type', 'counted', 'repeat_blocked', 'direction', 'track_id', 'confidence', 'area_percent', 'bbox', 'source', 'filename', 'label', 'note', 'review_status', 'updated_at']
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
     writer.writeheader()

@@ -1,4 +1,4 @@
-# PlateVision API-Endpunkte 0.10.0
+# PlateVision API-Endpunkte 0.12.0
 
 Basis-URL im Beispiel: `http://192.168.1.240:8087`
 
@@ -60,11 +60,16 @@ Basis-URL im Beispiel: `http://192.168.1.240:8087`
 
 | Methode | Endpoint | Beschreibung |
 |---|---|---|
-| GET | `/api/people/statistics?days=1` | Personenstatistik |
-| GET | `/api/people/history` | Personenereignisse |
-| GET | `/api/people/images/history?limit=50&counted_only=false` | gespeicherte Personen-Crops |
+| GET | `/api/people/statistics?days=1` | Personenstatistik inklusive Sitzungen, aktive Personen und Wiederholungsschutz |
+| GET | `/api/people/history?limit=40&offset=0&counted=all` | gefilterte, paginierte Personenereignisse |
+| GET | `/api/people/history/<id>` | einzelnes Personenereignis mit Bild-URLs |
+| PATCH | `/api/people/history/<id>` | Label, Notiz und Prüfstatus aktualisieren |
+| DELETE | `/api/people/history/<id>/delete` | einzelnes Ereignis inklusive Bilder löschen |
+| POST | `/api/people/history/bulk-delete` | mehrere Ereignisse inklusive Bilder löschen |
+| GET | `/api/people/sessions?days=7` | zusammengehörige Personenereignisse als Sitzungen |
+| GET | `/api/people/images/history?limit=36&offset=0&counted_only=false` | paginierte Personen-Crops |
 | GET | `/api/people/presence` | aktuelle Personen-/Track-Übersicht |
-| GET | `/api/people/test/snapshot` | Test-Snapshot |
+| POST | `/api/people/test/snapshot` | Live-Snapshot analysieren |
 | POST | `/api/config/people` | Personen-Einstellungen speichern |
 
 ## Konfiguration und Modelle
@@ -85,7 +90,7 @@ Basis-URL im Beispiel: `http://192.168.1.240:8087`
 | GET | `/api/system/audit` | Diagnose/Audit |
 
 
-## System-Prüfung (v0.10.0)
+## System-Prüfung (v0.12.0)
 
 - `GET /api/system/live` – leichte Liveness-Prüfung für Docker/Home Assistant
 - `GET /api/system/health` – ausführlicher System-, Modell- und Speicherstatus

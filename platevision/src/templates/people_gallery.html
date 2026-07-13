@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Personenbilder - PlateVision{% endblock %}
+{% block page_title %}<i class="fas fa-images me-2"></i>Personenbilder{% endblock %}
+
+{% block extra_css %}
+<style>
+.archive-toolbar{display:grid;grid-template-columns:minmax(190px,260px) 1fr auto;gap:12px;align-items:end}.archive-days{display:flex;gap:8px;overflow-x:auto;padding:4px 0 10px;scrollbar-width:thin}.archive-day{min-width:112px;border:1px solid var(--border-color,#334155);background:rgba(15,23,42,.35);border-radius:12px;padding:10px;text-align:left;color:inherit}.archive-day.active{border-color:#38bdf8;box-shadow:0 0 0 2px rgba(56,189,248,.18)}.archive-day strong,.archive-day span{display:block}.archive-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}.archive-card{border:1px solid var(--border-color,#334155);border-radius:14px;overflow:hidden;background:rgba(15,23,42,.35)}.archive-card img{width:100%;height:220px;object-fit:cover;background:#020617}.archive-card-body{padding:12px}.archive-empty{padding:48px 20px;text-align:center}.archive-date-heading{font-size:1.1rem;font-weight:700}.archive-stat{font-size:1.6rem;font-weight:800}.archive-image-links{display:flex;flex-wrap:wrap;gap:6px}@media(max-width:800px){.archive-toolbar{grid-template-columns:1fr}.archive-card img{height:260px}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pro-hero mb-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+    <div><div class="mini-label">Personenarchiv</div><h2 class="mb-2">Bilder tageweise zurückblättern</h2><p class="text-secondary mb-0">Standardmässig bleiben Bilder 10 Tage erhalten. Die Frist lässt sich direkt hier oder in den Einstellungen ändern.</p></div>
+    <div class="d-flex flex-wrap gap-2"><a href="/people" class="btn btn-outline-info"><i class="fas fa-chart-simple me-2"></i>Personenanalyse</a><a href="/settings#peopleSettings" class="btn btn-outline-secondary"><i class="fas fa-sliders me-2"></i>Einstellungen</a></div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="stat-card"><div class="stat-content"><div class="archive-stat" id="archiveTotal">-</div><div class="stat-label">Bilder-Ereignisse</div></div></div></div>
+  <div class="col-md-3"><div class="stat-card"><div class="stat-content"><div class="archive-stat" id="archiveDaysCount">-</div><div class="stat-label">Tage mit Bildern</div></div></div></div>
+  <div class="col-md-3"><div class="stat-card"><div class="stat-content"><div class="archive-stat" id="archiveRetention">-</div><div class="stat-label">Aufbewahrung</div></div></div></div>
+  <div class="col-md-3"><div class="stat-card"><div class="stat-content"><div class="archive-stat" id="archiveCleanup">-</div><div class="stat-label">Auto-Cleanup</div></div></div></div>
+</div>
+
+<div class="card mb-4">
+ <div class="card-body">
+  <div class="archive-toolbar">
+   <div><label class="form-label">Tag auswählen</label><input type="date" class="form-control" id="archiveDate"></div>
+   <div><label class="form-label">Aufbewahrung der Bilder</label><div class="input-group"><input type="number" min="0" max="3650" class="form-control" id="archiveRetentionInput" value="10"><span class="input-group-text">Tage</span><button class="btn btn-primary" onclick="saveArchiveRetention()"><i class="fas fa-save me-1"></i>Speichern</button></div><div class="form-text">0 = unbegrenzt. Das Ändern löscht nicht sofort; „Jetzt bereinigen“ wendet die Frist direkt an.</div></div>
+   <div class="d-flex gap-2"><button class="btn btn-outline-secondary" onclick="jumpArchiveDay(-1)"><i class="fas fa-chevron-left"></i></button><button class="btn btn-outline-info" onclick="selectToday()">Heute</button><button class="btn btn-outline-secondary" onclick="jumpArchiveDay(1)"><i class="fas fa-chevron-right"></i></button><button class="btn btn-outline-danger" onclick="cleanupArchiveNow()"><i class="fas fa-broom me-1"></i>Jetzt bereinigen</button></div>
+  </div>
+ </div>
+</div>
+
+<div class="card mb-4"><div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-calendar-days me-2"></i>Verfügbare Tage</h5></div><div class="card-body"><div class="archive-days" id="archiveDays"><span class="text-secondary">Lade Tage...</span></div></div></div>
+
+<div class="card">
+ <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><div><div class="archive-date-heading" id="archiveHeading">Bilder</div><small class="text-secondary" id="archiveInfo">-</small></div><button class="btn btn-sm btn-outline-info" onclick="loadArchivePage()"><i class="fas fa-rotate me-1"></i>Aktualisieren</button></div>
+ <div class="card-body"><div class="archive-grid" id="archiveGrid"><div class="archive-empty text-secondary">Lade Bilder...</div></div><div class="d-flex justify-content-between align-items-center mt-4"><small class="text-secondary" id="archivePageInfo">-</small><div class="btn-group"><button class="btn btn-outline-secondary" id="archivePrev" onclick="changeArchivePage(-1)"><i class="fas fa-chevron-left"></i></button><button class="btn btn-outline-secondary" id="archiveNext" onclick="changeArchivePage(1)"><i class="fas fa-chevron-right"></i></button></div></div></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let archiveDate = ''; let archiveOffset = 0; const archiveLimit = 48; let archiveDaysData = [];
+function aesc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+function localDateValue(d){const x=new Date(d); x.setMinutes(x.getMinutes()-x.getTimezoneOffset()); return x.toISOString().slice(0,10);}
+function displayDay(v){if(!v)return '-'; return new Date(v+'T12:00:00').toLocaleDateString('de-CH',{weekday:'short',day:'2-digit',month:'2-digit',year:'numeric'});}
+function displayTime(v){if(!v)return '-'; return new Date(v).toLocaleString('de-CH');}
+async function loadArchiveDays(selectLatest=true){const data=await fetch('/api/people/images/days').then(r=>r.json()); archiveDaysData=data.days||[]; document.getElementById('archiveTotal').textContent=data.total_events_with_images||0; document.getElementById('archiveDaysCount').textContent=data.total_days||0; document.getElementById('archiveRetention').textContent=(data.retention_days||0)+' Tage'; document.getElementById('archiveCleanup').textContent=data.auto_cleanup_enabled?'Aktiv':'Aus'; document.getElementById('archiveRetentionInput').value=data.retention_days??10; if(selectLatest&&!archiveDate) archiveDate=data.newest_date||localDateValue(new Date()); renderArchiveDays(); document.getElementById('archiveDate').value=archiveDate; return data;}
+function renderArchiveDays(){const el=document.getElementById('archiveDays'); if(!archiveDaysData.length){el.innerHTML='<div class="alert alert-secondary mb-0">Noch keine gespeicherten Personenbilder.</div>';return;} el.innerHTML=archiveDaysData.map(d=>`<button class="archive-day ${d.date===archiveDate?'active':''}" onclick="selectArchiveDate('${aesc(d.date)}')"><strong>${aesc(displayDay(d.date))}</strong><span>${d.count} Ereignisse</span><small class="text-secondary">${d.crop_count||0} Crops</small></button>`).join('');}
+function selectArchiveDate(v){archiveDate=v;archiveOffset=0;document.getElementById('archiveDate').value=v;renderArchiveDays();loadArchivePage();}
+function selectToday(){selectArchiveDate(localDateValue(new Date()));}
+function jumpArchiveDay(delta){const d=new Date((archiveDate||localDateValue(new Date()))+'T12:00:00');d.setDate(d.getDate()+delta);selectArchiveDate(localDateValue(d));}
+async function loadArchivePage(){if(!archiveDate) return; const params=new URLSearchParams({date_from:archiveDate,date_to:archiveDate,counted_only:'false',limit:String(archiveLimit),offset:String(archiveOffset)}); const data=await fetch('/api/people/images/history?'+params).then(r=>r.json()); const rows=data.entries||[]; document.getElementById('archiveHeading').textContent=displayDay(archiveDate); document.getElementById('archiveInfo').textContent=`${data.total||0} Ereignisse mit Bildern`; const grid=document.getElementById('archiveGrid'); if(!rows.length){grid.innerHTML='<div class="archive-empty text-secondary"><i class="fas fa-image fa-2x mb-3"></i><div>Für diesen Tag sind keine Bilder gespeichert.</div></div>';}else{grid.innerHTML=rows.map(row=>{const u=row.image_urls||{};const main=u.crop||u.annotated||u.full_frame||'';const links=[['crop','Crop'],['annotated','Annotiert'],['full_frame','Vollbild']].filter(([k])=>u[k]).map(([k,l])=>`<a class="btn btn-sm btn-outline-secondary" href="${aesc(u[k])}" target="_blank">${l}</a>`).join('');return `<article class="archive-card">${main?`<a href="${aesc(main)}" target="_blank"><img loading="lazy" src="${aesc(main)}" alt="Personenbild"></a>`:'<div class="archive-empty">Kein Bild</div>'}<div class="archive-card-body"><strong>${aesc(displayTime(row.timestamp))}</strong><div class="small text-secondary mb-2">Track ${aesc(row.track_id??'-')} · ${aesc(row.direction||'unbekannt')} · ${((Number(row.confidence)||0)*100).toFixed(1)}%</div><div class="archive-image-links mb-2">${links}</div><div class="d-flex gap-2"><button class="btn btn-sm btn-outline-info" onclick="location.href='/people?event=${encodeURIComponent(row.id)}'"><i class="fas fa-eye"></i></button><button class="btn btn-sm btn-outline-danger" onclick="deleteArchiveEvent('${aesc(row.id)}')"><i class="fas fa-trash"></i></button></div></div></article>`;}).join('');} const first=data.total?data.offset+1:0;const last=Math.min((data.offset||0)+(data.limit||archiveLimit),data.total||0);document.getElementById('archivePageInfo').textContent=`${first}–${last} von ${data.total||0}`;document.getElementById('archivePrev').disabled=(data.offset||0)<=0;document.getElementById('archiveNext').disabled=!data.has_more;}
+function changeArchivePage(delta){archiveOffset=Math.max(0,archiveOffset+delta*archiveLimit);loadArchivePage();}
+async function saveArchiveRetention(){const days=Math.max(0,Math.min(3650,Number(document.getElementById('archiveRetentionInput').value)||0)); const data=await fetch('/api/config/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_history_retention_days:days,image_history_auto_cleanup_enabled:true,image_history_cleanup_on_add:true})}).then(r=>r.json()); if(!data.success){alert(data.error||'Speichern fehlgeschlagen');return;} alert(`Bildaufbewahrung auf ${days===0?'unbegrenzt':days+' Tage'} gesetzt.`);await loadArchiveDays(false);}
+async function cleanupArchiveNow(){const days=Math.max(0,Number(document.getElementById('archiveRetentionInput').value)||0);if(days<=0){alert('Bei 0 Tagen ist die Aufbewahrung unbegrenzt.');return;}if(!confirm(`Alle Personenbilder älter als ${days} Tage jetzt löschen? Die statistischen Ereignisse bleiben erhalten.`))return;const data=await fetch('/api/people/images/cleanup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retention_days:days,delete_records:false})}).then(r=>r.json());alert(`${data.deleted_images||0} Bilddateien gelöscht.`);archiveOffset=0;await loadArchiveDays(true);await loadArchivePage();}
+async function deleteArchiveEvent(id){if(!confirm('Diesen Eintrag und seine Bilder löschen?'))return;const data=await fetch(`/api/people/history/${encodeURIComponent(id)}/delete`,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({delete_images:true})}).then(r=>r.json());if(!data.success){alert(data.error||'Löschen fehlgeschlagen');return;}await loadArchiveDays(false);await loadArchivePage();}
+document.addEventListener('DOMContentLoaded',async()=>{document.getElementById('archiveDate').addEventListener('change',e=>selectArchiveDate(e.target.value));await loadArchiveDays(true);await loadArchivePage();});
+</script>
+{% endblock %}

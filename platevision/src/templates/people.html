@@ -18,8 +18,8 @@
             <a href="/test#recognitionTestSettingsCard" class="btn btn-outline-info"><i class="fas fa-flask me-2"></i>Test & Upload Einstellungen</a>
             <button class="btn btn-outline-success" onclick="runSnapshotTest()"><i class="fas fa-vial me-2"></i>Live analysieren</button>
             <button class="btn btn-outline-danger" onclick="cleanupPeopleHistory()"><i class="fas fa-broom me-2"></i>Cleanup</button>
-            <a href="/api/people/export?format=csv" class="btn btn-outline-primary"><i class="fas fa-file-csv me-2"></i>CSV</a>
-            <a href="/api/people/export?format=json" class="btn btn-outline-secondary"><i class="fas fa-file-code me-2"></i>JSON</a>
+            <button type="button" class="btn btn-outline-primary" onclick="downloadPeopleExport('csv')"><i class="fas fa-file-csv me-2"></i>CSV</button>
+            <button type="button" class="btn btn-outline-secondary" onclick="downloadPeopleExport('json')"><i class="fas fa-file-code me-2"></i>JSON</button>
         </div>
     </div>
 </div>
@@ -30,26 +30,33 @@
 </div>
 
 <div class="row g-3 mb-4" id="peopleSummary">
-    <div class="col-md-3"><div class="stat-card"><div class="stat-icon info"><i class="fas fa-person-walking"></i></div><div class="stat-content"><div class="stat-value" id="todayPersons">-</div><div class="stat-label">Heute gezählt</div></div></div></div>
-    <div class="col-md-3"><div class="stat-card"><div class="stat-icon success"><i class="fas fa-users"></i></div><div class="stat-content"><div class="stat-value" id="totalPersons">-</div><div class="stat-label">Zeitraum gesamt</div></div></div></div>
-    <div class="col-md-3"><div class="stat-card"><div class="stat-icon warning"><i class="fas fa-route"></i></div><div class="stat-content"><div class="stat-value" id="lineCrossings">-</div><div class="stat-label">Linienereignisse</div></div></div></div>
-    <div class="col-md-3"><div class="stat-card"><div class="stat-icon primary"><i class="fas fa-bullseye"></i></div><div class="stat-content"><div class="stat-value" id="avgConfidence">-</div><div class="stat-label">Ø Konfidenz</div></div></div></div>
+    <div class="col-xl-2 col-md-4"><div class="stat-card"><div class="stat-icon info"><i class="fas fa-person-walking"></i></div><div class="stat-content"><div class="stat-value" id="todayPersons">-</div><div class="stat-label">Heute gezählt</div></div></div></div>
+    <div class="col-xl-2 col-md-4"><div class="stat-card"><div class="stat-icon success"><i class="fas fa-users"></i></div><div class="stat-content"><div class="stat-value" id="totalPersons">-</div><div class="stat-label">Zeitraum gesamt</div></div></div></div>
+    <div class="col-xl-2 col-md-4"><div class="stat-card"><div class="stat-icon primary"><i class="fas fa-user-clock"></i></div><div class="stat-content"><div class="stat-value" id="activePersons">-</div><div class="stat-label">Aktuell anwesend</div></div></div></div>
+    <div class="col-xl-2 col-md-4"><div class="stat-card"><div class="stat-icon info"><i class="fas fa-layer-group"></i></div><div class="stat-content"><div class="stat-value" id="sessionCount">-</div><div class="stat-label">Sitzungen</div></div></div></div>
+    <div class="col-xl-2 col-md-4"><div class="stat-card"><div class="stat-icon warning"><i class="fas fa-shield-halved"></i></div><div class="stat-content"><div class="stat-value" id="repeatBlocked">-</div><div class="stat-label">Doppelte blockiert</div></div></div></div>
+    <div class="col-xl-2 col-md-4"><div class="stat-card"><div class="stat-icon primary"><i class="fas fa-bullseye"></i></div><div class="stat-content"><div class="stat-value" id="avgConfidence">-</div><div class="stat-label">Ø Konfidenz</div></div></div></div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body py-3" id="peopleInsights"><span class="text-secondary">Lade Personen-Insights...</span></div>
 </div>
 
 <div class="row g-3 mb-4">
-    <div class="col-md-6">
+    <div class="col-md-8">
         <div class="card h-100">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="card-title mb-0"><i class="fas fa-images me-2"></i>Personen-Bild-History</h5>
-                <div class="d-flex gap-2"><button class="btn btn-sm btn-outline-info" onclick="loadPeopleImageHistory()"><i class="fas fa-rotate me-1"></i>Aktualisieren</button><button class="btn btn-sm btn-outline-danger" onclick="cleanupPeopleImages()"><i class="fas fa-broom me-1"></i>Auto-Cleanup</button></div>
+                <h5 class="card-title mb-0"><i class="fas fa-images me-2"></i>Neueste Personenbilder</h5>
+                <div class="d-flex flex-wrap gap-2"><a class="btn btn-sm btn-primary" href="/people/gallery"><i class="fas fa-calendar-days me-1"></i>Komplette Galerie</a><button class="btn btn-sm btn-outline-info" onclick="loadPeopleImageHistory()"><i class="fas fa-rotate me-1"></i>Aktualisieren</button><button class="btn btn-sm btn-outline-danger" onclick="cleanupPeopleImages()"><i class="fas fa-broom me-1"></i>Bereinigen</button></div>
             </div>
             <div class="card-body">
                 <p class="text-secondary small mb-3">Zeigt nur gespeicherte Personen-Crops. Einzelne Einträge können manuell gelöscht werden.</p>
                 <div id="peopleImageGallery" class="people-image-gallery"><div class="text-secondary">Lade Bild-History...</div></div>
+                <div class="d-flex justify-content-between align-items-center mt-3"><small class="text-secondary" id="peopleImagePageInfo">-</small><div class="btn-group btn-group-sm"><button class="btn btn-outline-secondary" id="peopleImagePrev" onclick="changePeopleImagePage(-1)"><i class="fas fa-chevron-left"></i></button><button class="btn btn-outline-secondary" id="peopleImageNext" onclick="changePeopleImagePage(1)"><i class="fas fa-chevron-right"></i></button></div></div>
             </div>
         </div>
     </div>
-    <div class="col-md-6">
+    <div class="col-md-4">
         <div class="card h-100">
             <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-shield-halved me-2"></i>Mehrfachzählungs-Schutz</h5></div>
             <div class="card-body" id="peopleRepeatGuardPanel"><p class="text-secondary mb-0">Lade Schutz-Einstellungen...</p></div>
@@ -135,16 +142,44 @@
 </div>
 
 <div class="card mb-4">
-    <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-filter me-2"></i>Filter</h5></div>
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <h5 class="card-title mb-0"><i class="fas fa-filter me-2"></i>Historie filtern</h5>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Schnellzeitraum">
+            <button class="btn btn-outline-secondary" type="button" onclick="setPeopleRange(1)">Heute</button>
+            <button class="btn btn-outline-secondary" type="button" onclick="setPeopleRange(7)">7 Tage</button>
+            <button class="btn btn-outline-secondary" type="button" onclick="setPeopleRange(30)">30 Tage</button>
+            <button class="btn btn-outline-secondary" type="button" onclick="resetPeopleFilters()">Zurücksetzen</button>
+        </div>
+    </div>
     <div class="card-body">
         <div class="row g-3 align-items-end">
-            <div class="col-md-2"><label class="form-label">Tage</label><input type="number" min="1" max="365" class="form-control" id="days" value="7"></div>
-            <div class="col-md-2"><label class="form-label">Von</label><input type="date" class="form-control" id="dateFrom"></div>
-            <div class="col-md-2"><label class="form-label">Bis</label><input type="date" class="form-control" id="dateTo"></div>
-            <div class="col-md-2"><label class="form-label">Richtung</label><select class="form-select" id="direction"><option value="all">Alle</option><option value="down">runter</option><option value="up">hoch</option><option value="right">rechts</option><option value="left">links</option><option value="unknown">unbekannt</option></select></div>
-            <div class="col-md-2"><label class="form-label">Min. Konfidenz</label><input type="number" class="form-control" id="minConfidence" min="0" max="1" step="0.01" value="0"></div>
-            <div class="col-md-2"><button class="btn btn-primary w-100" onclick="loadPeopleStats()"><i class="fas fa-search me-2"></i>Aktualisieren</button></div>
+            <div class="col-xl-1 col-md-2"><label class="form-label">Tage</label><input type="number" min="1" max="3650" class="form-control" id="days" value="7"></div>
+            <div class="col-xl-2 col-md-3"><label class="form-label">Von</label><input type="date" class="form-control" id="dateFrom"></div>
+            <div class="col-xl-2 col-md-3"><label class="form-label">Bis</label><input type="date" class="form-control" id="dateTo"></div>
+            <div class="col-xl-2 col-md-4"><label class="form-label">Freitext / Track / Label</label><input type="search" class="form-control" id="peopleQuery" placeholder="z. B. Track 14"></div>
+            <div class="col-xl-1 col-md-2"><label class="form-label">Richtung</label><select class="form-select" id="direction"><option value="all">Alle</option><option value="down">runter</option><option value="up">hoch</option><option value="right">rechts</option><option value="left">links</option><option value="unknown">unbekannt</option></select></div>
+            <div class="col-xl-2 col-md-3"><label class="form-label">Ereignis</label><select class="form-select" id="eventType"><option value="all">Alle</option><option value="line_crossing">Linienübertritt</option><option value="appearance">Erschienen</option><option value="person_detected">Erkannt</option><option value="repeat_blocked">Wiederholung blockiert</option></select></div>
+            <div class="col-xl-2 col-md-3"><label class="form-label">Zählstatus</label><select class="form-select" id="countedStatus"><option value="all">Alle</option><option value="true">Gezählt</option><option value="false">Nicht gezählt</option></select></div>
+            <div class="col-xl-2 col-md-3"><label class="form-label">Prüfstatus</label><select class="form-select" id="reviewStatus"><option value="all">Alle</option><option value="unreviewed">Ungeprüft</option><option value="confirmed">Bestätigt</option><option value="needs_review">Prüfen</option><option value="ignored">Ignoriert</option></select></div>
+            <div class="col-xl-2 col-md-3"><label class="form-label">Bilder</label><select class="form-select" id="hasImages"><option value="all">Alle</option><option value="true">Mit Bildern</option><option value="false">Ohne Bilder</option></select></div>
+            <div class="col-xl-2 col-md-3"><label class="form-label">Quelle</label><input type="text" class="form-control" id="peopleSource" placeholder="rtsp / upload"></div>
+            <div class="col-xl-2 col-md-3"><label class="form-label">Track-ID</label><input type="text" class="form-control" id="peopleTrack" placeholder="Track"></div>
+            <div class="col-xl-2 col-md-3"><label class="form-label">Min. Konfidenz</label><input type="number" class="form-control" id="minConfidence" min="0" max="1" step="0.01" value="0"></div>
+            <div class="col-xl-2 col-md-4 d-grid"><button class="btn btn-primary" type="button" onclick="refreshPeopleData(true)"><i class="fas fa-search me-2"></i>Anwenden</button></div>
         </div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <h5 class="card-title mb-0"><i class="fas fa-layer-group me-2"></i>Personen-Sitzungen</h5>
+        <div class="d-flex align-items-center gap-2"><span class="text-secondary small" id="sessionMeta">Zusammengehörige Erkennungen werden nach Track/Position und Zeitabstand gruppiert.</span><div class="btn-group btn-group-sm"><button class="btn btn-outline-secondary" id="sessionPrev" onclick="changeSessionPage(-1)"><i class="fas fa-chevron-left"></i></button><button class="btn btn-outline-secondary" id="sessionNext" onclick="changeSessionPage(1)"><i class="fas fa-chevron-right"></i></button></div></div>
+    </div>
+    <div class="card-body table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead><tr><th>Vorschau</th><th>Zeitraum</th><th>Dauer</th><th>Track</th><th>Ereignisse</th><th>Gezählt</th><th>Richtung</th><th>Status</th><th></th></tr></thead>
+            <tbody id="sessionRows"><tr><td colspan="9" class="text-secondary">Lade Sitzungen...</td></tr></tbody>
+        </table>
     </div>
 </div>
 
@@ -169,22 +204,39 @@
 </div>
 
 <div class="row g-4">
-    <div class="col-lg-8">
+    <div class="col-12">
         <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="card-title mb-0"><i class="fas fa-clock-rotate-left me-2"></i>Personen-Historie</h5>
-                <button class="btn btn-sm btn-outline-danger" onclick="clearPeopleHistory()"><i class="fas fa-trash me-1"></i>Leeren</button>
+            <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div>
+                    <h5 class="card-title mb-0"><i class="fas fa-clock-rotate-left me-2"></i>Personen-Historie</h5>
+                    <small class="text-secondary" id="historyMeta">Lade Ereignisse...</small>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                    <button class="btn btn-sm btn-outline-danger" id="bulkDeletePeopleButton" onclick="bulkDeletePeopleEvents()" disabled><i class="fas fa-trash me-1"></i>Auswahl löschen</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="refreshPeopleData(false)"><i class="fas fa-rotate me-1"></i>Aktualisieren</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="clearPeopleHistory()"><i class="fas fa-trash-can me-1"></i>Alles leeren</button>
+                </div>
             </div>
-            <div class="card-body table-responsive">
-                <table class="table table-hover align-middle">
-                    <thead><tr><th>Zeit</th><th>Ereignis</th><th>Richtung</th><th>Track</th><th>Konfidenz</th><th>Fläche</th><th>Quelle</th><th>Bilder</th><th></th></tr></thead>
-                    <tbody id="historyRows"><tr><td colspan="9" class="text-secondary">Lade...</td></tr></tbody>
-                </table>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0 people-history-table">
+                        <thead><tr><th><input class="form-check-input" type="checkbox" id="selectAllPeople" onchange="toggleAllPeopleRows(this.checked)"></th><th>Bild</th><th>Zeit</th><th>Ereignis</th><th>Richtung</th><th>Track</th><th>Konfidenz</th><th>Quelle</th><th>Prüfung</th><th>Label / Notiz</th><th></th></tr></thead>
+                        <tbody id="historyRows"><tr><td colspan="11" class="text-secondary p-4">Lade Historie...</td></tr></tbody>
+                    </table>
+                </div>
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 p-3 border-top">
+                    <div class="text-secondary small" id="historyPageInfo">-</div>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary" id="historyPrev" onclick="changeHistoryPage(-1)"><i class="fas fa-chevron-left"></i></button>
+                        <button class="btn btn-outline-secondary disabled" id="historyPageLabel">Seite 1</button>
+                        <button class="btn btn-outline-secondary" id="historyNext" onclick="changeHistoryPage(1)"><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
-    <div class="col-lg-4">
-        <div class="card mb-4">
+    <div class="col-lg-5">
+        <div class="card h-100">
             <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-vial me-2"></i>Live-Kalibrierung</h5></div>
             <div class="card-body">
                 <p class="text-secondary">Analysiere den aktuellen Live-Snapshot mit den gespeicherten Einstellungen. Für Bild-Uploads steht zusätzlich die Test-Seite bereit.</p>
@@ -192,8 +244,31 @@
                 <div id="snapshotResult" class="mt-3"></div>
             </div>
         </div>
-        <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>Für genaue Werte sollte die virtuelle Zähllinie im Bild so gesetzt werden, dass jede Person sie genau einmal überquert.
+    </div>
+    <div class="col-lg-7">
+        <div class="alert alert-info h-100 mb-0 d-flex align-items-center">
+            <div><i class="fas fa-info-circle me-2"></i>Für genaue Werte sollte die virtuelle Zähllinie so gesetzt werden, dass jede Person sie genau einmal überquert. Die Sitzungsansicht verwendet keine Gesichtserkennung, sondern Track-ID, Bildposition und Zeitabstand.</div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="peopleEventModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title"><i class="fas fa-person-circle-check me-2"></i>Personenereignis</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button></div>
+            <div class="modal-body">
+                <input type="hidden" id="peopleEventId">
+                <div class="row g-4">
+                    <div class="col-lg-7"><div id="peopleEventImages" class="people-event-images"></div></div>
+                    <div class="col-lg-5">
+                        <div id="peopleEventMetadata" class="mb-3"></div>
+                        <div class="mb-3"><label class="form-label">Label</label><input class="form-control" id="peopleEventLabel" maxlength="120" placeholder="z. B. Eingang Nord"></div>
+                        <div class="mb-3"><label class="form-label">Prüfstatus</label><select class="form-select" id="peopleEventReview"><option value="unreviewed">Ungeprüft</option><option value="confirmed">Bestätigt</option><option value="needs_review">Prüfen</option><option value="ignored">Ignoriert</option></select></div>
+                        <div class="mb-3"><label class="form-label">Notiz</label><textarea class="form-control" id="peopleEventNote" rows="5" maxlength="2000" placeholder="Eigene Notiz zum Ereignis"></textarea></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-outline-danger me-auto" onclick="deleteCurrentPeopleEvent()"><i class="fas fa-trash me-1"></i>Löschen</button><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button><button type="button" class="btn btn-primary" onclick="savePeopleEventReview()"><i class="fas fa-save me-1"></i>Speichern</button></div>
         </div>
     </div>
 </div>
@@ -201,55 +276,236 @@
 
 {% block extra_js %}
 <script>
+let peopleHistoryOffset = 0;
+const peopleHistoryLimit = 40;
+let peopleSessionOffset = 0;
+const peopleSessionLimit = 20;
+let selectedPeopleEvents = new Set();
+let peopleImageOffset = 0;
+const peopleImageLimit = 18;
+let peopleEventModalInstance = null;
+
+function valueOf(id, fallback = '') {
+    const el = document.getElementById(id);
+    return el ? el.value : fallback;
+}
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+}
 function queryParams() {
     const params = new URLSearchParams();
-    const days = document.getElementById('days').value;
-    const dateFrom = document.getElementById('dateFrom').value;
-    const dateTo = document.getElementById('dateTo').value;
-    const direction = document.getElementById('direction').value;
-    const minConfidence = document.getElementById('minConfidence').value;
-    if (days) params.set('days', days);
-    if (dateFrom) params.set('date_from', dateFrom);
-    if (dateTo) params.set('date_to', dateTo);
-    if (direction && direction !== 'all') params.set('direction', direction);
-    if (minConfidence) params.set('min_confidence', minConfidence);
+    const values = {
+        days: valueOf('days'), date_from: valueOf('dateFrom'), date_to: valueOf('dateTo'),
+        direction: valueOf('direction'), min_confidence: valueOf('minConfidence'),
+        event_type: valueOf('eventType'), counted: valueOf('countedStatus'),
+        review_status: valueOf('reviewStatus'), has_images: valueOf('hasImages'),
+        source: valueOf('peopleSource'), track_id: valueOf('peopleTrack'), query: valueOf('peopleQuery')
+    };
+    Object.entries(values).forEach(([key, value]) => {
+        if (value !== '' && value !== null && value !== undefined && value !== 'all') params.set(key, value);
+    });
     return params;
 }
+function setPeopleRange(days) {
+    document.getElementById('days').value = days;
+    document.getElementById('dateFrom').value = '';
+    document.getElementById('dateTo').value = '';
+    refreshPeopleData(true);
+}
+function resetPeopleFilters() {
+    ['dateFrom','dateTo','peopleQuery','peopleSource','peopleTrack'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+    document.getElementById('days').value = 7;
+    document.getElementById('direction').value = 'all';
+    document.getElementById('eventType').value = 'all';
+    document.getElementById('countedStatus').value = 'all';
+    document.getElementById('reviewStatus').value = 'all';
+    document.getElementById('hasImages').value = 'all';
+    document.getElementById('minConfidence').value = 0;
+    refreshPeopleData(true);
+}
+function downloadPeopleExport(format) {
+    const params = queryParams();
+    params.set('format', format);
+    window.location.href = '/api/people/export?' + params.toString();
+}
 function pct(v) { return ((Number(v)||0) * 100).toFixed(1) + '%'; }
-function dirText(d) { return {down:'runter', up:'hoch', right:'rechts', left:'links', unknown:'unbekannt'}[d] || d; }
+function dirText(d) { return {down:'runter', up:'hoch', right:'rechts', left:'links', unknown:'unbekannt', both:'beide'}[d] || d || '-'; }
+function eventText(value) { return {line_crossing:'Linienübertritt', appearance:'Erschienen', person_detected:'Erkannt', repeat_blocked:'Wiederholung blockiert', simulation:'Simulation'}[value] || value || '-'; }
+function reviewBadge(value) {
+    const status = value || 'unreviewed';
+    const map = {unreviewed:['secondary','Ungeprüft'],confirmed:['success','Bestätigt'],needs_review:['warning text-dark','Prüfen'],ignored:['dark','Ignoriert']};
+    const item = map[status] || map.unreviewed;
+    return `<span class="badge bg-${item[0]}">${item[1]}</span>`;
+}
+function durationText(seconds) {
+    const total = Math.max(0, Number(seconds)||0);
+    if (total < 60) return `${total}s`;
+    const minutes = Math.floor(total / 60), rest = total % 60;
+    if (minutes < 60) return `${minutes}m ${rest}s`;
+    return `${Math.floor(minutes/60)}h ${minutes%60}m`;
+}
 function imageBadges(row) {
-    const images = row.images || {};
-    const count = Object.keys(images).length;
+    const count = Number(row.image_count ?? Object.keys(row.images || {}).length);
     return count ? `<span class="badge bg-info">${count} Bild(er)</span>` : '<span class="text-secondary">-</span>';
 }
-function loadPeopleStats() {
-    fetch('/api/people/statistics?' + queryParams().toString()).then(r => r.json()).then(data => {
-        const s = data.summary || {};
-        document.getElementById('todayPersons').textContent = s.today_persons ?? 0;
-        document.getElementById('totalPersons').textContent = s.total_persons ?? 0;
-        document.getElementById('lineCrossings').textContent = (data.event_types && data.event_types.line_crossing) || 0;
-        document.getElementById('avgConfidence').textContent = pct(s.average_confidence || 0);
-        const daily = data.daily || [];
-        document.getElementById('dailyRows').innerHTML = daily.length ? daily.map(row => `
-            <tr><td>${row.date}</td><td><strong>${row.persons}</strong></td><td>${row.detections}</td><td>${row.line_crossings}</td><td>${Object.entries(row.directions || {}).map(([k,v]) => `${dirText(k)}: ${v}`).join('<br>')}</td></tr>
-        `).join('') : '<tr><td colspan="5" class="text-secondary">Keine Personenereignisse im Zeitraum.</td></tr>';
-        const hourly = data.hourly || [];
-        const max = Math.max(...hourly.map(h => h.count), 1);
-        document.getElementById('hourlyBars').innerHTML = hourly.length ? hourly.slice(-48).map(h => `
-            <div class="mb-2"><div class="d-flex justify-content-between"><small>${h.hour}</small><small>${h.count}</small></div><div class="progress progress-thin"><div class="progress-bar" style="width:${(h.count/max)*100}%"></div></div></div>
-        `).join('') : '<p class="text-secondary">Keine Stundenwerte.</p>';
-        const latest = data.latest || [];
-        document.getElementById('historyRows').innerHTML = latest.length ? latest.map(row => `
-            <tr><td>${formatDate(row.timestamp)}</td><td>${row.event_type || '-'}</td><td>${dirText(row.direction || 'unknown')}</td><td>${row.track_id ?? '-'}</td><td>${pct(row.confidence || 0)}</td><td>${(row.area_percent ?? '-')}</td><td>${row.source || '-'}</td><td>${imageBadges(row)}</td><td><button class="btn btn-sm btn-outline-danger" onclick="deletePeopleEvent('${row.id}')"><i class="fas fa-trash"></i></button></td></tr>
-        `).join('') : '<tr><td colspan="9" class="text-secondary">Keine Historie vorhanden.</td></tr>';
-    });
+function historyThumb(row) {
+    const urls = row.image_urls || {};
+    const src = urls.crop || urls.annotated || urls.full_frame;
+    return src ? `<img class="people-history-thumb" src="${escapeHtml(src)}" alt="Person">` : '<div class="people-history-thumb placeholder"><i class="fas fa-user"></i></div>';
+}
+async function loadPeopleStats() {
+    const response = await fetch('/api/people/statistics?' + queryParams().toString());
+    const data = await response.json();
+    const s = data.summary || {};
+    document.getElementById('todayPersons').textContent = s.today_persons ?? 0;
+    document.getElementById('totalPersons').textContent = s.total_persons ?? 0;
+    document.getElementById('activePersons').textContent = s.active_now ?? 0;
+    document.getElementById('sessionCount').textContent = s.session_count ?? 0;
+    document.getElementById('repeatBlocked').textContent = s.repeat_blocked ?? 0;
+    document.getElementById('avgConfidence').textContent = pct(s.average_confidence || 0);
+    const sourceText = Object.entries(data.sources || {}).sort((a,b) => b[1]-a[1]).map(([key,value]) => `${escapeHtml(key)}: ${value}`).join(' · ') || 'keine';
+    const peakText = s.peak_hour ? `${escapeHtml(s.peak_hour.hour)} (${s.peak_hour.count})` : 'keine';
+    document.getElementById('peopleInsights').innerHTML = `<div class="row g-3 text-center text-md-start"><div class="col-md"><div class="mini-label">Spitzenstunde</div><strong>${peakText}</strong></div><div class="col-md"><div class="mini-label">Ereignisse</div><strong>${s.events || 0}</strong> <small class="text-secondary">(${s.uncounted_events || 0} nicht gezählt)</small></div><div class="col-md"><div class="mini-label">Tracks / Bildereignisse</div><strong>${s.unique_tracks || 0} / ${s.image_events || 0}</strong></div><div class="col-md-5"><div class="mini-label">Quellen</div><strong>${sourceText}</strong></div></div>`;
+    const daily = data.daily || [];
+    document.getElementById('dailyRows').innerHTML = daily.length ? daily.map(row => `
+        <tr><td>${escapeHtml(row.date)}</td><td><strong>${row.persons}</strong></td><td>${row.detections}</td><td>${row.line_crossings}</td><td>${Object.entries(row.directions || {}).map(([k,v]) => `${escapeHtml(dirText(k))}: ${v}`).join('<br>')}</td></tr>
+    `).join('') : '<tr><td colspan="5" class="text-secondary">Keine Personenereignisse im Zeitraum.</td></tr>';
+    const hourly = data.hourly || [];
+    const max = Math.max(...hourly.map(h => h.count), 1);
+    document.getElementById('hourlyBars').innerHTML = hourly.length ? hourly.slice(-48).map(h => `
+        <div class="mb-2"><div class="d-flex justify-content-between"><small>${escapeHtml(h.hour)}</small><small>${h.count}</small></div><div class="progress progress-thin"><div class="progress-bar" style="width:${(h.count/max)*100}%"></div></div></div>
+    `).join('') : '<p class="text-secondary">Keine Stundenwerte.</p>';
+}
+async function loadPeopleHistory() {
+    const params = queryParams();
+    params.set('limit', peopleHistoryLimit);
+    params.set('offset', peopleHistoryOffset);
+    params.set('counted_only', 'false');
+    const response = await fetch('/api/people/history?' + params.toString());
+    const data = await response.json();
+    const rows = data.entries || [];
+    selectedPeopleEvents.clear();
+    updateBulkDeleteButton();
+    const selectAll = document.getElementById('selectAllPeople'); if (selectAll) selectAll.checked = false;
+    document.getElementById('historyRows').innerHTML = rows.length ? rows.map(row => `
+        <tr>
+            <td><input class="form-check-input people-row-check" type="checkbox" value="${escapeHtml(row.id)}" onchange="togglePeopleSelection(this.value, this.checked)"></td>
+            <td>${historyThumb(row)}</td>
+            <td class="text-nowrap">${escapeHtml(formatDate(row.timestamp))}</td>
+            <td>${row.counted ? '<span class="badge bg-success">gezählt</span>' : '<span class="badge bg-secondary">nicht gezählt</span>'}<div class="small mt-1">${escapeHtml(eventText(row.event_type))}</div></td>
+            <td>${escapeHtml(dirText(row.direction))}</td>
+            <td><code>${escapeHtml(row.track_id ?? '-')}</code></td>
+            <td>${pct(row.confidence || 0)}</td>
+            <td>${escapeHtml(row.source || '-')}</td>
+            <td>${reviewBadge(row.review_status)}</td>
+            <td><strong>${escapeHtml(row.label || '-')}</strong><div class="small text-secondary people-note-preview">${escapeHtml(row.note || '')}</div></td>
+            <td class="text-nowrap"><button class="btn btn-sm btn-outline-info me-1" onclick="openPeopleEvent('${escapeHtml(row.id)}')"><i class="fas fa-eye"></i></button><button class="btn btn-sm btn-outline-danger" onclick="deletePeopleEvent('${escapeHtml(row.id)}')"><i class="fas fa-trash"></i></button></td>
+        </tr>`).join('') : '<tr><td colspan="11" class="text-secondary p-4">Keine Historie für diese Filter.</td></tr>';
+    const first = data.total ? data.offset + 1 : 0;
+    const last = Math.min(data.offset + data.limit, data.total || 0);
+    document.getElementById('historyMeta').textContent = `${data.total || 0} Ereignisse`;
+    document.getElementById('historyPageInfo').textContent = `${first}–${last} von ${data.total || 0}`;
+    const page = Math.floor((data.offset || 0) / (data.limit || peopleHistoryLimit)) + 1;
+    document.getElementById('historyPageLabel').textContent = `Seite ${page}`;
+    document.getElementById('historyPrev').disabled = (data.offset || 0) <= 0;
+    document.getElementById('historyNext').disabled = !data.has_more;
+}
+async function loadPeopleSessions() {
+    const params = queryParams();
+    params.set('limit', peopleSessionLimit);
+    params.set('offset', peopleSessionOffset);
+    params.set('counted_only', 'false');
+    const response = await fetch('/api/people/sessions?' + params.toString());
+    const data = await response.json();
+    const rows = data.sessions || [];
+    document.getElementById('sessionMeta').textContent = `${data.total || 0} Sitzungen · Trennung nach ${data.session_gap_minutes || 5} Minuten Pause`;
+    document.getElementById('sessionRows').innerHTML = rows.length ? rows.map(row => `
+        <tr><td>${row.preview ? `<img class="people-history-thumb" src="${escapeHtml(row.preview)}" alt="Person">` : '<div class="people-history-thumb placeholder"><i class="fas fa-user"></i></div>'}</td>
+        <td><div>${escapeHtml(formatDate(row.first_seen))}</div><small class="text-secondary">bis ${escapeHtml(formatDate(row.last_seen))}</small></td>
+        <td>${durationText(row.duration_seconds)}</td><td><code>${escapeHtml(row.track_id ?? '-')}</code></td><td>${row.event_count}</td><td>${row.counted_events}</td>
+        <td>${Object.entries(row.directions || {}).map(([key,value]) => `${escapeHtml(dirText(key))}: ${value}`).join('<br>') || '-'}</td>
+        <td>${row.active ? '<span class="badge bg-success">aktiv</span>' : '<span class="badge bg-secondary">beendet</span>'}</td>
+        <td><button class="btn btn-sm btn-outline-info" onclick="openPeopleEvent('${escapeHtml(row.last_event_id)}')"><i class="fas fa-eye"></i></button></td></tr>`).join('') : '<tr><td colspan="9" class="text-secondary">Keine Sitzungen für diese Filter.</td></tr>';
+    document.getElementById('sessionPrev').disabled = (data.offset || 0) <= 0;
+    document.getElementById('sessionNext').disabled = !data.has_more;
+}
+function changeSessionPage(delta) {
+    peopleSessionOffset = Math.max(0, peopleSessionOffset + delta * peopleSessionLimit);
+    loadPeopleSessions();
+}
+async function refreshPeopleData(resetPage = false) {
+    if (resetPage) { peopleHistoryOffset = 0; peopleSessionOffset = 0; peopleImageOffset = 0; }
+    await Promise.all([loadPeopleStats(), loadPeopleHistory(), loadPeopleSessions(), loadPeoplePresence(), loadPeopleImageHistory()]);
+}
+function changeHistoryPage(delta) {
+    peopleHistoryOffset = Math.max(0, peopleHistoryOffset + delta * peopleHistoryLimit);
+    loadPeopleHistory();
+    document.getElementById('historyRows')?.scrollIntoView({behavior:'smooth', block:'start'});
+}
+function togglePeopleSelection(id, checked) {
+    if (checked) selectedPeopleEvents.add(id); else selectedPeopleEvents.delete(id);
+    updateBulkDeleteButton();
+}
+function toggleAllPeopleRows(checked) {
+    document.querySelectorAll('.people-row-check').forEach(box => { box.checked = checked; togglePeopleSelection(box.value, checked); });
+}
+function updateBulkDeleteButton() {
+    const button = document.getElementById('bulkDeletePeopleButton');
+    if (!button) return;
+    button.disabled = selectedPeopleEvents.size === 0;
+    button.innerHTML = `<i class="fas fa-trash me-1"></i>Auswahl löschen${selectedPeopleEvents.size ? ` (${selectedPeopleEvents.size})` : ''}`;
+}
+async function bulkDeletePeopleEvents() {
+    const ids = Array.from(selectedPeopleEvents);
+    if (!ids.length || !confirm(`${ids.length} ausgewählte Personenereignisse inklusive Bilder löschen?`)) return;
+    const response = await fetch('/api/people/history/bulk-delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, delete_images:true})});
+    const data = await response.json();
+    if (!data.success) { alert(data.error || 'Löschen fehlgeschlagen'); return; }
+    await refreshPeopleData(false);
+}
+async function openPeopleEvent(id) {
+    const response = await fetch(`/api/people/history/${encodeURIComponent(id)}`);
+    const data = await response.json();
+    if (!data.success) { alert(data.error || 'Ereignis nicht gefunden'); return; }
+    const row = data.event || {};
+    document.getElementById('peopleEventId').value = row.id || '';
+    document.getElementById('peopleEventLabel').value = row.label || '';
+    document.getElementById('peopleEventNote').value = row.note || '';
+    document.getElementById('peopleEventReview').value = row.review_status || 'unreviewed';
+    const urls = row.image_urls || {};
+    const imageEntries = [['crop','Personen-Crop'],['annotated','Annotiert'],['full_frame','Vollbild']].filter(([key]) => urls[key]);
+    document.getElementById('peopleEventImages').innerHTML = imageEntries.length ? imageEntries.map(([key,label]) => `<a href="${escapeHtml(urls[key])}" target="_blank" class="people-event-image"><img src="${escapeHtml(urls[key])}" alt="${label}"><span>${label}</span></a>`).join('') : '<div class="alert alert-secondary">Keine Bilder gespeichert.</div>';
+    document.getElementById('peopleEventMetadata').innerHTML = `
+        <div class="people-summary-row"><span>Zeit</span><strong>${escapeHtml(formatDate(row.timestamp))}</strong></div>
+        <div class="people-summary-row"><span>Ereignis</span><strong>${escapeHtml(eventText(row.event_type))}</strong></div>
+        <div class="people-summary-row"><span>Zählstatus</span><strong>${row.counted ? 'Gezählt' : 'Nicht gezählt'}</strong></div>
+        <div class="people-summary-row"><span>Richtung</span><strong>${escapeHtml(dirText(row.direction))}</strong></div>
+        <div class="people-summary-row"><span>Track</span><code>${escapeHtml(row.track_id ?? '-')}</code></div>
+        <div class="people-summary-row"><span>Konfidenz</span><strong>${pct(row.confidence || 0)}</strong></div>
+        <div class="people-summary-row"><span>Quelle</span><strong>${escapeHtml(row.source || '-')}</strong></div>
+        <div class="people-summary-row"><span>ID</span><code class="text-break">${escapeHtml(row.id || '-')}</code></div>`;
+    peopleEventModalInstance = bootstrap.Modal.getOrCreateInstance(document.getElementById('peopleEventModal'));
+    peopleEventModalInstance.show();
+}
+async function savePeopleEventReview() {
+    const id = document.getElementById('peopleEventId').value;
+    const response = await fetch(`/api/people/history/${encodeURIComponent(id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label:valueOf('peopleEventLabel'), note:valueOf('peopleEventNote'), review_status:valueOf('peopleEventReview')})});
+    const data = await response.json();
+    if (!data.success) { alert(data.error || 'Speichern fehlgeschlagen'); return; }
+    peopleEventModalInstance?.hide();
+    await loadPeopleHistory();
+}
+async function deleteCurrentPeopleEvent() {
+    const id = document.getElementById('peopleEventId').value;
+    peopleEventModalInstance?.hide();
+    await deletePeopleEvent(id);
 }
 function clearPeopleHistory() {
     if (!confirm('Personen-Historie wirklich löschen?')) return;
-    fetch('/api/people/history/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({delete_images:true})}).then(r=>r.json()).then(() => { loadPeopleStats(); loadPeopleImageHistory(); loadPeoplePresence(); });
+    fetch('/api/people/history/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({delete_images:true})}).then(r=>r.json()).then(() => refreshPeopleData(true));
 }
 function loadPeoplePresence() {
-    fetch('/api/people/presence').then(r => r.json()).then(data => {
+    return fetch('/api/people/presence').then(r => r.json()).then(data => {
         const panel = document.getElementById('presencePanel');
         const active = data.active || [];
         panel.innerHTML = `<div class="d-flex justify-content-between align-items-center mb-2"><span>Aktive Tracks im Timeout-Fenster</span><strong class="fs-3">${data.active_count || 0}</strong></div><small class="text-secondary">Timeout: ${data.timeout_minutes || 0} Minuten</small>` +
@@ -432,7 +688,7 @@ function loadPeopleActiveSettings() {
             <div class="people-summary-row"><span>Session-Lücke</span><strong>${s.session_gap_minutes ?? '-'} min</strong></div>
             <div class="people-summary-row"><span>Anwesend Timeout</span><strong>${s.present_timeout_minutes ?? '-'} min</strong></div>
             <div class="people-summary-row"><span>Gleiche Person Sperre</span><strong>${onOff(s.person_recount_block_enabled)} · ${s.person_recount_block_minutes ?? 15} min</strong></div>
-            <div class="people-summary-row"><span>Bild-History</span><strong>${onOff(s.image_history_enabled)} · ${s.image_history_retention_days ?? '-'} Tage</strong></div>
+            <div id="peopleConfiguredRetention" data-days="${s.image_history_retention_days ?? 10}" class="people-summary-row"><span>Bild-History</span><strong>${onOff(s.image_history_enabled)} · ${s.image_history_retention_days ?? 10} Tage · Cleanup ${onOff(s.image_history_auto_cleanup_enabled)}</strong></div>
             <div class="people-summary-row"><span>Alle Detections</span><strong>${onOff(s.save_all_detections)}</strong></div>
             <div class="people-summary-row"><span>Aufbewahrung</span><strong>${s.retention_days ?? '-'} Tage</strong></div>
             <a href="/test#recognitionTestSettingsCard" class="btn btn-sm btn-outline-info w-100 mt-3"><i class="fas fa-flask me-1"></i>Test & Upload öffnen</a>`;
@@ -454,7 +710,7 @@ function loadPeopleModels() {
 function cleanupPeopleHistory() {
     if (!confirm('Personen-Historie nach Aufbewahrungszeit bereinigen?')) return;
     fetch('/api/people/cleanup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})})
-        .then(r=>r.json()).then(data => { alert(`${data.removed || 0} Einträge entfernt, ${data.remaining || 0} bleiben.`); loadPeopleStats(); loadPeoplePresence(); });
+        .then(r=>r.json()).then(data => { alert(`${data.removed || 0} Einträge entfernt, ${data.remaining || 0} bleiben.`); refreshPeopleData(false); });
 }
 
 
@@ -482,40 +738,53 @@ function peopleCropGalleryFromRows(rows) {
 
 function loadPeopleImageHistory() {
     const params = queryParams();
-    params.set('limit', '24');
+    params.set('limit', peopleImageLimit);
+    params.set('offset', peopleImageOffset);
     params.set('counted_only', 'false');
-    fetch('/api/people/images/history?' + params.toString()).then(r => r.json()).then(data => {
+    return fetch('/api/people/images/history?' + params.toString()).then(r => r.json()).then(data => {
         const gallery = document.getElementById('peopleImageGallery');
         const entries = data.entries || [];
         if (!entries.length) {
             gallery.innerHTML = '<div class="alert alert-secondary mb-0">Noch keine Personen-Crops gespeichert. Aktiviere Bild-History und Personen-Crops im Test & Upload Profil.</div>';
+            document.getElementById('peopleImagePageInfo').textContent = '0 von 0';
+            document.getElementById('peopleImagePrev').disabled = true;
+            document.getElementById('peopleImageNext').disabled = true;
             return;
         }
         gallery.innerHTML = entries.map(row => {
             const urls = row.image_urls || {};
-            const main = urls.crop || '';
-            const links = urls.crop ? `<a href="${urls.crop}" target="_blank">Personen-Crop</a>` : '<span class="text-secondary">Kein Personen-Crop</span>';
+            const main = urls.crop || urls.annotated || urls.full_frame || '';
+            const links = main ? `<a href="${escapeHtml(main)}" target="_blank">Bild öffnen</a>` : '<span class="text-secondary">Kein Bild</span>';
             return `<div class="people-image-card">
-                ${main ? `<img src="${main}" alt="Erkannte Person">` : '<div class="people-image-placeholder">Kein Personen-Crop</div>'}
-                <div class="people-image-meta"><strong>${formatDate(row.timestamp)}</strong><br>Track ${row.track_id ?? '-'} · ${dirText(row.direction || 'unknown')} · ${pct(row.confidence || 0)}<br>${links}</div>
-                <button class="btn btn-sm btn-outline-danger w-100 mt-2" onclick="deletePeopleEvent('${row.id}')"><i class="fas fa-trash me-1"></i>Eintrag + Bilder löschen</button>
+                ${main ? `<img src="${escapeHtml(main)}" alt="Erkannte Person">` : '<div class="people-image-placeholder">Kein Personen-Crop</div>'}
+                <div class="people-image-meta"><strong>${escapeHtml(formatDate(row.timestamp))}</strong><br>Track ${escapeHtml(row.track_id ?? '-')} · ${escapeHtml(dirText(row.direction || 'unknown'))} · ${pct(row.confidence || 0)}<br>${links}</div>
+                <div class="d-grid gap-2"><button class="btn btn-sm btn-outline-info" onclick="openPeopleEvent('${escapeHtml(row.id)}')"><i class="fas fa-eye me-1"></i>Details</button><button class="btn btn-sm btn-outline-danger" onclick="deletePeopleEvent('${escapeHtml(row.id)}')"><i class="fas fa-trash me-1"></i>Eintrag + Bilder löschen</button></div>
             </div>`;
         }).join('');
+        const first = data.total ? data.offset + 1 : 0;
+        const last = Math.min((data.offset || 0) + (data.limit || peopleImageLimit), data.total || 0);
+        document.getElementById('peopleImagePageInfo').textContent = `${first}–${last} von ${data.total || 0}`;
+        document.getElementById('peopleImagePrev').disabled = (data.offset || 0) <= 0;
+        document.getElementById('peopleImageNext').disabled = !data.has_more;
     });
 }
-function deletePeopleEvent(id) {
+function changePeopleImagePage(delta) {
+    peopleImageOffset = Math.max(0, peopleImageOffset + delta * peopleImageLimit);
+    loadPeopleImageHistory();
+}
+async function deletePeopleEvent(id) {
     if (!id || !confirm('Diesen Personen-History-Eintrag inklusive Bildern löschen?')) return;
-    fetch(`/api/people/history/${id}/delete`, {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({delete_images:true})})
-        .then(r => r.json()).then(data => {
-            if (!data.success) { alert(data.error || 'Eintrag nicht gefunden'); return; }
-            loadPeopleStats(); loadPeopleImageHistory(); loadPeoplePresence();
-        });
+    const response = await fetch(`/api/people/history/${encodeURIComponent(id)}/delete`, {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({delete_images:true})});
+    const data = await response.json();
+    if (!data.success) { alert(data.error || 'Eintrag nicht gefunden'); return; }
+    await refreshPeopleData(false);
 }
 function cleanupPeopleImages() {
-    const days = prompt('Personenbilder älter als wie viele Tage löschen? Die Zähl-Historie bleibt erhalten.', '90');
+    const configured = document.getElementById('peopleConfiguredRetention')?.dataset.days || '10';
+    const days = prompt('Personenbilder älter als wie viele Tage löschen? Die Zähl-Historie bleibt erhalten.', configured);
     if (days === null) return;
-    fetch('/api/people/images/cleanup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({retention_days: Number(days) || 90})})
-        .then(r=>r.json()).then(data => { alert(`${data.deleted_images || 0} Bilder entfernt. ${data.cleared_image_events || 0} Einträge behalten, aber ohne Bilder.`); loadPeopleStats(); loadPeopleImageHistory(); });
+    fetch('/api/people/images/cleanup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({retention_days: Number(days) || 10})})
+        .then(r=>r.json()).then(data => { alert(`${data.deleted_images || 0} Bilder entfernt. ${data.cleared_image_events || 0} Einträge behalten, aber ohne Bilder.`); refreshPeopleData(false); });
 }
 function loadRepeatGuardPanel() {
     fetch('/api/people/settings-state').then(r=>r.json()).then(data => {
@@ -536,9 +805,19 @@ function runSnapshotTest() {
         if (!data.success) { box.innerHTML = `<div class="alert alert-warning">${data.error || 'Analyse nicht möglich'}</div>`; return; }
         box.innerHTML = `<div class="alert alert-success">${data.people?.length || 0} Personen erkannt, ${data.people_counted || 0} gezählt. Angezeigt werden nur Personen-Crops.</div>` +
             peopleCropGalleryFromRows(data.people || []);
-        loadPeopleStats(); loadPeoplePresence(); loadPeopleModels(); loadPeopleImageHistory();
+        refreshPeopleData(false); loadPeopleModels();
     }).catch(() => box.innerHTML = '<div class="alert alert-danger">Test fehlgeschlagen.</div>');
 }
-document.addEventListener('DOMContentLoaded', function() { initPeopleLineEditorEvents(); loadPeopleStats(); loadPeoplePresence(); loadPeopleModels(); loadPeopleActiveSettings(); loadPeopleImageHistory(); loadRepeatGuardPanel(); setTimeout(() => refreshPeopleAnalysisPreview(true), 250); });
+document.addEventListener('DOMContentLoaded', function() {
+    initPeopleLineEditorEvents();
+    refreshPeopleData(true);
+    loadPeopleModels();
+    loadPeopleActiveSettings();
+    loadRepeatGuardPanel();
+    document.getElementById('peopleQuery')?.addEventListener('keydown', event => { if (event.key === 'Enter') refreshPeopleData(true); });
+    setTimeout(() => refreshPeopleAnalysisPreview(true), 250);
+    const requestedEvent = new URLSearchParams(window.location.search).get('event');
+    if (requestedEvent) setTimeout(() => openPeopleEvent(requestedEvent), 450);
+});
 </script>
 {% endblock %}

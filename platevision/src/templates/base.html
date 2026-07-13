@@ -628,6 +628,10 @@
                 <i class="fas fa-person-walking"></i>
                 <span>{{ t('people') }}</span>
             </a>
+            <a href="{{ url_for('people_gallery_page') }}" class="nav-link {% if page == 'people_gallery' %}active{% endif %}">
+                <i class="fas fa-images"></i>
+                <span>Personenbilder</span>
+            </a>
             {% endif %}
 
 			

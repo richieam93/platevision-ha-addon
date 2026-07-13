@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.12.0
+
+### Neu
+- Eigenes Menü **Personenbilder** mit Kalender, Tagesnavigation und tageweiser Galerie.
+- Verfügbare Bildtage werden über `/api/people/images/days` zusammengefasst.
+- Bildaufbewahrung kann direkt in der Galerie gespeichert und sofort angewendet werden.
+
+### Verbessert
+- Standard-Aufbewahrung für Personenbilder bei Neuinstallationen: 10 Tage.
+- Automatisches Bild-Cleanup ist bei Neuinstallationen standardmässig aktiv.
+- Abgelaufene Bilder werden beim Start, beim Speichern neuer Ereignisse und beim Öffnen der Galerie bereinigt.
+- Die statistische Personen-Historie kann länger erhalten bleiben als die Bilddateien.
+- Eigene Obergrenze für Personenereignisse, standardmässig 20’000, damit das 10-Tage-Archiv nicht frühzeitig abgeschnitten wird.
+
+## 0.11.0
+
+- Personen-Historie mit serverseitiger Filterung, Pagination und Gesamtzahl erweitert.
+- Neue Personen-Sitzungen fassen zusammengehörige Track- und Positionsereignisse zusammen.
+- Detailansicht mit Crop, annotiertem Bild, Vollbild, Metadaten, Label, Notiz und Prüfstatus ergänzt.
+- Mehrfachauswahl und Sammellöschen für Personenereignisse hinzugefügt.
+- Neue Filter für Ereignistyp, Zählstatus, Quelle, Track/ID, Bilder und Freitext.
+- Personenstatistik um aktive Personen, Sitzungen, Wiederholsperren, Bildanzahl, Quellen und Spitzenstunde erweitert.
+- Bild-Historie erhält Seitennavigation und konsistente Filter.
+- CSV-/JSON-Export enthält zusätzliche Prüf- und Kommentarfelder.
+- API-Endpunkte für Sitzungen, Ereignisdetails, Aktualisierung und Sammellöschen ergänzt.
+- Projektmetadaten, Versionsangaben und Release-Prüfung auf 0.11.0 aktualisiert.
+- Leichter Regressionstest für Personen-Historie, Sitzungen, Reviews und Sammellöschen ergänzt.
+
 ## 0.10.0
 
 ### Stabilität und Sicherheit

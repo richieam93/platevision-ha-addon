@@ -2240,12 +2240,13 @@
                                     <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peoplePrivacyBlur" {% if config.people is defined and config.people.privacy_blur_people %}checked{% endif %}><label class="form-check-label" for="peoplePrivacyBlur">Personen weichzeichnen</label></div></div>
                                     <div class="col-md-3"><label class="form-label">Export Standard</label>{% set pexport = config.people.export_default_format if config.people is defined and config.people.export_default_format is defined else 'csv' %}<select class="form-select" id="peopleExportDefault"><option value="csv" {% if pexport == 'csv' %}selected{% endif %}>CSV</option><option value="json" {% if pexport == 'json' %}selected{% endif %}>JSON</option></select></div>
                                     <div class="col-md-3"><label class="form-label">Aufbewahrung Tage</label><input type="number" class="form-control" id="peopleRetentionDays" min="0" max="3650" value="{{ config.people.retention_days if config.people is defined and config.people.retention_days is defined else 90 }}"></div>
-                                    <div class="col-md-3"><label class="form-label">Bild-History Tage</label><input type="number" class="form-control" id="peopleImageHistoryRetentionDays" min="0" max="3650" value="{{ config.people.image_history_retention_days if config.people is defined and config.people.image_history_retention_days is defined else (config.people.retention_days if config.people is defined and config.people.retention_days is defined else 90) }}"></div>
+                                    <div class="col-md-3"><label class="form-label">Max. Personenereignisse</label><input type="number" class="form-control" id="peopleMaxHistoryEntries" min="100" max="200000" value="{{ config.people.max_history_entries if config.people is defined and config.people.max_history_entries is defined else 20000 }}"><div class="form-text">Schützt die Historie vor unbegrenztem Wachstum.</div></div>
+                                    <div class="col-md-3"><label class="form-label">Bilder löschen nach Tagen</label><input type="number" class="form-control" id="peopleImageHistoryRetentionDays" min="0" max="3650" value="{{ config.people.image_history_retention_days if config.people is defined and config.people.image_history_retention_days is defined else 10 }}"><div class="form-text">Standard: 10 Tage. 0 bedeutet unbegrenzt.</div></div>
                                     <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleAutoCleanup" {% if config.people is defined and config.people.auto_cleanup_enabled %}checked{% endif %}><label class="form-check-label" for="peopleAutoCleanup">Auto-Cleanup Historie</label></div></div>
-                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleImageHistoryAutoCleanup" {% if config.people is defined and config.people.image_history_auto_cleanup_enabled %}checked{% endif %}><label class="form-check-label" for="peopleImageHistoryAutoCleanup">Auto-Cleanup Bilder</label></div></div>
+                                    <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleImageHistoryAutoCleanup" {% if config.people is not defined or config.people.image_history_auto_cleanup_enabled is not defined or config.people.image_history_auto_cleanup_enabled %}checked{% endif %}><label class="form-check-label" for="peopleImageHistoryAutoCleanup">Auto-Cleanup Bilder</label></div></div>
                                     <div class="col-md-3"><label class="form-label">Alarm Schwelle / h</label><input type="number" class="form-control" id="peopleAlertThreshold" min="0" max="10000" value="{{ config.people.alert_threshold_per_hour if config.people is defined and config.people.alert_threshold_per_hour is defined else 0 }}"></div>
                                 </div>
-                                <div class="info-box mt-3"><i class="fas fa-info-circle me-2"></i>Exakte Personenzählung hängt von Kamerawinkel, Zähllinie und Bildrate ab. Mit einer klaren Linie am Eingang/Ausgang ist die Zählung am zuverlässigsten.</div>
+                                <div class="info-box mt-3"><i class="fas fa-info-circle me-2"></i>Personenbilder bleiben standardmässig 10 Tage erhalten und können über <a href="/people/gallery">Personenbilder</a> tageweise angesehen werden. Beim Verkürzen der Frist werden bereits gelöschte Bilder nicht wiederhergestellt. Exakte Personenzählung hängt von Kamerawinkel, Zähllinie und Bildrate ab.</div>
                             </div>
 
                             <div class="d-flex flex-wrap gap-2 mt-4">
@@ -3697,7 +3698,8 @@
             privacy_blur_people: pvBool('peoplePrivacyBlur'),
             test_environment_enabled: pvBool('peopleTestEnvironment'),
             retention_days: pvNum('peopleRetentionDays', 90),
-            image_history_retention_days: pvNum('peopleImageHistoryRetentionDays', pvNum('peopleRetentionDays', 90)),
+            max_history_entries: pvNum('peopleMaxHistoryEntries', 20000),
+            image_history_retention_days: pvNum('peopleImageHistoryRetentionDays', 10),
             auto_cleanup_enabled: pvBool('peopleAutoCleanup'),
             image_history_auto_cleanup_enabled: pvBool('peopleImageHistoryAutoCleanup'),
             alert_threshold_per_hour: pvNum('peopleAlertThreshold', 0),
@@ -3731,6 +3733,7 @@
             <div class="people-summary-row"><span>Weichzeichnen</span><strong>${peopleBoolLabel(p.privacy_blur_people)}</strong></div>
             <div class="people-summary-row"><span>Export</span><strong>${p.export_default_format.toUpperCase()}</strong></div>
             <div class="people-summary-row"><span>Aufbewahrung</span><strong>${p.retention_days} Tage</strong></div>
+            <div class="people-summary-row"><span>Max. Ereignisse</span><strong>${p.max_history_entries}</strong></div>
             <div class="people-summary-row"><span>Auto-Cleanup Historie</span><strong>${peopleBoolLabel(p.auto_cleanup_enabled)}</strong></div>
             <div class="people-summary-row"><span>Bild-Cleanup</span><strong>${peopleBoolLabel(p.image_history_auto_cleanup_enabled)} · ${p.image_history_retention_days} Tage</strong></div>
             <div class="people-summary-row"><span>Alarm / h</span><strong>${p.alert_threshold_per_hour}</strong></div>`;
@@ -3738,7 +3741,7 @@
 
 
     function cleanupPeopleImagesFromSettings() {
-        const days = pvNum('peopleImageHistoryRetentionDays', pvNum('peopleRetentionDays', 90));
+        const days = pvNum('peopleImageHistoryRetentionDays', 10);
         if (!confirm(`Personen-Bild-History älter als ${days} Tage löschen?`)) return;
         fetch('/api/people/images/cleanup', {
             method: 'POST',

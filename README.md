@@ -1,6 +1,7 @@
-
-
 # PlateVision – Home Assistant Add-on
+
+**Aktuelle Version: 0.12.0**  
+![Version](https://img.shields.io/badge/version-0.12.0-blue) ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
 🚗 **Automatic License Plate Recognition for Home Assistant**
 
@@ -332,13 +333,10 @@ If it helps you, I'd appreciate a coffee. Wenn es dir hilft, freue ich mich übe
 
 ## 📜 License / Lizenz
 
-PlateVision wird ab Version **0.9.0** unter der **GNU Affero General Public
-License Version 3** (`AGPL-3.0-only`) veröffentlicht. Der vollständige Text
+PlateVision wird unter der **GNU Affero General Public License Version 3**
+(`AGPL-3.0-only`) veröffentlicht. Der vollständige Text
 befindet sich in [`LICENSE`](LICENSE).
 
-Frühere Versionen, die bereits unter MIT veröffentlicht wurden, bleiben für
-die damals erhaltenen Kopien unter MIT nutzbar. Der Wechsel gilt nicht
-rückwirkend.
 
 PlateVision verwendet Ultralytics YOLO und mitgelieferte Modelle aus weiteren
 Open-Source-Projekten. Die Quellen, SHA-256-Prüfsummen und Lizenzhinweise sind
@@ -348,8 +346,8 @@ hier dokumentiert:
 - [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 - [`MODEL_PROVENANCE.md`](MODEL_PROVENANCE.md)
 - [`third_party_licenses/`](third_party_licenses/)
-- [`legacy_licenses/PlateVision-MIT-through-0.8.30.txt`](legacy_licenses/PlateVision-MIT-through-0.8.30.txt)
-- [`RELEASE_CHECKLIST_0.10.0.md`](RELEASE_CHECKLIST_0.10.0.md)
+- [`RELEASE_CHECKLIST_0.12.0.md`](RELEASE_CHECKLIST_0.12.0.md)
+- [`UPGRADE_0.12.0.md`](UPGRADE_0.12.0.md)
 
 Die AGPL erlaubt Nutzung, Änderung, Weitergabe und auch entgeltliche
 Weitergabe. Dabei müssen die anwendbaren Lizenzbedingungen, insbesondere die
@@ -357,7 +355,6 @@ Bereitstellung des entsprechenden Quellcodes, eingehalten werden.
 
 ---
 
-Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 🇨🇭
 
 
 
@@ -389,15 +386,24 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 - Hochgeladene Modelle werden bevorzugt unter `/data/models` gespeichert, damit sie Add-on-Updates überstehen.
 - Personenmodelle können nach dem Upload automatisch ausgewählt und optional direkt neu geladen werden.
 
-## Version 0.10.0
+## Version 0.12.0
 
-- Atomare Speicherung und automatische `.bak`-Wiederherstellung für Konfiguration, Watchlist und Historien.
-- Sicherere Modell-Uploads mit tatsächlicher Grössenprüfung, temporärer Datei und SHA-256-Ausgabe.
-- RTSP-Autostart startet nur bei aktivierter Kamera und einer echten RTSP-URL.
-- Sicherheitsheader, Request-ID, Same-Origin-Standard für Socket.IO und verständlicher 413-Fehler ergänzt.
-- Docker-Healthcheck, Home-Assistant-Watchdog und neue API `/api/system/version` ergänzt.
-- Automatischer statischer Release-Validator und GitHub-Workflow prüfen Python, Templates, Metadaten und Modell-Hashes.
-- Details: [`CHANGELOG.md`](CHANGELOG.md), [`SECURITY.md`](SECURITY.md), [`UPGRADE_0.10.0.md`](UPGRADE_0.10.0.md).
+- Neue Personenbild-Galerie unter `/people/gallery` mit Tagesnavigation und Kalender.
+- Personenbilder bleiben bei Neuinstallationen standardmässig 10 Tage erhalten.
+- Aufbewahrungsfrist und automatisches Löschen können direkt in der Galerie oder in den Einstellungen angepasst werden.
+- Tage mit gespeicherten Bildern werden als navigierbares Archiv angezeigt.
+- Die Personen-Historie verwendet standardmässig bis zu 20’000 Ereignisse, damit mehrere Bildtage nicht schon durch die bisherige globale 1’000er-Grenze verschwinden.
+
+- Vollständig überarbeitete Personen-Historie mit serverseitigen Filtern und Pagination.
+- Personen-Sitzungen gruppieren zusammengehörige Erkennungen nach Track, Position und Zeitabstand.
+- Detailansicht mit Personen-Crop, annotiertem Bild, Vollbild und technischen Metadaten.
+- Eigene Labels, Notizen und Prüfstatus pro Personenereignis.
+- Sammelauswahl und Sammellöschen mehrerer Ereignisse inklusive Bilder.
+- Filter nach Zeitraum, Richtung, Ereignistyp, Zählstatus, Prüfstatus, Quelle, Track-ID, Bildern und Freitext.
+- Erweiterte Statistik mit aktiven Personen, Sitzungen, blockierten Wiederholungen, Bildereignissen, Quellen und Spitzenstunde.
+- Verbesserte Datensicherheit bei History-Cleanup und sicherere Dateipfadprüfung.
+- Neue API-Endpunkte für Sitzungen, Ereignisdetails, Bearbeitung und Sammellöschen.
+- Details: [`CHANGELOG.md`](CHANGELOG.md), [`SECURITY.md`](SECURITY.md), [`UPGRADE_0.12.0.md`](UPGRADE_0.12.0.md).
 
 ## Version 0.9.0
 
@@ -441,3 +447,7 @@ Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 
 ### Version 0.8.30
 
 Diese Version erweitert Einstellungen und Test & Upload. Zusätzliche RTSP-Leistungswerte, OCR-/YOLO-Filter, Fahrzeugfarbe, Personenfilter und Verkehrslogik können jetzt im Webinterface gesetzt und für den RTSP-Stream gespeichert werden.
+
+---
+
+Made with ❤️ in Switzerland 🇨🇭 | Entwickelt mit ❤️ in der Schweiz 🇨🇭
