@@ -10,6 +10,13 @@ Die Erkennung und Datenspeicherung laufen auf dem eigenen System. Es gibt keinen
 
 > **Aktueller Stand:** Die Bedienoberfläche ist hauptsächlich deutsch. Das Standard-Add-on verwendet die CPU. GPU-Beschleunigung benötigt eine dafür angepasste Laufzeitumgebung.
 
+## Unterstützung
+
+PlateVision ist frei verfügbar. Wer die Entwicklung unterstützen möchte:
+
+<a href="https://www.buymeacoffee.com/geartec" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50"></a>
+
+
 ## Inhalt
 
 - [Funktionen](#funktionen)
