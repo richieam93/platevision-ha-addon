@@ -243,7 +243,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="layout-upgrade-banner mb-3"><i class="fas fa-wand-magic-sparkles me-2"></i>Live-Verlauf und Statistik sind jetzt verbunden.</div>
+<div class="pv-info-strip mb-3"><div><i class="fas fa-camera-retro text-info me-2"></i><strong>Anzeige der besten Fahrzeugaufnahme</strong><p class="text-secondary small mb-0">Bei aktivierter Qualitätsauswahl wird die beste Erkennung derselben Durchfahrt gezeigt. <a href="{{ pv_prefix }}/settings#dashboardUiSettings">Schwelle einstellen</a> · <a href="{{ pv_prefix }}/history">Alle Aufnahmen ansehen</a>.</p></div></div>
 <div class="latest-container">
     <!-- Main Detection Card -->
     <div class="latest-card" id="latestCard">
@@ -266,7 +266,9 @@
         </div>
         <div class="card-body">
             <p class="text-secondary mb-3">
-                Verwenden Sie diese API-Endpunkte, um die letzte Erkennung in Home Assistant einzubinden.
+                Die unten aufgeführten API-Pfade gelten für PlateVision. Innerhalb der Home-Assistant-Seitenleiste
+                sind Ingress-Session-Adressen nicht für dauerhaft laufende REST-Sensoren geeignet.
+                Für eine externe Integration ist ein ausdrücklich freigegebener und zusätzlich abgesicherter Direktport erforderlich.
             </p>
             
             <div class="api-section">
@@ -318,13 +320,14 @@
                 
                 <div class="position-relative">
                     <pre class="bg-dark p-3 rounded" style="font-size: 0.8rem; overflow-x: auto;"><code id="haYamlConfig">{% raw %}# PlateVision Integration
+# Nur bei ausdruecklich freigegebenem Direktport 8087 und zusaetzlichem Zugriffsschutz
 
 # REST Sensor für Kennzeichen-Text
 sensor:
   - platform: rest
     name: "Letztes Kennzeichen"
-    resource: http://<PLATEVISION_IP>:5000/api/latest/plate
-            value_template: "{{ value_json.plate_text }}"
+    resource: http://&lt;PLATEVISION_IP&gt;:8087/api/latest/plate
+    value_template: "{{ value_json.plate_text }}"
     scan_interval: 10
     json_attributes:
       - confidence
@@ -334,7 +337,7 @@ sensor:
 
   - platform: rest
     name: "Kennzeichen Details"
-    resource: http://<PLATEVISION_IP>:5000/api/latest
+    resource: http://&lt;PLATEVISION_IP&gt;:8087/api/latest
     value_template: "{{ value_json.plate_text }}"
     scan_interval: 10
     json_attributes:
@@ -348,19 +351,18 @@ sensor:
 camera:
   - platform: generic
     name: "Letztes Kennzeichen Bild"
-    still_image_url: http://<PLATEVISION_IP>:5000/api/latest/plate/image
+    still_image_url: http://&lt;PLATEVISION_IP&gt;:8087/api/latest/plate/image
     verify_ssl: false
 
   - platform: generic
     name: "Letztes Fahrzeug Bild"
-    still_image_url: http://<PLATEVISION_IP>:5000/api/latest/vehicle/image
+    still_image_url: http://&lt;PLATEVISION_IP&gt;:8087/api/latest/vehicle/image
     verify_ssl: false
 
-# Optional: MJPEG Stream
-camera:
+  # Optional: MJPEG Stream
   - platform: mjpeg
     name: "PlateVision Live"
-    mjpeg_url: http://<PLATEVISION_IP>:5000/api/stream/feed
+    mjpeg_url: http://&lt;PLATEVISION_IP&gt;:8087/api/stream/feed
     verify_ssl: false{% endraw %}</code></pre>
                     <button class="btn btn-sm btn-outline-primary position-absolute" style="top: 0.5rem; right: 0.5rem;" onclick="copyYamlConfig()">
                         <i class="fas fa-copy me-1"></i>Kopieren
@@ -369,8 +371,10 @@ camera:
                 
                 <div class="alert alert-info mt-3 mb-0">
                     <i class="fas fa-info-circle me-2"></i>
-                    Ersetzen Sie <code>&lt;PLATEVISION_IP&gt;</code> durch die IP-Adresse Ihres PlateVision Servers 
-                    (z.B. <code id="serverIp">{{ request.host }}</code>).
+                    Das YAML-Beispiel benötigt einen <strong>bewusst freigegebenen</strong> Direktport (z. B. <code>8087</code>).
+                    Ersetzen Sie <code>&lt;PLATEVISION_IP&gt;</code> durch die IP-Adresse Ihres Home-Assistant-Rechners.
+                    Der Direktport ist ab Version 0.13.0 aus Sicherheitsgründen standardmäßig <strong>ausgeschaltet</strong>;
+                    die Ingress-Session-Adresse in der Browserzeile darf hier nicht verwendet werden.
                 </div>
             </div>
             
@@ -431,6 +435,8 @@ cards:
     let refreshInterval = null;
     let countdown = 5;
     let lastDetectionId = null;
+    let lastDetectionTimestamp = null;
+    let latestRequestPending = false;
     
     document.addEventListener('DOMContentLoaded', function() {
         loadLatestDetection();
@@ -439,8 +445,7 @@ cards:
         
         // Listen for new detections via WebSocket
         socket.on('new_detection', function(data) {
-            displayDetection(data);
-            highlightNewDetection();
+            loadLatestDetection();
         });
     });
     
@@ -480,27 +485,49 @@ cards:
     }
     
     function loadLatestDetection() {
-        fetch('/api/latest')
-            .then(response => response.json())
+        if (latestRequestPending || document.hidden) return;
+        latestRequestPending = true;
+        fetch('{{ pv_prefix }}/api/latest/display?images=0', {cache:'no-store'})
+            .then(response => {
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.json();
+            })
             .then(data => {
                 if (data.error) {
-                    showNoDetection();
-                } else {
+                    lastDetectionId = null;
+                    lastDetectionTimestamp = null;
+                    showNoDetection(data.error);
+                } else if (lastDetectionId !== data.id) {
+                    const hadPrevious = lastDetectionId !== null;
+                    lastDetectionId = data.id;
+                    lastDetectionTimestamp = data.timestamp;
                     displayDetection(data);
-                    
-                    // Check if it's a new detection
-                    if (lastDetectionId !== data.id) {
-                        lastDetectionId = data.id;
-                        if (lastDetectionId !== null) {
-                            highlightNewDetection();
-                        }
-                    }
+                    if (hadPrevious) highlightNewDetection();
+                } else {
+                    // Same stored record: keep the <img> nodes to avoid
+                    // image re-downloads and visible flicker every 5 seconds.
+                    refreshLatestAge();
                 }
             })
             .catch(error => {
                 console.error('Error loading latest detection:', error);
-                showNoDetection();
-            });
+                // Keep the last successfully rendered capture during a short
+                // network outage rather than replacing it with an empty card.
+            })
+            .finally(() => { latestRequestPending = false; });
+    }
+
+    function refreshLatestAge() {
+        const target = document.getElementById('latestAge');
+        if (!target || !lastDetectionTimestamp) return;
+        const seconds = Math.max(0, Math.floor((Date.now() - new Date(lastDetectionTimestamp).getTime()) / 1000));
+        if (!Number.isFinite(seconds)) return;
+        let label;
+        if (seconds < 60) label = `vor ${seconds} Sekunden`;
+        else if (seconds < 3600) label = `vor ${Math.floor(seconds / 60)} Minuten`;
+        else if (seconds < 86400) label = `vor ${Math.floor(seconds / 3600)} Stunden`;
+        else label = `vor ${Math.floor(seconds / 86400)} Tagen`;
+        target.textContent = '(' + label + ')';
     }
     
     function displayDetection(data) {
@@ -529,17 +556,18 @@ cards:
             return `vor ${Math.floor(diff / 86400)} Tagen`;
         };
         
+        const safeColorHex = /^#[0-9a-fA-F]{6}$/.test(String(data.vehicle_color_hex || '')) ? data.vehicle_color_hex : '';
         const confidenceClass = data.confidence >= 0.8 ? 'success' : 
                                data.confidence >= 0.5 ? 'warning' : 'danger';
         
         const html = `
             <!-- Header -->
             <div class="latest-header">
-                <div class="latest-plate">${data.plate_text || 'UNBEKANNT'}</div>
+                <div class="latest-plate">${pvEscapeHtml(data.plate_text || 'UNBEKANNT')}</div>
                 <div class="latest-timestamp">
                     <i class="fas fa-clock me-1"></i>
                     ${formatTimestamp(data.timestamp)}
-                    <span class="ms-2 opacity-75">(${getTimeAgo(data.timestamp)})</span>
+                    <span class="ms-2 opacity-75" id="latestAge">(${getTimeAgo(data.timestamp)})</span>
                 </div>
             </div>
             
@@ -549,8 +577,8 @@ cards:
                 <div class="latest-images">
                     <!-- Vehicle Image -->
                     <div class="latest-image-box">
-                        ${data.vehicle_image 
-                            ? `<img src="data:image/jpeg;base64,${data.vehicle_image}" alt="Fahrzeug">
+                        ${pvSafeImageUrl(data.vehicle_image_url)
+                            ? `<img loading="lazy" src="${pvSafeImageUrl(data.vehicle_image_url)}" alt="Fahrzeug">
                                <span class="latest-image-label"><i class="fas fa-car me-1"></i>Fahrzeug</span>`
                             : `<div class="latest-image-placeholder">
                                    <i class="fas fa-car"></i>
@@ -561,8 +589,8 @@ cards:
                     
                     <!-- Plate Image -->
                     <div class="latest-image-box">
-                        ${data.plate_image 
-                            ? `<img src="data:image/jpeg;base64,${data.plate_image}" alt="Kennzeichen">
+                        ${pvSafeImageUrl(data.plate_image_url)
+                            ? `<img loading="lazy" src="${pvSafeImageUrl(data.plate_image_url)}" alt="Kennzeichen">
                                <span class="latest-image-label"><i class="fas fa-id-card me-1"></i>Kennzeichen</span>`
                             : `<div class="latest-image-placeholder">
                                    <i class="fas fa-id-card"></i>
@@ -580,7 +608,7 @@ cards:
                         </div>
                         <div class="latest-detail-content">
                             <div class="latest-detail-label">Fahrzeugtyp</div>
-                            <div class="latest-detail-value">${data.vehicle_type || 'Unbekannt'}</div>
+                            <div class="latest-detail-value">${pvEscapeHtml(data.vehicle_type || 'Unbekannt')}</div>
                         </div>
                     </div>
                     
@@ -590,7 +618,7 @@ cards:
                         </div>
                         <div class="latest-detail-content">
                             <div class="latest-detail-label">Fahrzeugfarbe</div>
-                            <div class="latest-detail-value">${data.vehicle_color_hex ? `<span style="display:inline-block;width:14px;height:14px;border-radius:4px;border:1px solid rgba(255,255,255,.45);background:${data.vehicle_color_hex};vertical-align:-2px;margin-right:6px;"></span>` : ''}${data.vehicle_color || 'Unbekannt'}${data.vehicle_color_hex ? ` / ${data.vehicle_color_hex}` : ''}</div>
+                            <div class="latest-detail-value">${safeColorHex ? `<span style="display:inline-block;width:14px;height:14px;border-radius:4px;border:1px solid rgba(255,255,255,.45);background:${safeColorHex};vertical-align:-2px;margin-right:6px;"></span>` : ''}${pvEscapeHtml(data.vehicle_color || 'Unbekannt')}${safeColorHex ? ` / ${safeColorHex}` : ''}</div>
                         </div>
                     </div>
                     
@@ -600,7 +628,7 @@ cards:
                         </div>
                         <div class="latest-detail-content">
                             <div class="latest-detail-label">Kennzeichen-Land</div>
-                            <div class="latest-detail-value">${data.plate_country_display || data.plate_country || 'Unbekannt'}${data.plate_country_prob ? ` / ${(data.plate_country_prob * 100).toFixed(1)}%` : ''}</div>
+                            <div class="latest-detail-value">${pvEscapeHtml(data.plate_country_display || data.plate_country || 'Unbekannt')}${data.plate_country_prob ? ` / ${(data.plate_country_prob * 100).toFixed(1)}%` : ''}</div>
                         </div>
                     </div>
                     
@@ -623,7 +651,7 @@ cards:
                             <div class="latest-detail-value">
                                 ${(data.source === 'rtsp' || data.source === 'rtsp_stream') ? 'RTSP Stream' :
                                   data.source === 'image_upload' ? 'Bild Upload' :
-                                  data.source === 'video_upload' ? 'Video' : data.source || 'Unbekannt'}
+                                  data.source === 'video_upload' ? 'Video' : pvEscapeHtml(data.source || 'Unbekannt')}
                             </div>
                         </div>
                     </div>
@@ -631,10 +659,10 @@ cards:
                 
                 <!-- Actions -->
                 <div class="d-flex gap-2 mt-4 justify-content-center">
-                    <a href="{{ url_for('history') }}" class="btn btn-outline-primary">
+                    <a href="{{ pv_url_for('history') }}" class="btn btn-outline-primary">
                         <i class="fas fa-history me-2"></i>Alle Erkennungen
                     </a>
-                    <button class="btn btn-outline-success" onclick="copyPlateText('${data.plate_text}')">
+                    <button class="btn btn-outline-success" data-copy-plate="${pvEscapeHtml(data.plate_text || '')}" onclick="copyPlateText(this.dataset.copyPlate)">
                         <i class="fas fa-copy me-2"></i>Kennzeichen kopieren
                     </button>
                 </div>
@@ -644,19 +672,18 @@ cards:
         document.getElementById('latestContent').innerHTML = html;
     }
     
-    function showNoDetection() {
+    function showNoDetection(message = '') {
         document.getElementById('latestContent').innerHTML = `
             <div class="no-detection">
                 <i class="fas fa-car-side"></i>
-                <h4>Keine Erkennung vorhanden</h4>
-                <p class="text-secondary mb-4">
-                    Es wurde noch kein Kennzeichen erkannt. Starten Sie den Live-Stream oder laden Sie ein Bild hoch.
-                </p>
+                <h4>Kein geeignetes Fahrzeugbild</h4>
+                <p class="text-secondary mb-4">${pvEscapeHtml(message || 'Es wurde noch keine Erkennung gespeichert. Starte den Stream oder lade ein Bild hoch.')}</p>
+                <p class="text-secondary small">Alle Treffer mit niedrigerer Konfidenz bleiben in <a href="{{ pv_prefix }}/history">Historie</a> und <a href="{{ pv_prefix }}/search">Suche</a> erhalten.</p>
                 <div class="d-flex gap-2 justify-content-center">
-                    <a href="{{ url_for('live_view') }}" class="btn btn-primary">
+                    <a href="{{ pv_url_for('live_view') }}" class="btn btn-primary">
                         <i class="fas fa-video me-2"></i>Live Stream
                     </a>
-                    <a href="{{ url_for('test_page') }}" class="btn btn-outline-primary">
+                    <a href="{{ pv_url_for('test_page') }}" class="btn btn-outline-primary">
                         <i class="fas fa-upload me-2"></i>Bild hochladen
                     </a>
                 </div>
@@ -673,7 +700,9 @@ cards:
     }
     
     function updateApiUrls() {
-        const baseUrl = window.location.origin;
+        // Session-specific Ingress tokens must not be suggested as permanent REST URLs.
+        // The raw endpoint path is intentional in the embedded Home Assistant view.
+        const baseUrl = window.PV_INGRESS_PREFIX ? '' : window.location.origin;
         document.getElementById('apiLatestUrl').textContent = baseUrl + '/api/latest';
         document.getElementById('apiPlateTextUrl').textContent = baseUrl + '/api/latest/plate';
         document.getElementById('apiPlateImageUrl').textContent = baseUrl + '/api/latest/plate/image';
@@ -696,11 +725,10 @@ cards:
     
     function copyYamlConfig() {
         const config = document.getElementById('haYamlConfig').textContent;
-        const serverIp = window.location.hostname + ':' + window.location.port;
-        const updatedConfig = config.replace(/<PLATEVISION_IP>:5000/g, serverIp);
-        
-        navigator.clipboard.writeText(updatedConfig).then(() => {
-            showToast('Kopiert', 'YAML Konfiguration kopiert', 'success');
+        // Do not insert the HA Ingress session address, which is temporary and
+        // cannot be used as a REST endpoint by background automations.
+        navigator.clipboard.writeText(config).then(() => {
+            showToast('Kopiert', 'YAML kopiert – IP eintragen und Direktport freigeben', 'success');
         });
     }
     

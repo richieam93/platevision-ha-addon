@@ -1,4 +1,4 @@
-# PlateVision API-Endpunkte 0.12.0
+# PlateVision API-Endpunkte 0.12.1
 
 Basis-URL im Beispiel: `http://192.168.1.240:8087`
 
@@ -90,7 +90,7 @@ Basis-URL im Beispiel: `http://192.168.1.240:8087`
 | GET | `/api/system/audit` | Diagnose/Audit |
 
 
-## System-Prüfung (v0.12.0)
+## System-Prüfung (v0.12.1)
 
 - `GET /api/system/live` – leichte Liveness-Prüfung für Docker/Home Assistant
 - `GET /api/system/health` – ausführlicher System-, Modell- und Speicherstatus

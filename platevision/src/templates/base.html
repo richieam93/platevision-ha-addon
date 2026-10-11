@@ -1,12 +1,22 @@
 <!DOCTYPE html>
-<html lang="{{ lang|default('de') }}" data-bs-theme="dark">
+<html lang="{{ lang|default('de') }}" data-bs-theme="{{ 'light' if app_config.general.theme == 'light' else 'dark' }}" data-pv-theme="{{ 'light' if app_config.general.theme == 'light' else 'dark' }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        window.PV_INGRESS_PREFIX = {{ pv_prefix|tojson }};
+        window.pvUrl = function (value) {
+            const path = String(value ?? '');
+            if (!window.PV_INGRESS_PREFIX || path.startsWith(window.PV_INGRESS_PREFIX + '/')) return path;
+            if (!/^\/(?:api|static|socket\.io)(?:\/|\?|$)/.test(path)) return path;
+            return window.PV_INGRESS_PREFIX + path;
+        };
+    </script>
+
     <title>{% block title %}PlateVision{% endblock %}</title>
     
     <!-- Bootstrap 5 CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="{{ pv_url_for('static', filename='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet">
     
     <!-- Font Awesome Icons -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
@@ -15,7 +25,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <!-- PlateVision Extended CSS -->
-    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    <link href="{{ pv_url_for('static', filename='css/style.css') }}" rel="stylesheet">
 
     <!-- Socket.IO -->
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
@@ -573,16 +583,71 @@
         .mini-label { color: var(--text-secondary); font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; }
     </style>
     
+    <!-- Modern theme overrides, loaded after legacy rules for consistent styling -->
+    <link href="{{ pv_url_for('static', filename='css/ui-modern.css') }}" rel="stylesheet">
+    <link href="{{ pv_url_for('static', filename='css/navigation.css') }}" rel="stylesheet">
+    <link href="{{ pv_url_for('static', filename='css/workbench.css') }}" rel="stylesheet">
     {% block extra_css %}{% endblock %}
 </head>
 <body>
+    {# The menu is defined once to prevent route/title drift between mobile,
+       desktop, favorites and contextual shortcuts. #}
+    {% set pv_nav_pages = {
+        'dashboard': ('dashboard', t('dashboard'), 'fa-chart-pie', 'startseite start übersicht kpi'),
+        'live': ('live_view', t('nav_live_label'), 'fa-video', 'kamera livestream video'),
+        'latest': ('latest_detection_page', t('latest'), 'fa-car-side', 'neu fahrzeug letzter treffer'),
+        'alerts': ('watchlist_alerts_page', t('nav_alerts'), 'fa-bell', 'alarme watchlist treffer nachrichten'),
+        'history': ('history', t('history'), 'fa-history', 'ereignisse archiv liste'),
+        'search': ('search_page', t('nav_search_label'), 'fa-search-plus', 'filtern kennzeichen watchlist'),
+        'statistics': ('statistics_page', t('statistics'), 'fa-chart-line', 'berichte auswertung trend'),
+        'people': ('people_page', t('nav_people_label'), 'fa-person-walking', 'personenzählung personenanalyse'),
+        'people_gallery': ('people_gallery_page', t('nav_people_images'), 'fa-images', 'galerie personenfotos crops'),
+        'test': ('test_page', t('test'), 'fa-flask', 'upload foto video probieren'),
+        'rtsp': ('rtsp_settings', t('nav_rtsp'), 'fa-broadcast-tower', 'kamerastream kamera verbindung'),
+        'settings': ('settings', t('settings'), 'fa-cog', 'konfiguration allgemein sprache design'),
+        'diagnostics': ('diagnostics_page', t('diagnostics'), 'fa-info-circle', 'systemstatus backup speicher prüfen'),
+        'legal': ('legal_page', t('nav_license'), 'fa-scale-balanced', 'lizenz rechtliches modell info')
+    } %}
+    {% set pv_nav_groups = [
+        ('overview', t('nav_overview'), ['dashboard','live','latest','alerts']),
+        ('plates', t('nav_plates'), ['history','search','statistics']),
+        ('persons', t('nav_persons'), ['people','people_gallery']),
+        ('tools', t('nav_tools'), ['test','rtsp']),
+        ('system', t('nav_system'), ['settings','diagnostics','legal'])
+    ] %}
+    {% set pv_group_for_page = {
+        'dashboard': 'overview', 'live': 'overview', 'latest': 'overview', 'alerts': 'overview',
+        'history': 'plates', 'search': 'plates', 'statistics': 'plates',
+        'people': 'persons', 'people_gallery': 'persons',
+        'test': 'tools', 'rtsp': 'tools',
+        'settings': 'system', 'diagnostics': 'system', 'legal': 'system'
+    } %}
+    {% set pv_group_labels = {
+        'overview': t('nav_overview'), 'plates': t('nav_plates'),
+        'persons': t('nav_persons'), 'tools': t('nav_tools'), 'system': t('nav_system')
+    } %}
+    {% set pv_related = {
+        'dashboard': ['live', 'search', 'alerts'],
+        'alerts': ['history', 'search', 'diagnostics'],
+        'live': ['latest', 'rtsp', 'test'],
+        'latest': ['live', 'history', 'alerts'],
+        'history': ['search', 'statistics', 'latest'],
+        'search': ['history', 'statistics', 'latest'],
+        'statistics': ['history', 'search', 'people'],
+        'people': ['people_gallery', 'statistics', 'settings'],
+        'people_gallery': ['people', 'settings', 'statistics'],
+        'test': ['live', 'rtsp', 'history'],
+        'rtsp': ['live', 'test', 'settings'],
+        'settings': ['diagnostics', 'rtsp', 'legal'],
+        'diagnostics': ['settings', 'legal', 'dashboard'],
+        'legal': ['settings', 'diagnostics', 'dashboard']
+    } %}
     <!-- Sidebar Overlay (Mobile) -->
-    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
-    
-    <!-- Sidebar -->
-    <nav class="sidebar" id="sidebar">
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()" aria-hidden="true"></div>
+
+    <nav class="sidebar" id="sidebar" aria-label="{{ t('nav_main') }}">
         <div class="sidebar-header">
-            <a href="{{ url_for('dashboard') }}" class="sidebar-logo">
+            <a href="{{ pv_url_for('dashboard') }}" class="sidebar-logo">
                 <i class="fas fa-car-side"></i>
                 <div>
                     <div class="sidebar-logo-text">Plate<span>Vision</span></div>
@@ -590,103 +655,94 @@
                 </div>
             </a>
         </div>
-        
-        <div class="sidebar-nav">
-            <div class="nav-section">
-                <div class="nav-section-title">Hauptmenü</div>
+        <div class="pv-nav-tools" data-favorite-add="{{ t('nav_add_favorite') }}"
+             data-favorite-remove="{{ t('nav_remove_favorite') }}" data-favorite-max="{{ t('nav_max_favorites') }}"
+             data-results-label="{{ t('nav_results') }}" data-show-all="{{ t('nav_show_all') }}"
+             data-hide-all="{{ t('nav_close_all') }}">
+            <label for="sidebarNavSearch" class="pv-nav-search-label">{{ t('nav_quick_search') }}</label>
+            <div class="pv-nav-search-field">
+                <i class="fas fa-search" aria-hidden="true"></i>
+                <input id="sidebarNavSearch" type="search" autocomplete="off" spellcheck="false"
+                       placeholder="{{ t('nav_search_placeholder') }}" aria-controls="mainNavigation"
+                       aria-describedby="pvNavSearchHint">
+                <span class="pv-nav-kbd" id="pvNavSearchHint" aria-hidden="true">Ctrl K</span>
+                <button type="button" class="pv-nav-clear" id="pvNavSearchClear" hidden aria-label="{{ t('nav_clear_search') }}">×</button>
             </div>
-            
-            <a href="{{ url_for('dashboard') }}" class="nav-link {% if page == 'dashboard' %}active{% endif %}">
-                <i class="fas fa-chart-pie"></i>
-                <span>{{ t('dashboard') }}</span>
-            </a>
-            
-            <a href="{{ url_for('live_view') }}" class="nav-link {% if page == 'live' %}active{% endif %}">
-                <i class="fas fa-video"></i>
-                <span>{{ t('live') }}</span>
-                <span class="stream-status-badge {{ stream_status.status if stream_status else 'stopped' }}" id="sidebarStreamStatus">
-                    {{ stream_status.status if stream_status else 'Stopped' }}
-                </span>
-            </a>
-            
-            <a href="{{ url_for('history') }}" class="nav-link {% if page == 'history' %}active{% endif %}">
-                <i class="fas fa-history"></i>
-                <span>{{ t('history') }}</span>
-            </a>
-            <a href="{{ url_for('search_page') }}" class="nav-link {% if page == 'search' %}active{% endif %}">
-                <i class="fas fa-search-plus"></i>
-                <span>{{ t('search') }}</span>
-            </a>
-
-            <a href="{{ url_for('statistics_page') }}" class="nav-link {% if page == 'statistics' %}active{% endif %}">
-                <i class="fas fa-road"></i>
-                <span>{{ t('statistics') }}</span>
-            </a>
-
-            {% if people_menu_enabled %}
-            <a href="{{ url_for('people_page') }}" class="nav-link {% if page == 'people' %}active{% endif %}">
-                <i class="fas fa-person-walking"></i>
-                <span>{{ t('people') }}</span>
-            </a>
-            <a href="{{ url_for('people_gallery_page') }}" class="nav-link {% if page == 'people_gallery' %}active{% endif %}">
-                <i class="fas fa-images"></i>
-                <span>Personenbilder</span>
-            </a>
-            {% endif %}
-
-			
-			<a href="{{ url_for('latest_detection_page') }}" class="nav-link {% if page == 'latest' %}active{% endif %}">
-				<i class="fas fa-car-side"></i>
-				<span>{{ t('latest') }}</span>
-				<span class="badge bg-success ms-auto" id="sidebarLatestBadge" style="display: none;">NEU</span>
-			</a>            
-            <a href="{{ url_for('test_page') }}" class="nav-link {% if page == 'test' %}active{% endif %}">
-                <i class="fas fa-flask"></i>
-                <span>{{ t('test') }}</span>
-            </a>
-            
-            <div class="nav-section">
-                <div class="nav-section-title">Einstellungen</div>
+            <div class="pv-nav-tools-row">
+                <span class="pv-nav-tools-hint" id="pvNavMatchCount" data-initial-label="{{ t('nav_shortcut_hint') }}" role="status" aria-live="polite">{{ t('nav_shortcut_hint') }}</span>
+                <button type="button" class="pv-nav-expand" id="pvNavExpandAll" aria-label="{{ t('nav_toggle_all') }}" title="{{ t('nav_toggle_all') }}">{{ t('nav_show_all') }}</button>
             </div>
-            
-            <a href="{{ url_for('rtsp_settings') }}" class="nav-link {% if page == 'rtsp' %}active{% endif %}">
-                <i class="fas fa-broadcast-tower"></i>
-                <span>RTSP Stream</span>
-            </a>
-            
-            <a href="{{ url_for('settings') }}" class="nav-link {% if page == 'settings' %}active{% endif %}">
-                <i class="fas fa-cog"></i>
-                <span>{{ t('settings') }}</span>
-            </a>
-
-            <a href="{{ url_for('legal_page') }}" class="nav-link {% if page == 'legal' %}active{% endif %}">
-                <i class="fas fa-scale-balanced"></i>
-                <span>Lizenz & Modelle</span>
-            </a>
-
         </div>
-        
-        <!-- Sidebar Footer -->
-        <div class="position-absolute bottom-0 start-0 end-0 p-3 border-top" style="border-color: var(--card-border) !important;">
+
+        <div class="sidebar-nav" id="mainNavigation">
+            <section class="pv-nav-favorites" id="pvNavFavorites" aria-label="{{ t('nav_favorites') }}" hidden>
+                <div class="pv-nav-favorites-title"><span aria-hidden="true">★</span> {{ t('nav_favorites') }}</div>
+                <div id="pvNavFavoriteLinks"></div>
+            </section>
+            {% for group_id, group_label, entries in pv_nav_groups %}
+            {% if group_id != 'persons' or people_menu_enabled %}
+            <section class="pv-nav-group" data-nav-group="{{ group_id }}">
+                <button type="button" class="pv-nav-group-toggle" data-nav-group-toggle="{{ group_id }}"
+                        aria-controls="pvNavItems-{{ group_id }}" aria-expanded="true">
+                    <span>{{ group_label }}</span>
+                    <span class="pv-nav-group-count" aria-hidden="true">{{ entries | length }}</span>
+                    <span class="pv-nav-chevron" aria-hidden="true"></span>
+                </button>
+                <div class="pv-nav-group-items" id="pvNavItems-{{ group_id }}">
+                    {% for nav_page in entries %}
+                    {% set nav_data = pv_nav_pages[nav_page] %}
+                    <div class="pv-nav-entry" data-nav-page="{{ nav_page }}" data-nav-keywords="{{ nav_data[3] }}">
+                        <a href="{{ pv_url_for(nav_data[0]) }}" data-nav-link="{{ nav_page }}"
+                           class="nav-link {% if page == nav_page %}active{% endif %}"
+                           {% if page == nav_page %}aria-current="page"{% endif %}>
+                            <i class="fas {{ nav_data[2] }}" aria-hidden="true"></i>
+                            <span class="pv-nav-entry-label">{{ nav_data[1] }}</span>
+                            {% if nav_page == 'live' %}
+                            <span class="stream-status-badge {{ stream_status.status if stream_status else 'stopped' }}" id="sidebarStreamStatus">
+                                {{ stream_status.status if stream_status else 'Stopped' }}
+                            </span>
+                            {% elif nav_page == 'latest' %}
+                            <span class="badge bg-success ms-auto" id="sidebarLatestBadge" style="display: none;">NEU</span>
+                            {% elif nav_page == 'alerts' %}
+                            <span class="badge bg-info text-dark ms-auto" id="sidebarAlertCount" style="display:none" aria-label="Ungelesene Alarme">0</span>
+                            {% endif %}
+                        </a>
+                        <button type="button" class="pv-nav-pin" data-nav-pin="{{ nav_page }}"
+                                aria-pressed="false" aria-label="{{ t('nav_add_favorite') }}: {{ nav_data[1] }}"
+                                title="{{ t('nav_add_favorite') }}: {{ nav_data[1] }}">☆</button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+            {% endif %}
+            {% endfor %}
+            <div class="pv-nav-no-results" id="pvNavNoResults" role="status" hidden>
+                <i class="fas fa-search" aria-hidden="true"></i>
+                <span>{{ t('nav_no_results') }}</span>
+            </div>
+        </div>
+
+        <div class="sidebar-footer">
             <div class="d-flex align-items-center gap-2">
-                <div class="rounded-circle bg-success" style="width: 8px; height: 8px;" id="systemStatus"></div>
-                <small class="text-secondary">System Online · <a href="{{ url_for('legal_page') }}" class="text-secondary">{{ app_license }}</a></small>
+                <span class="connection-indicator" id="systemStatus" aria-hidden="true"></span>
+                <div class="sidebar-footer-copy"><small id="systemStatusLabel">Verbindung wird geprüft</small><small><a href="{{ pv_url_for('legal_page') }}">{{ app_license }}</a> · <a href="{{ pv_url_for('diagnostics_page') }}">{{ t('diagnostics') }}</a></small></div>
             </div>
         </div>
     </nav>
-    
+
     <!-- Main Content -->
     <main class="main-content">
         <!-- Top Header -->
         <header class="top-header">
             <div class="d-flex align-items-center gap-3">
-                <button class="sidebar-toggle" onclick="toggleSidebar()">
+                <button type="button" class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-controls="sidebar" aria-expanded="false" aria-label="Menü öffnen">
                     <i class="fas fa-bars"></i>
                 </button>
                 <h1 class="page-title">{% block page_title %}Dashboard{% endblock %}</h1>
             </div>
             
             <div class="header-actions">
+                <span id="headerConnection" class="header-connection" role="status" aria-live="polite"><span class="connection-indicator"></span><span id="headerConnectionText">Verbinde...</span></span>
                 {% block header_actions %}
                 <!-- Stream Control Buttons -->
                 <div class="btn-group" id="streamControls">
@@ -699,7 +755,7 @@
                 </div>
                 {% endblock %}
 
-                <select class="form-select form-select-sm" id="languageSelector" style="width:auto; min-width: 86px;" onchange="changeLanguage(this.value)">
+                <select class="form-select form-select-sm" id="languageSelector" aria-label="Sprache auswählen" style="width:auto; min-width: 86px;" onchange="changeLanguage(this.value)">
                     <option value="de">DE</option>
                     <option value="en">EN</option>
                     <option value="fr">FR</option>
@@ -708,7 +764,7 @@
                 
                 <!-- Notifications -->
                 <div class="dropdown">
-                    <button class="btn btn-link text-secondary position-relative" data-bs-toggle="dropdown">
+                    <button type="button" class="btn btn-link text-secondary position-relative" data-bs-toggle="dropdown" aria-label="Benachrichtigungen öffnen" title="Benachrichtigungen">
                         <i class="fas fa-bell fa-lg"></i>
                         <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" id="notificationCount" style="display: none;">
                             0
@@ -724,8 +780,29 @@
             </div>
         </header>
         
+        {% if page in pv_nav_pages %}
+        <div class="pv-context-bar">
+            <div class="pv-context-path" aria-label="{{ t('nav_location') }}">
+                <span class="pv-context-eyebrow">{{ pv_group_labels[pv_group_for_page[page]] }}</span>
+                <span class="pv-context-separator" aria-hidden="true">/</span>
+                <strong>{{ pv_nav_pages[page][1] }}</strong>
+            </div>
+            <div class="pv-context-actions">
+                <span class="pv-context-related-label">{{ t('nav_related') }}</span>
+                {% for related_page in pv_related[page] %}
+                {% if related_page not in ('people', 'people_gallery') or people_menu_enabled %}
+                <a href="{{ pv_url_for(pv_nav_pages[related_page][0]) }}" class="pv-context-link">{{ pv_nav_pages[related_page][1] }} <span aria-hidden="true">↗</span></a>
+                {% endif %}
+                {% endfor %}
+                <button type="button" class="pv-context-pin" id="pvPageFavorite"
+                        data-nav-page="{{ page }}" aria-pressed="false"
+                        title="{{ t('nav_add_favorite') }}: {{ pv_nav_pages[page][1] }}"
+                        aria-label="{{ t('nav_add_favorite') }}: {{ pv_nav_pages[page][1] }}">☆</button>
+            </div>
+        </div>
+        {% endif %}
         <!-- Content Area -->
-        <div class="content-area">
+        <div class="content-area" id="mainContent">
             {% block content %}{% endblock %}
         </div>
     </main>
@@ -734,7 +811,7 @@
     <div class="toast-container" id="toastContainer"></div>
     
     <!-- Bootstrap JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ pv_url_for('static', filename='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
     
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -787,7 +864,26 @@
         }
         
         // Socket.IO Connection
-        const socket = io();
+        const socket = (typeof io === 'function') ? io({path: pvUrl('/socket.io'), reconnectionDelayMax: 10000}) : {on() {}};
+        if (typeof io !== 'function') console.warn('[PlateVision] Socket.IO nicht verfügbar; Live-Meldungen pausieren.');
+
+        function pvEscapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]));
+        }
+        function pvSafeImageUrl(value) {
+            const url = String(value || '');
+            return /^\/(api|static)\/[a-zA-Z0-9_./?=&%+-]+$/.test(url) && !url.includes('..') ? pvUrl(url) : '';
+        }
+        function setConnectionState(online) {
+            document.getElementById('systemStatus')?.classList.toggle('online', online);
+            const header = document.getElementById('headerConnection');
+            header?.classList.toggle('online', online);
+            const text = online ? 'Verbunden' : 'Nicht verbunden';
+            const footerText = document.getElementById('systemStatusLabel');
+            const headerText = document.getElementById('headerConnectionText');
+            if (footerText) footerText.textContent = text;
+            if (headerText) headerText.textContent = text;
+        }
 
         // Sichtbare UI-Fehler statt stiller Ausfälle. So sieht man sofort,
         // wenn ein Button/Formular wegen JavaScript nicht reagiert.
@@ -808,14 +904,12 @@
         
         socket.on('connect', function() {
             console.log('WebSocket connected');
-            document.getElementById('systemStatus').classList.remove('bg-danger');
-            document.getElementById('systemStatus').classList.add('bg-success');
+            setConnectionState(true);
         });
         
         socket.on('disconnect', function() {
             console.log('WebSocket disconnected');
-            document.getElementById('systemStatus').classList.remove('bg-success');
-            document.getElementById('systemStatus').classList.add('bg-danger');
+            setConnectionState(false);
         });
         
         // New Detection Event
@@ -830,112 +924,133 @@
 
         // New Person Event: only person crop is surfaced, never the full frame.
         socket.on('person_detected', function(data) {
-            const img = data.image_url ? `<br><img src="${data.image_url}" style="max-width:120px;max-height:120px;border-radius:8px;margin-top:.5rem;object-fit:cover;">` : '';
-            showToast('Person erkannt', `Track: ${data.track_id || '-'} · ${data.direction || 'unbekannt'}${img}`, 'info');
+            showToast('Person erkannt', `Track: ${data.track_id || '-'} · ${data.direction || 'unbekannt'}`, 'info', pvSafeImageUrl(data.image_url));
             window.dispatchEvent(new CustomEvent('personDetected', { detail: data }));
         });
 
         // Sidebar Toggle
+        function setSidebarOpen(open) {
+            document.getElementById('sidebar')?.classList.toggle('show', open);
+            document.getElementById('sidebarOverlay')?.classList.toggle('show', open);
+            const toggle = document.getElementById('sidebarToggle');
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', String(open));
+                toggle.setAttribute('aria-label', open ? 'Menü schließen' : 'Menü öffnen');
+            }
+            document.body.classList.toggle('sidebar-open', open);
+        }
         function toggleSidebar() {
-            document.getElementById('sidebar').classList.toggle('show');
-            document.getElementById('sidebarOverlay').classList.toggle('show');
+            setSidebarOpen(!document.getElementById('sidebar')?.classList.contains('show'));
         }
+        function closeSidebar() { setSidebarOpen(false); }
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') closeSidebar();
+        });
+        window.addEventListener('resize', () => {
+            if (window.innerWidth >= 992) closeSidebar();
+        });
         
-        // Stream Control
-        function startStream() {
-            fetch('/api/stream/start', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        showToast('Stream', 'Stream gestartet', 'success');
-                        updateStreamStatus('connecting');
-                    } else {
-                        showToast('Fehler', data.status.error || 'Stream konnte nicht gestartet werden', 'danger');
-                    }
-                })
-                .catch(error => {
-                    showToast('Fehler', 'Verbindungsfehler', 'danger');
-                });
+        // Unified API handling for header stream actions and status.
+        async function pvFetchJson(url, options = {}) {
+            const response = await fetch(url, {cache: 'no-store', ...options});
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.success === false) {
+                throw new Error(data.error || data.status?.error || `HTTP ${response.status}`);
+            }
+            return data;
         }
-        
-        function stopStream() {
-            fetch('/api/stream/stop', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    showToast('Stream', 'Stream gestoppt', 'warning');
-                    updateStreamStatus('stopped');
-                });
+        let streamActionBusy = false;
+        async function changeStream(action) {
+            if (streamActionBusy) return;
+            streamActionBusy = true;
+            for (const id of ['btnStartStream', 'btnStopStream']) {
+                const button = document.getElementById(id);
+                if (button) button.disabled = true;
+            }
+            try {
+                const result = await pvFetchJson(`{{ pv_prefix }}/api/stream/${action}`, {method: 'POST'});
+                updateStreamStatus(result.status?.status || (action === 'start' ? 'connecting' : 'stopped'));
+                showToast('Stream', action === 'start' ? 'Stream wird gestartet' : 'Stream gestoppt', 'success');
+            } catch (error) {
+                showToast('Stream', error.message || 'Aktion fehlgeschlagen', 'danger');
+                await checkStreamStatus();
+            } finally {
+                streamActionBusy = false;
+                for (const id of ['btnStartStream', 'btnStopStream']) {
+                    const button = document.getElementById(id);
+                    if (button) button.disabled = false;
+                }
+            }
         }
-        
+        function startStream() { return changeStream('start'); }
+        function stopStream() { return changeStream('stop'); }
         function updateStreamStatus(status) {
+            const safeStatus = ['running', 'connecting', 'stopped'].includes(status) ? status : 'stopped';
             const badge = document.getElementById('sidebarStreamStatus');
             const btnStart = document.getElementById('btnStartStream');
             const btnStop = document.getElementById('btnStopStream');
-            
             if (badge) {
-                badge.textContent = status;
-                badge.className = 'stream-status-badge ' + status;
+                badge.textContent = ({running:'Läuft', connecting:'Verbinde', stopped:'Aus'})[safeStatus];
+                badge.className = 'stream-status-badge ' + safeStatus;
             }
-            
-            if (status === 'running' || status === 'connecting') {
-                if (btnStart) btnStart.style.display = 'none';
-                if (btnStop) btnStop.style.display = 'inline-block';
-            } else {
-                if (btnStart) btnStart.style.display = 'inline-block';
-                if (btnStop) btnStop.style.display = 'none';
+            if (btnStart) btnStart.style.display = safeStatus === 'stopped' ? 'inline-flex' : 'none';
+            if (btnStop) btnStop.style.display = safeStatus === 'stopped' ? 'none' : 'inline-flex';
+            window.dispatchEvent(new CustomEvent('streamStatusChanged', {detail: {status: safeStatus}}));
+        }
+        let streamStatusChecking = false;
+        async function checkStreamStatus() {
+            if (streamStatusChecking) return;
+            streamStatusChecking = true;
+            try {
+                const data = await pvFetchJson('{{ pv_prefix }}/api/stream/status');
+                updateStreamStatus(data.status);
+                setConnectionState(true);
+            } catch (error) {
+                updateStreamStatus('stopped');
+                setConnectionState(false);
+            } finally {
+                streamStatusChecking = false;
             }
-            
-            // Event für andere Seiten
-            window.dispatchEvent(new CustomEvent('streamStatusChanged', { detail: { status: status } }));
         }
-        
-        // Check stream status periodically
-        function checkStreamStatus() {
-            fetch('/api/stream/status')
-                .then(response => response.json())
-                .then(data => {
-                    updateStreamStatus(data.status);
-                });
-        }
-        
-        // Toast Notification
-        function showToast(title, message, type = 'info') {
+
+        // Toaster text is escaped because recognized plates and camera names
+        // may contain characters that must never become executable HTML.
+        let toastSequence = 0;
+        function showToast(title, message, type = 'info', imageUrl = '') {
             const container = document.getElementById('toastContainer');
-            if (!container) { console.warn('[PlateVision UI] Toast container fehlt:', title, message); return; }
-            const id = 'toast-' + Date.now();
-            
-            const icons = {
-                success: 'fa-check-circle',
-                danger: 'fa-exclamation-circle',
-                warning: 'fa-exclamation-triangle',
-                info: 'fa-info-circle'
-            };
-            
-            const html = `
-                <div id="${id}" class="toast fade-in" role="alert">
-                    <div class="toast-header" style="background: var(--card-bg); border-color: var(--card-border);">
-                        <i class="fas ${icons[type]} me-2 text-${type}"></i>
-                        <strong class="me-auto">${title}</strong>
-                        <small>Jetzt</small>
-                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+            if (!container) return;
+            const kind = ['success', 'danger', 'warning', 'info'].includes(type) ? type : 'info';
+            const icon = {success:'fa-check-circle',danger:'fa-exclamation-circle',warning:'fa-exclamation-triangle',info:'fa-info-circle'}[kind];
+            const id = `toast-${++toastSequence}`;
+            container.insertAdjacentHTML('beforeend', `
+                <div id="${id}" class="toast fade-in" role="alert" aria-live="polite" aria-atomic="true">
+                    <div class="toast-header"><i class="fas ${icon} me-2 text-${kind}"></i>
+                        <strong class="me-auto">${pvEscapeHtml(title)}</strong><small>Jetzt</small>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Schließen"></button>
                     </div>
-                    <div class="toast-body" style="background: var(--card-bg);">
-                        ${message}
-                    </div>
-                </div>
-            `;
-            
-            container.insertAdjacentHTML('beforeend', html);
-            
-            const toastEl = document.getElementById(id);
-            const toast = new bootstrap.Toast(toastEl, { delay: 5000 });
-            toast.show();
-            
-            toastEl.addEventListener('hidden.bs.toast', function() {
-                toastEl.remove();
-            });
+                    <div class="toast-body">${pvEscapeHtml(message)}</div>
+                </div>`);
+            const el = document.getElementById(id);
+            const src = pvSafeImageUrl(imageUrl);
+            if (src && el) {
+                const image = document.createElement('img');
+                image.src = src;
+                image.alt = 'Personenbild';
+                image.loading = 'lazy';
+                image.className = 'toast-preview';
+                el.querySelector('.toast-body')?.appendChild(image);
+            }
+            if (typeof bootstrap !== 'undefined' && bootstrap.Toast) {
+                const toast = new bootstrap.Toast(el, {delay: 5000});
+                toast.show();
+                el.addEventListener('hidden.bs.toast', () => el.remove(), {once:true});
+            } else {
+                el.classList.add('show');
+                el.querySelector('.btn-close')?.addEventListener('click', () => el.remove());
+                setTimeout(() => el.remove(), 5000);
+            }
         }
-        
+
         // Notifications
         let notificationCount = 0;
         const notifications = [];
@@ -958,11 +1073,11 @@
             const listEl = document.getElementById('notificationList');
             if (!listEl) return;
             listEl.innerHTML = notifications.map(n => `
-                <a href="/history" class="dropdown-item">
+                <a href="{{ pv_prefix }}/history" class="dropdown-item">
                     <div class="d-flex align-items-center gap-2">
                         <i class="fas fa-car text-primary"></i>
                         <div>
-                            <div class="fw-bold">${n.plate_text}</div>
+                            <div class="fw-bold">${pvEscapeHtml(n.plate_text || 'Unbekannt')}</div>
                             <small class="text-secondary">${new Date().toLocaleTimeString()}</small>
                         </div>
                     </div>
@@ -986,7 +1101,7 @@
         }
         
         function changeLanguage(lang) {
-            fetch('/api/config/general', {
+            fetch('{{ pv_prefix }}/api/config/general', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({language: lang})
@@ -996,25 +1111,39 @@
         }
 
         function applyUiConfig(config) {
-            const ui = (config && config.ui) || {};
-            if (ui.accent_color) document.documentElement.style.setProperty('--primary-color', ui.accent_color);
-            if (ui.density === 'compact') document.body.classList.add('density-compact');
-            if (ui.density === 'spacious') document.body.classList.add('density-spacious');
+            const ui = config?.ui || {};
+            const theme = config?.general?.theme || 'dark';
+            const effectiveTheme = theme === 'light' || (theme === 'auto' && window.matchMedia?.('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-pv-theme', effectiveTheme);
+            document.documentElement.setAttribute('data-bs-theme', effectiveTheme);
+            if (/^#[0-9a-f]{6}$/i.test(ui.accent_color || '')) {
+                document.documentElement.style.setProperty('--primary-color', ui.accent_color);
+            }
+            document.body.classList.remove('density-compact', 'density-spacious');
+            if (ui.density === 'compact' || ui.density === 'spacious') document.body.classList.add('density-' + ui.density);
         }
 
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             checkStreamStatus();
-            setInterval(checkStreamStatus, 5000);
-            fetch('/api/settings/schema').then(r=>r.json()).then(data=>{
+            setInterval(() => { if (!document.hidden) checkStreamStatus(); }, 10000);
+            document.getElementById('mainNavigation')?.addEventListener('click', event => {
+                if (event.target.closest('a.nav-link')) closeSidebar();
+            });
+            fetch('{{ pv_prefix }}/api/settings/schema').then(r=>{ if (!r.ok) throw new Error('Einstellungen nicht erreichbar'); return r.json(); }).then(data=>{
                 const lang = data.config?.general?.language || 'de';
                 const selector = document.getElementById('languageSelector');
                 if (selector) selector.value = lang;
                 applyUiConfig(data.config);
-            }).catch(()=>{});
+            }).catch(error=>console.warn('[PlateVision] UI-Einstellungen konnten nicht geladen werden:', error));
         });
     </script>
     
+    <!-- Local SVG icons preserve the navigation when offline. -->
+    <script src="{{ pv_url_for('static', filename='js/icons-local.js') }}"></script>
+    <!-- Grouped navigation, search, favorites and keyboard shortcuts. -->
+    <script src="{{ pv_url_for('static', filename='js/navigation.js') }}"></script>
+
     {% block extra_js %}{% endblock %}
 </body>
 </html>

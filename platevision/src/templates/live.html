@@ -470,7 +470,7 @@
                 <div class="bg-dark rounded p-2 mt-1" style="font-size: 0.75rem; word-break: break-all;">
                     <code id="rtspUrlDisplay">{{ config.rtsp.url if config else 'Nicht konfiguriert' }}</code>
                 </div>
-                <a href="{{ url_for('rtsp_settings') }}" class="btn btn-sm btn-outline-primary mt-2 w-100">
+                <a href="{{ pv_url_for('rtsp_settings') }}" class="btn btn-sm btn-outline-primary mt-2 w-100">
                     <i class="fas fa-cog me-1"></i>RTSP Einstellungen
                 </a>
             </div>
@@ -636,7 +636,7 @@
     function startStream() {
         updateUIConnecting();
         
-        fetch('/api/stream/start', { method: 'POST' })
+        fetch('{{ pv_prefix }}/api/stream/start', { method: 'POST' })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
@@ -656,7 +656,7 @@
     }
     
     function stopStream() {
-        fetch('/api/stream/stop', { method: 'POST' })
+        fetch('{{ pv_prefix }}/api/stream/stop', { method: 'POST' })
             .then(response => response.json())
             .then(data => {
                 isStreaming = false;
@@ -669,7 +669,7 @@
     
     function startStreamFeed() {
         // Use MJPEG stream
-        streamVideo.src = '/api/stream/feed?' + Date.now();
+        streamVideo.src = '{{ pv_prefix }}/api/stream/feed?' + Date.now();
         if (streamVideo) streamVideo.style.display = 'block';
         
         streamVideo.onerror = function() {
@@ -678,7 +678,7 @@
                 // Try to reconnect
                 setTimeout(() => {
                     if (isStreaming) {
-                        streamVideo.src = '/api/stream/feed?' + Date.now();
+                        streamVideo.src = '{{ pv_prefix }}/api/stream/feed?' + Date.now();
                     }
                 }, 2000);
             }
@@ -875,14 +875,18 @@
         
         if (noMsg) noMsg.remove();
         
+        // Untrusted event contents must never enter HTML attributes or text raw.
+        const image = typeof data.plate_image === 'string' &&
+                      /^[A-Za-z0-9+/=]+$/.test(data.plate_image) && data.plate_image.length < 3000000
+                      ? data.plate_image : '';
         const html = `
             <div class="detection-card new mb-2">
-                ${data.plate_image 
-                    ? `<img src="data:image/jpeg;base64,${data.plate_image}" class="detection-card-image">`
+                ${image
+                    ? `<img src="data:image/jpeg;base64,${image}" class="detection-card-image">`
                     : '<div class="detection-card-image d-flex align-items-center justify-content-center"><i class="fas fa-car text-secondary"></i></div>'
                 }
                 <div class="detection-card-content">
-                    <div class="detection-card-plate">${data.plate_text || 'Unbekannt'}</div>
+                    <div class="detection-card-plate">${pvEscapeHtml(data.plate_text || 'Unbekannt')}</div>
                     <div class="detection-card-meta">
                         <span><i class="fas fa-percentage me-1"></i>${data.confidence ? Math.round(data.confidence * 100) : 0}%</span>
                         <span><i class="fas fa-clock me-1"></i>${new Date().toLocaleTimeString()}</span>
@@ -931,7 +935,7 @@
         document.getElementById('intervalValue').textContent = interval.toFixed(1) + 's';
         
         // Save setting
-        fetch('/api/config/detection', {
+        fetch('{{ pv_prefix }}/api/config/detection', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ process_interval: interval })
@@ -941,7 +945,7 @@
     function updateLiveConfidence(value) {
         document.getElementById('liveConfidenceValue').textContent = value + '%';
         
-        fetch('/api/config/detection', {
+        fetch('{{ pv_prefix }}/api/config/detection', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ confidence_threshold: value / 100 })
@@ -1011,7 +1015,7 @@
     // ============================================
     
     function checkStreamStatus() {
-        fetch('/api/stream/status')
+        fetch('{{ pv_prefix }}/api/stream/status')
             .then(response => response.json())
             .then(data => {
                 const wasStreaming = isStreaming;
@@ -1053,14 +1057,14 @@
         setInterval(checkStreamStatus, 3000);
         
         // Load today's detection count
-        fetch('/api/history/statistics')
+        fetch('{{ pv_prefix }}/api/history/statistics')
             .then(response => response.json())
             .then(data => {
                 document.getElementById('statTodayDetections').textContent = data.today_detections || 0;
             });
         
         // Load saved settings
-        fetch('/api/config')
+        fetch('{{ pv_prefix }}/api/config')
             .then(response => response.json())
             .then(config => {
                 if (config.detection) {

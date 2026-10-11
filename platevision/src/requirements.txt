@@ -1,6 +1,6 @@
 # PlateVision - Python requirements
 # UTF-8 encoded. Use opencv-python-headless for Home Assistant / Docker.
-Flask>=3.0,<4
+Flask>=3.1,<4
 Flask-SocketIO>=5.3,<6
 Werkzeug>=3.0,<4
 python-socketio>=5.11,<6

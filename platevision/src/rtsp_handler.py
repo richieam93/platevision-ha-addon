@@ -16,6 +16,7 @@ import queue
 import base64
 from datetime import datetime
 import logging
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,8 @@ class RTSPHandler:
         # Thread-Variablen
         self.capture_thread = None
         self.process_thread = None
+        self._stop_event = threading.Event()
+        self._lifecycle_lock = threading.RLock()
         self.running = False
         self.connected = False
         
@@ -62,7 +65,7 @@ class RTSPHandler:
         self.last_error = None
         
         # Frame Queue für Verarbeitung
-        self.frame_queue = queue.Queue(maxsize=10)
+        self.frame_queue = queue.Queue(maxsize=2)  # latest-frame bias: minimize latency on slow ML hardware
         
         # Duplikat-Erkennung
         self.recent_plates = {}
@@ -84,7 +87,27 @@ class RTSPHandler:
     def get_rtsp_url(self):
         """RTSP URL aus Konfiguration holen"""
         return self.config_manager.get('rtsp', 'url') or ''
+
+    def _public_rtsp_url(self):
+        """Show the camera host, never embedded credentials, tokens or paths."""
+        url = self.get_rtsp_url()
+        if not url:
+            return ''
+        try:
+            parsed = urlsplit(url)
+            host = parsed.netloc.rsplit('@', 1)[-1]
+            return f'{parsed.scheme}://{host}' if parsed.scheme and host else '(konfiguriert)'
+        except (ValueError, TypeError, AttributeError):
+            return '(konfiguriert)'
     
+    def _safe_error_text(self, exception):
+        """Prevent RTSP userinfo/tokens from showing up in errors or status."""
+        message = str(exception)
+        url = self.get_rtsp_url()
+        if isinstance(url, str) and url:
+            message = message.replace(url, self._public_rtsp_url())
+        return message[:500]
+
     def is_running(self):
         """Prüft ob Stream läuft"""
         return self.running
@@ -111,12 +134,12 @@ class RTSPHandler:
     def get_status(self):
         """Gibt den aktuellen Stream-Status zurück"""
         return {
-            'status': 'running' if self.running else 'stopped',
+            'status': ('running' if self.connected else 'connecting') if self.running else 'stopped',
             'connected': self.connected,
             'fps': self.get_fps(),
             'frame_count': self.get_frame_count(),
             'detection_count': self.detection_count,
-            'url': self.get_rtsp_url(),
+            'url': self._public_rtsp_url(),
             'error': self.last_error if not self.connected else None,
             'resolution': self.get_stream_resolution(),
             'analysis_area_enabled': self.config_manager.get('rtsp', 'analysis_area', 'enabled') or False,
@@ -149,11 +172,23 @@ class RTSPHandler:
             return False
         
         try:
-            logger.info(f"Verbinde zu RTSP: {url}")
+            if self.cap is not None:
+                self.disconnect()  # release stale VideoCapture before reconnect
+            logger.info("Verbinde zu RTSP: %s", self._public_rtsp_url())
             
-            # OpenCV VideoCapture mit RTSP
-            self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-            
+            # Bound FFMPEG open/read so a network outage does not leave a
+            # permanent capture worker. Older OpenCV builds are supported.
+            open_prop = getattr(cv2, 'CAP_PROP_OPEN_TIMEOUT_MSEC', None)
+            read_prop = getattr(cv2, 'CAP_PROP_READ_TIMEOUT_MSEC', None)
+            if open_prop is None or read_prop is None:
+                self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+            else:
+                timeout_options = [open_prop, 8000, read_prop, 8000]
+                try:
+                    self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG, timeout_options)
+                except (TypeError, getattr(cv2, 'error', TypeError)):
+                    self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+
             # Puffer-Einstellungen
             buffer_size = self.config_manager.get('rtsp', 'buffer_size') or 1
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, buffer_size)
@@ -171,70 +206,103 @@ class RTSPHandler:
                     with self.frame_lock:
                         self.current_frame = frame
                     
-                    logger.info(f"RTSP Verbindung hergestellt: {url} - Auflösung: {self.stream_width}x{self.stream_height}")
+                    logger.info("RTSP Verbindung hergestellt: %s - Auflösung: %sx%s", self._public_rtsp_url(), self.stream_width, self.stream_height)
                     return True
                 else:
                     self.last_error = "Konnte keinen Frame lesen"
             else:
                 self.last_error = "Stream konnte nicht geöffnet werden"
             
-            logger.warning(f"Verbindung fehlgeschlagen: {self.last_error}")
+            logger.warning('Verbindung fehlgeschlagen: %s', self.last_error)
+            self.disconnect()
             return False
-            
+
         except Exception as e:
-            self.last_error = str(e)
-            logger.error(f"RTSP Verbindungsfehler: {e}")
+            self.last_error = self._safe_error_text(e)
+            logger.error('RTSP Verbindungsfehler: %s', self.last_error)
+            self.disconnect()
             return False
-    
+
+    def _clear_frame_queue(self):
+        """Discard frames belonging to an older/disconnected camera stream."""
+        while True:
+            try:
+                self.frame_queue.get_nowait()
+            except queue.Empty:
+                break
+
     def disconnect(self):
-        """Verbindung trennen"""
-        if self.cap:
-            self.cap.release()
-            self.cap = None
+        """Release the camera and stale frame buffers on every disconnect."""
+        cap, self.cap = self.cap, None
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception as exc:
+                logger.warning('VideoCapture konnte nicht freigegeben werden: %s', self._safe_error_text(exc))
         self.connected = False
+        self.fps = 0
+        self.fps_frame_count = 0
+        self.last_fps_time = time.time()
+        with self.frame_lock:
+            self.current_frame = None
+            self.annotated_frame = None
+        self._clear_frame_queue()
         logger.info("RTSP Verbindung getrennt")
     
     def start(self):
-        """Stream starten"""
-        if self.running:
-            logger.warning("Stream läuft bereits")
+        """Start only when previous capture/process workers have fully exited."""
+        with self._lifecycle_lock:
+            if self.running:
+                logger.info('RTSP Handler läuft bereits')
+                return True
+            # VideoCapture.read and model inference may outlive stop()'s short
+            # join timeout. Reusing the old Event would revive those threads.
+            if any(worker and worker.is_alive()
+                   for worker in (self.capture_thread, self.process_thread)):
+                self.last_error = 'Vorheriger Kamera-Thread beendet sich noch; Start später erneut versuchen.'
+                logger.warning(self.last_error)
+                return False
+            self._stop_event = threading.Event()
+            self.running = True
+            self.last_error = None
+            self._clear_frame_queue()
+            self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+            self.process_thread = threading.Thread(target=self._process_loop, daemon=True)
+            self.capture_thread.start()
+            self.process_thread.start()
+            logger.info('RTSP Handler gestartet')
             return True
-        
-        self.running = True
-        self.last_error = None
-        
-        # Capture Thread starten
-        self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self.capture_thread.start()
-        
-        # Processing Thread starten
-        self.process_thread = threading.Thread(target=self._process_loop, daemon=True)
-        self.process_thread.start()
-        
-        logger.info("RTSP Handler gestartet")
-        return True
-    
+
     def stop(self):
-        """Stream stoppen"""
-        logger.info("Stoppe RTSP Handler...")
-        self.running = False
-        
-        # Queue leeren
-        while not self.frame_queue.empty():
-            try:
-                self.frame_queue.get_nowait()
-            except:
-                pass
-        
-        # Auf Thread-Ende warten
-        if self.capture_thread and self.capture_thread.is_alive():
-            self.capture_thread.join(timeout=2)
-        
-        if self.process_thread and self.process_thread.is_alive():
-            self.process_thread.join(timeout=2)
-        
-        self.disconnect()
-        logger.info("RTSP Handler gestoppt")
+        """Stop safely. A timed-out worker must block the next start."""
+        logger.info('Stoppe RTSP Handler...')
+        with self._lifecycle_lock:
+            self.running = False
+            self._stop_event.set()
+            self._clear_frame_queue()
+            workers = (self.capture_thread, self.process_thread)
+        for worker in workers:
+            if worker and worker.is_alive() and worker is not threading.current_thread():
+                worker.join(timeout=2)
+        with self._lifecycle_lock:
+            capture_pending = bool(self.capture_thread and self.capture_thread.is_alive())
+            pending = any(worker and worker.is_alive() for worker in workers)
+            if capture_pending:
+                # Releasing VideoCapture from a different thread during read()
+                # may crash native FFMPEG/OpenCV code. The capture worker will
+                # release it itself after read/connect returns.
+                self.connected = False
+                with self.frame_lock:
+                    self.current_frame = None
+                    self.annotated_frame = None
+            else:
+                self.disconnect()
+            if pending:
+                self.last_error = 'Kamera-Thread wird noch beendet; vor einem Neustart abwarten.'
+                logger.warning(self.last_error)
+            else:
+                logger.info('RTSP Handler gestoppt')
+            return not pending
     
     def _get_analysis_area(self, frame_height, frame_width):
         """
@@ -606,22 +674,33 @@ class RTSPHandler:
 
     def _capture_loop(self):
         """Capture-Schleife für RTSP Stream"""
-        reconnect_delay = self.config_manager.get('rtsp', 'reconnect_delay') or 5
-        
+        try:
+            reconnect_delay = float(self.config_manager.get('rtsp', 'reconnect_delay') or 5)
+            if reconnect_delay != reconnect_delay or reconnect_delay in (float('inf'), float('-inf')):
+                reconnect_delay = 5.0
+        except (TypeError, ValueError, OverflowError):
+            reconnect_delay = 5.0
+        reconnect_delay = max(0.2, min(120.0, reconnect_delay))
+
         while self.running:
             if not self.connected:
                 if not self.connect():
-                    logger.debug(f"Reconnect in {reconnect_delay} Sekunden...")
-                    time.sleep(reconnect_delay)
+                    logger.debug('Reconnect in %.1f Sekunden...', reconnect_delay)
+                    self._stop_event.wait(reconnect_delay)
                     continue
-            
+                # A blocking RTSP connection can finish after stop(). Never
+                # reattach this late frame to an already stopped camera.
+                if not self.running or self._stop_event.is_set():
+                    self.disconnect()
+                    break
+
             try:
                 ret, frame = self.cap.read()
                 
                 if not ret or frame is None:
                     logger.warning("Frame konnte nicht gelesen werden, reconnecting...")
                     self.disconnect()
-                    time.sleep(reconnect_delay)
+                    self._stop_event.wait(reconnect_delay)
                     continue
                 
                 # Stream-Auflösung aktualisieren falls sich was geändert hat
@@ -635,9 +714,20 @@ class RTSPHandler:
                 with self.frame_lock:
                     self.current_frame = frame.copy()
                 
-                # Frame zur Verarbeitung in Queue
-                if not self.frame_queue.full():
-                    self.frame_queue.put(frame.copy())
+                # Never build up seconds of stale frames during slow inference.
+                # If full, discard the oldest image rather than the newest one.
+                latest_frame = frame.copy()
+                try:
+                    self.frame_queue.put_nowait(latest_frame)
+                except queue.Full:
+                    try:
+                        self.frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        self.frame_queue.put_nowait(latest_frame)
+                    except queue.Full:
+                        pass  # consumer may race us; try again next frame
                 
                 # FPS berechnen
                 self.fps_frame_count += 1
@@ -651,14 +741,23 @@ class RTSPHandler:
                     
             except Exception as e:
                 logger.error(f"Capture Fehler: {e}")
-                self.last_error = str(e)
+                self.last_error = self._safe_error_text(e)
                 self.disconnect()
-                time.sleep(reconnect_delay)
-    
+                self._stop_event.wait(reconnect_delay)
+        # Only the capture worker releases VideoCapture after a timed-out
+        # stop() call. Never close a handle while native read() is active.
+        self.disconnect()
+
     def _process_loop(self):
         """Verarbeitungs-Schleife für Nummernschilderkennung"""
-        process_interval = self.config_manager.get('detection', 'process_interval') or 0.5
-        
+        try:
+            process_interval = float(self.config_manager.get('detection', 'process_interval') or 0.5)
+            if process_interval != process_interval or abs(process_interval) == float('inf'):
+                process_interval = 0.5
+        except (TypeError, ValueError, OverflowError):
+            process_interval = 0.5
+        process_interval = max(0.01, min(10.0, process_interval))
+
         while self.running:
             try:
                 # Frame aus Queue holen
@@ -677,7 +776,7 @@ class RTSPHandler:
                     # Modelle laden falls nötig
                     if not self.detector.models_loaded:
                         self.detector.load_models()
-                        time.sleep(1)
+                        self._stop_event.wait(1)
                         continue
                     
                     try:
@@ -706,7 +805,7 @@ class RTSPHandler:
                             with self.frame_lock:
                                 self.annotated_frame = annotated
                             self.frame_count += 1
-                            time.sleep(process_interval)
+                            self._stop_event.wait(process_interval)
                             continue
 
                         process_frame, offset_x, offset_y = self._apply_analysis_mask(frame, area_info)
@@ -831,6 +930,11 @@ class RTSPHandler:
                         
                         self.frame_count += 1
                         
+                        # A stop may have arrived during slow model inference.
+                        # Do not write detections from an obsolete camera session.
+                        if not self.running or self._stop_event.is_set():
+                            break
+
                         # Erkennungen verarbeiten
                         for detection in results.get('detections', []):
                             if detection.get('plate_text'):
@@ -848,13 +952,19 @@ class RTSPHandler:
                     with self.frame_lock:
                         self.annotated_frame = frame
                 
-                time.sleep(process_interval)
-                
+                # Live changes to the interval should apply without an RTSP restart.
+                try:
+                    updated = float(self.config_manager.get('detection', 'process_interval') or 0.5)
+                    process_interval = max(0.01, min(10.0, updated)) if np.isfinite(updated) else 0.5
+                except (ValueError, TypeError, OverflowError):
+                    process_interval = 0.5
+                self._stop_event.wait(process_interval)
+
             except Exception as e:
                 logger.error(f"Processing Fehler: {e}")
                 import traceback
                 traceback.print_exc()
-                time.sleep(1)
+                self._stop_event.wait(1)
     
     def _handle_detection(self, detection, full_results):
         """Verarbeitet erkanntes Nummernschild"""
@@ -889,6 +999,7 @@ class RTSPHandler:
             "confidence": detection.get('confidence', 0),
             "source": "rtsp",
             "plate_image": detection.get('plate_image_base64'),
+            "plate_sharpness": detection.get('plate_sharpness'),
             "vehicle_image": detection.get('vehicle_image_base64'),
             "full_frame": detection.get('full_frame_base64'),
             "vehicle_type": detection.get('vehicle_type', 'Unbekannt'),

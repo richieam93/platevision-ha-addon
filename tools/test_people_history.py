@@ -7,6 +7,7 @@ model files are not imported or executed.
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
 import hashlib
 import json
 import logging
@@ -63,12 +64,15 @@ def _write_json(path, payload):
 def _load_manager_class():
     tree = ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
     node = next(item for item in tree.body if isinstance(item, ast.ClassDef) and item.name == "PersonHistoryManager")
-    module = ast.Module(body=[node], type_ignores=[])
+    paging = next(item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == '_page_integer')
+    numeric = next(item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == '_safe_numeric')
+    module = ast.Module(body=[paging, numeric, node], type_ignores=[])
     namespace = {
         "Path": Path,
         "datetime": datetime,
         "timedelta": timedelta,
         "threading": threading,
+        "contextmanager": contextmanager,
         "time": time,
         "uuid": uuid,
         "hashlib": hashlib,
@@ -102,6 +106,14 @@ def main():
 
             page = manager.paginated_history({"days": 1, "counted": "all", "limit": 2})
             assert page["total"] == 3 and len(page["entries"]) == 2 and page["has_more"]
+            # Malformed pagination parameters must not crash the API.
+            invalid_page = manager.paginated_history({"days": 1, "counted": "all", "limit": "abc", "offset": "-12"})
+            assert invalid_page["limit"] == 50 and invalid_page["offset"] == 0
+            oversized = manager.paginated_history({"days": 1, "counted": "all", "limit": "999999"})
+            assert oversized["limit"] == 200
+            bad_filter = manager.paginated_history({"days": "bad", "min_confidence": "NaN", "counted": "all"})
+            assert bad_filter["total"] == 3
+            assert manager.cleanup_images(0)["retention_days"] == 0
 
             sessions = manager.get_sessions({"days": 1, "counted": "all", "limit": 10})
             assert sessions["total"] == 2

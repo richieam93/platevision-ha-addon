@@ -4,10 +4,10 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.12.0 People Image Archive
+Version 0.13.9 - safer notification consent and configuration updates
 """
 
-from flask import Flask, render_template, request, jsonify, Response, send_from_directory, redirect, url_for, g
+from flask import Flask, render_template, request, jsonify, Response, send_from_directory, send_file, redirect, url_for, g, has_request_context
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 import cv2
@@ -29,13 +29,24 @@ import re
 import hashlib
 import secrets
 import shutil
+from contextlib import contextmanager
+from functools import wraps
 
-APP_VERSION = '0.12.0'
-APP_EDITION = 'People History, Review & Workflow'
+APP_VERSION = '0.13.9'
+APP_EDITION = 'Home Assistant notifications, Watchlist alerts & Ingress'
 APP_LICENSE = 'AGPL-3.0-only'
 APP_LICENSE_SINCE = '0.9.0'
 APP_SOURCE_URL = os.environ.get('PLATEVISION_SOURCE_URL', 'https://github.com/richieam93/platevision-ha-addon/tree/main')
 import csv
+import zipfile
+import tempfile
+import sqlite3
+from history_sqlite import SQLiteHistoryStore, HistoryStorageError, ReviewConflictError
+from vehicle_display import best_image_candidate, plate_image_sharpness
+from watchlist_alerts import WatchlistAlertStore, notification_enabled
+from ha_notifications import (HADeliveryWorker, HomeAssistantSender, HADeliveryError,
+                              channels_for_settings, ha_settings_from_config,
+                              valid_mobile_service)
 from difflib import SequenceMatcher
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -104,6 +115,11 @@ def _atomic_write_json(path_value, payload):
     directory and then swapped into place with os.replace().
     """
     target = Path(path_value)
+    # Never overwrite the evidence of a damaged primary AND backup. This is
+    # deliberately process-local: administrators can recover the files from a
+    # separate backup and restart the app to revalidate them.
+    if globals().setdefault('_read_only_storage', {}):
+        raise OSError('Sicherheits-Schreibschutz aktiv: Beschädigte JSON-Datendatei; Dateien extern reparieren und PlateVision neu starten')
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_name(f'.{target.name}.{os.getpid()}.{threading.get_ident()}.tmp')
     backup = target.with_name(f'{target.name}.bak')
@@ -114,10 +130,30 @@ def _atomic_write_json(path_value, payload):
             handle.flush()
             os.fsync(handle.fileno())
         if target.exists():
+            # Never replace a healthy backup with a corrupt primary file.
+            # This matters if startup already recovered data from .bak.
             try:
-                shutil.copy2(target, backup)
-            except OSError as exc:
-                logger.warning('Backup fuer %s konnte nicht erstellt werden: %s', target, exc)
+                with target.open('r', encoding='utf-8') as old_handle:
+                    existing_value = json.load(old_handle)
+                # Valid JSON with the wrong root shape is corrupted storage too.
+                if ((isinstance(payload, dict) and not isinstance(existing_value, dict)) or
+                    (isinstance(payload, list) and
+                     (not isinstance(existing_value, list) or
+                      any(not isinstance(row, dict) for row in existing_value)))):
+                    raise ValueError('unexpected JSON layout; keeping existing backup')
+                backup_temp = backup.with_name(f'.{backup.name}.{os.getpid()}.{threading.get_ident()}.tmp')
+                try:
+                    # Atomic backup rotation as well: losing power while
+                    # copying must not truncate the previous valid backup.
+                    with target.open('rb') as original, backup_temp.open('wb') as copy:
+                        shutil.copyfileobj(original, copy)
+                        copy.flush()
+                        os.fsync(copy.fileno())
+                    os.replace(backup_temp, backup)
+                finally:
+                    backup_temp.unlink(missing_ok=True)
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                logger.warning('Ueberspringe ungueltige Sicherungsquelle %s: %s', target, exc)
         os.replace(temp, target)
     finally:
         try:
@@ -127,21 +163,81 @@ def _atomic_write_json(path_value, payload):
 
 
 def _load_json_with_backup(path_value, default):
-    """Load JSON and transparently recover from the .bak file when necessary."""
+    """Load the primary or validated backup without silently losing corrupt data.
+
+    A syntactically valid JSON *list of strings* is not a usable history.
+    When files exist but both copies are unreadable or structurally invalid,
+    return an empty read-only view and lock the affected persistent file. Never
+    let the next save replace the potentially recoverable original bytes.
+    """
     target = Path(path_value)
     backup = target.with_name(f'{target.name}.bak')
+    key = str(target.resolve())
+    guard = globals().setdefault('_read_only_storage', {})
+    recovered = globals().setdefault('_storage_recovered_from_backup', set())
+    found_file = False
     for candidate in (target, backup):
         if not candidate.is_file():
             continue
+        found_file = True
         try:
             with candidate.open('r', encoding='utf-8') as handle:
                 value = json.load(handle)
+            if isinstance(default, dict) and not isinstance(value, dict):
+                raise ValueError('JSON root must be an object')
+            if isinstance(default, list) and (not isinstance(value, list) or
+                                               any(not isinstance(item, dict) for item in value)):
+                raise ValueError('JSON root must be an array of objects')
             if candidate == backup:
+                recovered.add(key)
                 logger.warning('Verwende Sicherungskopie fuer beschaedigte/fehlende Datei: %s', target)
+            else:
+                recovered.discard(key)
+            guard.pop(key, None)
             return value
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            logger.error('JSON-Datei %s konnte nicht gelesen werden: %s', candidate, exc)
+        except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+            logger.error('JSON-Datei %s ist nicht verwendbar: %s', candidate, exc)
+    if found_file:
+        guard[key] = 'Hauptdatei und Sicherung beschädigt oder ungültig'
+        logger.critical('SCHREIBSCHUTZ AKTIV fuer %s: beide JSON-Kopien fehlen oder sind unbrauchbar', target)
     return _json_clone(default)
+
+
+def _page_integer(value, default, minimum=0, maximum=200):
+    # Safe clamped API page values.
+    try:
+        number = int(value) if value not in (None, '') else int(default)
+    except (TypeError, ValueError, OverflowError):
+        number = int(default)
+    return max(minimum, min(number, maximum))
+
+
+def _safe_numeric(value, default=0.0):
+    try:
+        number = float(value)
+        return number if number == number and abs(number) != float('inf') else default
+    except (ValueError, TypeError, OverflowError):
+        return default
+
+
+
+def _read_limited_import_json(max_bytes=4 * 1024 * 1024):
+    """Decode a configuration/watchlist import with a hard byte budget.
+
+    A file or JSON API body must not use the 500 MB video-upload budget.
+    """
+    if request.content_length is not None and request.content_length > max_bytes + 1024 * 1024:
+        raise ValueError('Importdatei ist zu groß (maximal 4 MB JSON).')
+    uploaded = request.files.get('file')
+    source = uploaded.stream if uploaded else request.stream
+    payload = source.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise ValueError('Importdatei ist zu groß (maximal 4 MB JSON).')
+    try:
+        return json.loads(payload.decode('utf-8-sig'))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError('Importdatei enthält kein gültiges UTF-8-JSON.') from exc
+
 
 
 def _sha256_file(path_value, chunk_size=1024 * 1024):
@@ -158,10 +254,86 @@ def _sha256_file(path_value, chunk_size=1024 * 1024):
     return digest.hexdigest()
 
 
+# Normal API JSON actions never need the global 500 MB upload allowance.
+# Config/watchlist imports have a separate 4 MB contract, and image/video
+# uploads continue to use their own bounded multipart handlers.
+_API_JSON_MAX_BYTES = 1024 * 1024
+_API_JSON_IMPORT_MAX_BYTES = 4 * 1024 * 1024 + 1024 * 1024
+
+
+@app.before_request
+def _limit_json_api_request():
+    if (not request.path.startswith('/api/') or
+            request.method not in ('POST', 'PUT', 'PATCH', 'DELETE') or
+            not request.is_json):
+        return None
+    allowed = (_API_JSON_IMPORT_MAX_BYTES if request.path in
+               ('/api/config/import', '/api/watchlist/import') else _API_JSON_MAX_BYTES)
+    # request.max_content_length controls reads with an unknown body length.
+    # Do not call get_json/get_data: neither should allocate an oversized body.
+    request.max_content_length = allowed
+    if request.content_length is not None and request.content_length > allowed:
+        return jsonify({'success': False,
+                        'error': f'JSON-Anfrage zu groß (maximal {allowed // 1024} KiB).'}), 413
+    return None
+
+
+# Home Assistant forwards the authenticated panel under a per-session prefix.
+# Never accept an arbitrary browser-supplied prefix. The documented ingress
+# proxy originates at 172.30.32.2 on the internal Home Assistant network.
+_INGRESS_PATH_RE = re.compile(r'/api/hassio_ingress/[A-Za-z0-9_-]{8,256}/?')
+
+
+def _platevision_ingress_prefix():
+    if not has_request_context():
+        return ''
+    prefix = request.headers.get('X-Ingress-Path', '')
+    if (request.remote_addr != '172.30.32.2' or
+            not _INGRESS_PATH_RE.fullmatch(prefix)):
+        return ''
+    return prefix.rstrip('/')
+
+
+def _platevision_ui_url(path):
+    # Only local, absolute routes, never user-supplied external URLs.
+    value = str(path)
+    if value.startswith('/') and not value.startswith('//'):
+        return _platevision_ingress_prefix() + value
+    return value
+
+
+def _platevision_url_for(endpoint, **values):
+    return _platevision_ui_url(url_for(endpoint, **values))
+
+
+def _basic_auth_valid():
+    """Optional LAN protection; use only through HTTPS or a trusted VPN."""
+    if _platevision_ingress_prefix():
+        return True  # Home Assistant already authenticated this proxy request.
+    configured = os.environ.get('PLATEVISION_AUTH_PASSWORD', '')
+    if not configured:
+        return True
+    authorization = request.authorization
+    if not authorization or authorization.type.lower() != 'basic':
+        return False
+    user = os.environ.get('PLATEVISION_AUTH_USERNAME', 'platevision')
+    return (secrets.compare_digest(str(authorization.username or ''), user) and
+            secrets.compare_digest(str(authorization.password or ''), configured))
+
+
 @app.before_request
 def _begin_request_context():
-    g.request_id = request.headers.get('X-Request-ID') or uuid.uuid4().hex
+    supplied_id = request.headers.get('X-Request-ID', '')
+    g.request_id = supplied_id if re.fullmatch(r'[A-Za-z0-9._-]{1,64}', supplied_id) else uuid.uuid4().hex
     g.request_started_at = time.perf_counter()
+    if request.path == '/api/system/live':
+        return None  # Supervisor watchdog and container probe remain functional.
+    if not _basic_auth_valid():
+        response = jsonify({'success': False, 'error': 'Authentifizierung erforderlich'}) if request.path.startswith('/api/') else Response('Authentifizierung erforderlich', mimetype='text/plain')
+        response.status_code = 401
+        response.headers['WWW-Authenticate'] = 'Basic realm="PlateVision", charset="UTF-8"'
+        response.headers['Cache-Control'] = 'no-store'
+        return response
 
 
 @app.after_request
@@ -173,6 +345,16 @@ def _apply_response_headers(response):
     response.headers['X-Request-ID'] = getattr(g, 'request_id', '')
     if request.path.startswith('/api/'):
         response.headers.setdefault('Cache-Control', 'no-store')
+    # A storage error must never be reported as an HTTP 200 by a settings route.
+    # The config manager restores its last committed snapshot on write failure.
+    if getattr(g, 'config_persist_failed', False):
+        if request.path.startswith('/api/'):
+            error = jsonify({'success': False, 'error': 'Konfiguration konnte nicht dauerhaft gespeichert werden. Die bisherigen Einstellungen bleiben erhalten.'})
+            error.status_code = 503
+            error.headers['Cache-Control'] = 'no-store'
+            error.headers['X-Request-ID'] = getattr(g, 'request_id', '')
+            return error
+        response.status_code = 503
     return response
 
 # ============================================================
@@ -212,6 +394,9 @@ for directory in DIRECTORIES:
 # ============================================================
 
 video_processing_jobs = {}
+video_jobs_lock = threading.RLock()
+video_job_cancel_events = {}
+VIDEO_JOB_STATE_FILE = Path('data/video_jobs.json')
 
 
 # ============================================================
@@ -660,7 +845,13 @@ class ConfigManager:
             'show_watchlist': True,
             'show_storage': True,
             'compact_mode': False,
-            'default_range_days': 7
+            'default_range_days': 7,
+            # Presentation only: the archive and search still contain ALL records.
+            'show_only_best_vehicle': True,
+            'best_vehicle_min_confidence': 0.80,
+            'best_vehicle_window_seconds': 180,
+            'best_vehicle_prefer_sharpness': True,
+            'best_vehicle_sharpness_weight': 0.25
         },
         'traffic': {
             'visit_gap_minutes': 15,
@@ -740,6 +931,7 @@ class ConfigManager:
             'image_history_store_crop': True,
             'image_history_store_annotated': False,
             'image_history_store_full_frame': False,
+            'image_history_crop_padding_percent': 100,
             'image_history_jpeg_quality': 85,
             'image_history_retention_days': 10,
             'image_history_auto_cleanup_enabled': True,
@@ -765,6 +957,12 @@ class ConfigManager:
         },
         'alerts': {
             'watchlist_notifications': True,
+            'watchlist_alert_cooldown_seconds': 180,
+            # Optional HA forwarding is off by default (privacy).
+            'ha_persistent_enabled': False,
+            'ha_mobile_enabled': False,
+            'ha_mobile_service': '',
+            'ha_include_plate': False,
             'unknown_plate_notifications': False,
             'low_confidence_notifications': False,
             'min_alert_confidence': 0.65,
@@ -835,6 +1033,8 @@ class ConfigManager:
     def __init__(self):
         self.lock = threading.RLock()
         self.config = self.load_config()
+        # Never expose uncommitted settings as if a disk write had succeeded.
+        self._committed_config = _json_clone(self.config)
     
     def load_config(self):
         saved_config = _load_json_with_backup(self.CONFIG_FILE, {})
@@ -995,6 +1195,12 @@ class ConfigManager:
             dashboard_cfg.setdefault('show_latest_vehicle', True)
             dashboard_cfg.setdefault('show_latest_person', True)
             dashboard_cfg.setdefault('show_today_summary', True)
+            dashboard_cfg.setdefault('show_only_best_vehicle', True)
+            dashboard_cfg.setdefault('best_vehicle_min_confidence', 0.80)
+            dashboard_cfg.setdefault('best_vehicle_window_seconds', 180)
+            dashboard_cfg.setdefault('best_vehicle_prefer_sharpness', True)
+            dashboard_cfg.setdefault('best_vehicle_sharpness_weight', 0.25)
+            config.setdefault('people', {}).setdefault('image_history_crop_padding_percent', 100)
 
             # 0.9.0: Der Lizenzhinweis ist Teil der Software-Metadaten und kein
             # frei editierbarer Benutzerwert. Alte MIT-Defaults werden migriert.
@@ -1117,14 +1323,22 @@ class ConfigManager:
         return result
     
     def save_config(self):
-        try:
-            with self.lock:
+        with self.lock:
+            try:
+                # A malformed import must not destroy required config sections.
+                for section, defaults in self.DEFAULT_CONFIG.items():
+                    if isinstance(defaults, dict) and not isinstance(self.config.get(section), dict):
+                        raise ValueError(f'Konfigurationsabschnitt {section} muss ein Objekt sein')
                 self.config = self._normalize_analysis_area(self.config)
                 _atomic_write_json(self.CONFIG_FILE, self.config)
-            return True
-        except Exception as e:
-            logger.error(f"Fehler beim Speichern der Konfiguration: {e}")
-            return False
+                self._committed_config = _json_clone(self.config)
+                return True
+            except Exception as exc:
+                logger.error('Konfiguration konnte nicht gespeichert werden: %s', exc)
+                self.config = _json_clone(self._committed_config)
+                if has_request_context():
+                    g.config_persist_failed = True
+                return False
     
     def get(self, *keys):
         value = self.config
@@ -1145,12 +1359,87 @@ class ConfigManager:
             for key in keys[:-1]:
                 config = config.setdefault(key, {})
             config[keys[-1]] = value
-            self.save_config()
+            if not self.save_config():
+                raise OSError('Konfigurationsänderung konnte nicht gespeichert werden')
 
 
 # ============================================================
 # HISTORY MANAGER
 # ============================================================
+
+def _compile_plate_search_regex(pattern):
+    """Restricted, predictable regex subset for plate searches.
+
+    Full Python regexes with nested repetitions can block the Flask worker.
+    This deliberately supports basic anchors, classes, and bounded repetitions,
+    but not groups, alternation, lookarounds or backreferences.
+    """
+    if not isinstance(pattern, str) or not pattern or len(pattern) > 80:
+        return None
+    if any(symbol in pattern for symbol in ('(', ')', '|')):
+        return None
+    if re.search(r'\\(?![dDsSwW])', pattern):
+        return None
+    if re.search(r'(?:\*\*|\+\+|\?\?|\*\+|\+\*|\?\+|\+\?)', pattern):
+        return None
+    repeats = re.findall(r'\{([^{}]+)\}', pattern)
+    for spec in repeats:
+        if not re.fullmatch(r'\d{1,2}(?:,\d{0,2})?', spec):
+            return None
+        bounds = spec.split(',')
+        lo = int(bounds[0])
+        hi = int(bounds[1]) if len(bounds) > 1 and bounds[1] else 20
+        if lo > hi or hi > 20:
+            return None
+    no_bounds = re.sub(r'\{[^{}]+\}', '', pattern)
+    if '{' in no_bounds or '}' in no_bounds:
+        return None
+    # Three independent repetitions on <=24 characters have bounded cost.
+    if len(repeats) + sum(no_bounds.count(ch) for ch in '*+?') > 3:
+        return None
+    try:
+        return re.compile(pattern, flags=re.IGNORECASE)
+    except re.error:
+        return None
+
+
+def _load_history_sqlite(path, kind):
+    """Initialize the SQLite authority, retaining validated JSON as a fallback snapshot.
+
+    An old JSON backend cannot be re-enabled while an SQLite database exists:
+    it would show stale records and risk data loss. A failed migration makes the
+    application read-only, without replacing either of the old JSON copies.
+    """
+    path = Path(path)
+    store = SQLiteHistoryStore(path, kind=kind)
+    guard = globals().setdefault('_read_only_storage', {})
+    desired = os.environ.get('PLATEVISION_HISTORY_BACKEND', 'sqlite').strip().lower()
+    if desired == 'json':
+        if store.path.exists():
+            guard[str(store.path.resolve())] = 'SQLite ist bereits aktiv; vor einem JSON-Rollback aktuelle Daten exportieren und SQLite offline deaktivieren'
+            logger.critical('JSON-Backend nicht aktiviert, da SQLite-Historie existiert: %s', store.path)
+            return None, []
+        return None, _load_json_with_backup(str(path), [])
+    if desired != 'sqlite':
+        guard[str(store.path.resolve())] = 'Ungültiger PLATEVISION_HISTORY_BACKEND-Wert'
+        logger.critical('Unbekanntes History-Backend: %s', desired)
+        return None, []
+
+    def verified_legacy_load():
+        rows = _load_json_with_backup(str(path), [])
+        if str(path.resolve()) in guard:
+            raise HistoryStorageError('Legacy-JSON und Sicherheitskopie beschädigt; Migration verweigert')
+        return rows
+
+    try:
+        rows = store.initialize(verified_legacy_load)
+        logger.info('SQLite-Historie %s: %d Eintraege; DB %s', kind, len(rows), store.path)
+        return store, rows
+    except (sqlite3.Error, OSError, ValueError, TypeError, UnicodeError) as exc:
+        guard[str(store.path.resolve())] = str(exc)[:280]
+        logger.critical('SQLite-Historie %s nicht nutzbar; globaler Schreibschutz aktiv: %s', kind, exc)
+        return None, []
+
 
 class HistoryManager:
     """Verwaltet die Erkennungshistorie"""
@@ -1158,20 +1447,53 @@ class HistoryManager:
     HISTORY_FILE = 'data/history/detections.json'
     
     def __init__(self):
+        self.lock = threading.RLock()
+        self._sqlite_store = None
         self.history = self.load_history()
-        self.lock = threading.Lock()
-    
+
     def load_history(self):
+        if globals().get('SQLiteHistoryStore'):
+            self._sqlite_store, rows = _load_history_sqlite(self.HISTORY_FILE, 'plates')
+            return rows
         value = _load_json_with_backup(self.HISTORY_FILE, [])
-        return value if isinstance(value, list) else []
+        if not isinstance(value, list):
+            return []
+        rows = [item for item in value if isinstance(item, dict)]
+        if len(rows) != len(value):
+            logger.warning('Kennzeichen-Historie: %d ungueltige JSON-Zeilen beim Laden ignoriert', len(value) - len(rows))
+        return rows
     
     def save_history(self):
-        try:
-            _atomic_write_json(self.HISTORY_FILE, self.history)
-            return True
-        except Exception as e:
-            logger.error(f"Fehler beim Speichern der Historie: {e}")
-            return False
+        with self.lock:
+            try:
+                if globals().get('_read_only_storage'):
+                    raise OSError('Speicher-Schreibschutz aktiv')
+                if self._sqlite_store:
+                    self._sqlite_store.sync(self.history)
+                else:
+                    _atomic_write_json(self.HISTORY_FILE, self.history)
+                return True
+            except Exception as e:
+                logger.error('Plate history could not be saved: %s', e)
+                if self._sqlite_store and isinstance(e, (sqlite3.Error, HistoryStorageError)):
+                    globals().setdefault('_read_only_storage', {})[str(self._sqlite_store.path.resolve())] = str(e)[:280]
+                return False
+
+    def _save_or_revert(self, previous):
+        if not self.save_history():
+            self.history = previous
+            raise OSError('Kennzeichen-Historie konnte nicht gespeichert werden')
+
+    def delete_video_job_entries(self, job_id):
+        """Rollback video events if an upload is cancelled or fails."""
+        with self.lock:
+            previous = self.history
+            kept = [row for row in previous if row.get('video_job_id') != job_id]
+            if len(kept) == len(previous):
+                return 0
+            self.history = kept
+            self._save_or_revert(previous)
+            return len(previous) - len(kept)
     
     def _normalize_plate(self, plate_text):
         return PlateUtils.normalize(plate_text, compact=True)
@@ -1192,12 +1514,13 @@ class HistoryManager:
             entry_plate = self._normalize_plate(entry.get('plate_text', ''))
             if not entry_plate:
                 continue
-            try:
-                entry_time = datetime.fromisoformat(entry.get('timestamp', ''))
-                time_diff = (current_time - entry_time).total_seconds()
-            except Exception:
-                time_diff = timeout_seconds + 1
-            if time_diff >= timeout_seconds:
+            entry_time = self._local_datetime(self._parse_datetime(entry.get('timestamp')))
+            if entry_time is None:
+                continue
+            time_diff = (current_time - entry_time).total_seconds()
+            # Reject timestamps too far in the future as well: the old negative
+            # delta matched as a duplicate indefinitely after clock jumps.
+            if abs(time_diff) >= timeout_seconds:
                 continue
             if entry_plate == normalized:
                 return True
@@ -1236,14 +1559,42 @@ class HistoryManager:
                 entry['watchlist_match'] = None
             entry['id'] = str(uuid.uuid4())
             entry['timestamp'] = datetime.now().isoformat()
-            self.history.insert(0, entry)
-            
-            max_entries = config_manager.get('general', 'max_history_entries') or 1000
+            previous = self.history
+            self.history = [entry] + previous
+
+            max_entries = _page_integer(config_manager.get('general', 'max_history_entries'),
+                                        1000, minimum=100, maximum=200000)
             if len(self.history) > max_entries:
                 self.history = self.history[:max_entries]
-            
-            self.save_history()
-            return entry
+
+            if self._sqlite_store:
+                try:
+                    if globals().get('_read_only_storage'):
+                        raise OSError('Speicher-Schreibschutz aktiv')
+                    evicted = [row.get('id') for row in previous[max_entries - 1:]]
+                    self._sqlite_store.prepend(entry, removed_ids=evicted)
+                except Exception as exc:
+                    self.history = previous
+                    logger.error('Kennzeichen konnte nicht in SQLite gespeichert werden: %s', exc)
+                    if isinstance(exc, (HistoryStorageError, sqlite3.Error)):
+                        globals().setdefault('_read_only_storage', {})[str(self._sqlite_store.path.resolve())] = str(exc)[:280]
+                    raise OSError('Kennzeichen-Historie konnte nicht gespeichert werden') from exc
+            else:
+                self._save_or_revert(previous)
+            saved_entry = entry.copy()
+            # Notifications are derived from COMMITTED history only. A failed
+            # alert write is logged but must never turn a stored recognition
+            # into a failed HTTP response or duplicate the detection.
+            alert_center = globals().get('watchlist_alert_center')
+            # Video entries are provisional until the entire processing job
+            # completes and its final status is committed. Aborted uploads
+            # must not leave phantom watchlist notifications behind.
+            if alert_center is not None and saved_entry.get('source') != 'video_upload':
+                try:
+                    _record_watchlist_notification(saved_entry, alert_center)
+                except Exception as exc:
+                    logger.error('Watchlist alert could not be recorded: %s', type(exc).__name__)
+            return saved_entry
     
     def _unique_entries(self, entries, fuzzy=None):
         """Return one visible row per license plate, newest row wins.
@@ -1252,42 +1603,106 @@ class HistoryManager:
         active. It normalizes whitespace/dashes and can also group very similar
         OCR variants using the configured fuzzy duplicate threshold.
         """
-        seen = []
+        seen = set()
+        fuzzy_candidates = []
         unique_entries = []
         fuzzy_enabled = config_manager.get('history', 'fuzzy_duplicate_detection') if fuzzy is None else bool(fuzzy)
-        fuzzy_threshold = float(config_manager.get('history', 'fuzzy_duplicate_similarity') or 0.88)
+        fuzzy_threshold = self._safe_float(config_manager.get('history', 'fuzzy_duplicate_similarity'), .88)
+        fuzzy_threshold = max(0.0, min(1.0, fuzzy_threshold))
         for entry in entries or []:
             normalized = self._normalize_plate(entry.get('plate_text') or entry.get('plate_text_normalized') or '')
-            if not normalized:
+            if not normalized or normalized in seen:
                 continue
-            is_duplicate = normalized in seen
-            if not is_duplicate and fuzzy_enabled:
-                is_duplicate = any(PlateUtils.similarity(normalized, old) >= fuzzy_threshold for old in seen)
-            if is_duplicate:
+            if fuzzy_enabled and any(PlateUtils.similarity(normalized, old) >= fuzzy_threshold for old in fuzzy_candidates):
                 continue
-            seen.append(normalized)
+            seen.add(normalized)
+            if fuzzy_enabled:
+                fuzzy_candidates.append(normalized)
             unique_entries.append(entry)
         return unique_entries
 
     def get_all(self, limit=100, offset=0, unique_only=False):
-        entries = self._unique_entries(self.history) if unique_only else list(self.history)
-        return entries[offset:offset + limit]
-    
+        limit = _page_integer(limit, 100, minimum=1, maximum=1000)
+        offset = _page_integer(offset, 0, maximum=1000000)
+        with self.lock:
+            if self._sqlite_store and not unique_only:
+                return self._sqlite_store.page(limit, offset)
+            entries = list(self.history)
+        entries = self._unique_entries(entries) if unique_only else entries
+        return [entry.copy() for entry in entries[offset:offset + limit]]
+
     def get_by_id(self, entry_id):
-        for entry in self.history:
-            if entry.get('id') == entry_id:
-                return entry
-        return None
-    
+        with self.lock:
+            if self._sqlite_store:
+                return self._sqlite_store.get(entry_id)
+            return next((entry.copy() for entry in self.history if entry.get('id') == entry_id), None)
+
+    def review_counts(self):
+        if self._sqlite_store:
+            with self.lock:
+                return self._sqlite_store.plate_review_counts()
+        with self.lock:
+            counts = {'unreviewed': 0, 'confirmed': 0, 'needs_review': 0, 'ignored': 0}
+            for row in self.history:
+                status = str(row.get('review_status') or 'unreviewed').strip().lower()
+                counts[status if status in counts else 'unreviewed'] += 1
+            return {**counts, 'total': len(self.history)}
+
+    def update_review(self, entry_id, status, note, *, expected_updated_at=None):
+        """Persist human verification and keep the memory cache in sync."""
+        valid = {'unreviewed', 'confirmed', 'needs_review', 'ignored'}
+        if (status not in valid or not isinstance(note, str) or len(note) > 1200
+                or '\x00' in note or any(ord(char) < 32 and char not in '\n\t\r' for char in note)):
+            raise ValueError('Ungültiger Prüfstatus oder Notiz (maximal 1200 Zeichen)')
+        if expected_updated_at is not None and (not isinstance(expected_updated_at, str)
+                                               or len(expected_updated_at) > 64):
+            raise ValueError('Ungültige Bearbeitungsversion')
+        with self.lock:
+            index = next((i for i, row in enumerate(self.history)
+                          if str(row.get('id')) == str(entry_id)), None)
+            if index is None:
+                return None
+            original = self.history[index]
+            if self._sqlite_store:
+                try:
+                    if globals().get('_read_only_storage'):
+                        raise OSError('Speicher-Schreibschutz aktiv')
+                    updated = self._sqlite_store.update_plate_review(
+                        entry_id, status, note, expected_updated_at=expected_updated_at)
+                except (HistoryStorageError, sqlite3.Error) as exc:
+                    globals().setdefault('_read_only_storage', {})[str(self._sqlite_store.path.resolve())] = str(exc)[:280]
+                    raise OSError('Kennzeichen-Review konnte nicht gespeichert werden') from exc
+                if updated is None:
+                    raise OSError('SQLite-Eintrag fehlt in der laufenden Historie')
+                self.history[index] = updated
+                return updated.copy()
+            if (expected_updated_at is not None and
+                    str(original.get('review_updated_at') or '') != expected_updated_at):
+                raise ReviewConflictError('Der Prüfstatus wurde zwischenzeitlich geändert. Bitte neu laden.')
+            updated = dict(original)
+            updated['review_status'] = status
+            updated['review_note'] = note
+            updated['review_updated_at'] = datetime.now().astimezone().isoformat()
+            previous = self.history
+            self.history = previous[:index] + [updated] + previous[index + 1:]
+            self._save_or_revert(previous)
+            return updated.copy()
+
     def delete_entry(self, entry_id):
         with self.lock:
-            self.history = [e for e in self.history if e.get('id') != entry_id]
-            self.save_history()
-    
+            previous = self.history
+            self.history = [e for e in previous if e.get('id') != entry_id]
+            if len(self.history) == len(previous):
+                return False
+            self._save_or_revert(previous)
+            return True
+
     def clear_history(self):
         with self.lock:
+            previous = self.history
             self.history = []
-            self.save_history()
+            self._save_or_revert(previous)
+            return len(previous)
     
     def search(self, query):
         query = self._normalize_plate(query)
@@ -1297,33 +1712,45 @@ class HistoryManager:
     def _parse_datetime(self, value):
         if not value:
             return None
+        value = str(value)
         try:
             return datetime.fromisoformat(value.replace('Z', '+00:00'))
-        except Exception:
+        except (ValueError, TypeError):
             try:
                 return datetime.fromisoformat(value[:10])
-            except Exception:
+            except (ValueError, TypeError):
                 return None
 
+    @staticmethod
+    def _local_datetime(value):
+        """Compare offset-aware camera events in the server's local timezone."""
+        if value is not None and value.tzinfo is not None:
+            return value.astimezone().replace(tzinfo=None)
+        return value
+
     def _entry_matches(self, entry, filters):
-        query = (filters.get('q') or filters.get('search') or '').strip()
+        query = str(filters.get('q') or filters.get('search') or '').strip()[:256]
         normalized = self._normalize_plate(entry.get('plate_text', ''))
-        raw = str(entry.get('plate_text', '')).upper()
+        raw = str(entry.get('plate_text', '')).upper()[:24]
 
         if query:
             q_norm = self._normalize_plate(query)
             if filters.get('regex'):
                 if not config_manager.get('search', 'allow_regex_search'):
                     return False
-                try:
-                    if not re.search(query, raw, flags=re.IGNORECASE):
-                        return False
-                except re.error:
+                pattern = filters.get('_compiled_regex') or _compile_plate_search_regex(query)
+                if pattern is None or not pattern.search(raw):
                     return False
-            elif q_norm not in normalized:
-                fuzzy_enabled = filters.get('fuzzy') or config_manager.get('search', 'enable_fuzzy_search')
+            elif (filters.get('match_mode') == 'exact' and normalized != q_norm):
+                return False
+            elif (filters.get('match_mode') == 'starts_with' and not normalized.startswith(q_norm)):
+                return False
+            elif filters.get('match_mode') not in ('exact','starts_with') and q_norm not in normalized:
+                fuzzy_enabled = (filters['fuzzy'] if 'fuzzy' in filters
+                                 else config_manager.get('search', 'enable_fuzzy_search'))
                 similarity = PlateUtils.similarity(query, normalized)
-                threshold = float(filters.get('fuzzy_similarity') or config_manager.get('search', 'fuzzy_similarity') or 0.72)
+                threshold = self._safe_float(filters.get('fuzzy_similarity'),
+                                             self._safe_float(config_manager.get('search', 'fuzzy_similarity'), .72))
                 if not fuzzy_enabled or similarity < threshold:
                     return False
 
@@ -1349,22 +1776,32 @@ class HistoryManager:
             return False
         if filters.get('watchlist_only') and not entry.get('watchlist_match'):
             return False
+        review = str(filters.get('review_status') or '').strip().lower()
+        if review and review != 'all':
+            status = str(entry.get('review_status') or 'unreviewed').strip().lower()
+            if status not in ('confirmed', 'needs_review', 'ignored'):
+                status = 'unreviewed'
+            if review != status:
+                return False
 
         min_conf = filters.get('min_confidence')
         max_conf = filters.get('max_confidence')
-        confidence = float(entry.get('confidence') or 0)
-        if min_conf not in (None, '') and confidence < float(min_conf):
+        confidence = self._safe_float(entry.get('confidence'))
+        if min_conf not in (None, '') and confidence < self._safe_float(min_conf, 0):
             return False
-        if max_conf not in (None, '') and confidence > float(max_conf):
+        if max_conf not in (None, '') and confidence > self._safe_float(max_conf, 1):
             return False
 
-        ts = self._parse_datetime(entry.get('timestamp'))
+        ts = self._local_datetime(self._parse_datetime(entry.get('timestamp')))
+        # Undated/corrupt rows cannot satisfy a requested date interval.
+        if ts is None and (filters.get('date_from') or filters.get('date_to')):
+            return False
         if filters.get('date_from'):
-            start = self._parse_datetime(filters.get('date_from'))
+            start = self._local_datetime(self._parse_datetime(filters.get('date_from')))
             if ts and start and ts < start:
                 return False
         if filters.get('date_to'):
-            end = self._parse_datetime(filters.get('date_to'))
+            end = self._local_datetime(self._parse_datetime(filters.get('date_to')))
             if ts and end:
                 # date-only values include the full day
                 if len(str(filters.get('date_to'))) <= 10:
@@ -1374,30 +1811,88 @@ class HistoryManager:
 
         return True
 
-    def search_advanced(self, filters=None):
-        filters = filters or {}
-        entries = [e for e in self.history if self._entry_matches(e, filters)]
+    def _sqlite_search_filters(self, filters):
+        """Translate public search parameters to the indexed SQLite columns."""
+        prepared = dict(filters or {})
+        fuzzy = (prepared['fuzzy'] if 'fuzzy' in prepared else
+                 config_manager.get('search', 'enable_fuzzy_search'))
+        prepared['_fuzzy_enabled'] = bool(fuzzy) and prepared.get('match_mode') not in ('exact', 'starts_with')
+        prepared['_fuzzy_threshold'] = self._safe_float(
+            prepared.get('fuzzy_similarity'),
+            self._safe_float(config_manager.get('search', 'fuzzy_similarity'), .72))
+        for key in ('date_from', 'date_to'):
+            raw = prepared.get(key)
+            if raw:
+                dt = self._local_datetime(self._parse_datetime(raw))
+                if dt:
+                    if key == 'date_to' and len(str(raw)) <= 10:
+                        dt = dt.replace(hour=23, minute=59, second=59)
+                    prepared['_'+key+'_local'] = dt.isoformat()
+        return prepared
 
+    def _can_sql_search(self, filters):
+        # Regex and fuzzy-only unique grouping require Python's exact legacy
+        # semantics. Regular fuzzy queries are handled by an SQLite UDF.
+        return (self._sqlite_store is not None
+                and not filters.get('regex')
+                and not (filters.get('unique') and
+                         config_manager.get('history', 'fuzzy_duplicate_detection') and
+                         (filters.get('match_mode') != 'exact' or not (filters.get('q') or filters.get('search')))))
+
+    def iter_search(self, filters=None):
+        """Lazy export iterator: SQLite fetchmany, no in-memory result copy."""
+        filters = dict(filters or {})
+        if self._can_sql_search(filters):
+            return self._sqlite_store.iter_plates(self._sqlite_search_filters(filters))
+        return iter(self.search_all(filters))
+
+    def search_all(self, filters=None):
+        """Return the entire filtered result, also for exports (no silent 1000-row cap)."""
+        filters = dict(filters or {})
+        if self._can_sql_search(filters):
+            with self.lock:
+                return self._sqlite_store.search_plates(self._sqlite_search_filters(filters))[0]
+        if filters.get('regex'):
+            filters['_compiled_regex'] = _compile_plate_search_regex(
+                str(filters.get('q') or filters.get('search') or ''))
+            if filters['_compiled_regex'] is None:
+                return []
+        with self.lock:
+            entries = [e.copy() for e in self.history if self._entry_matches(e, filters)]
         if filters.get('unique'):
             entries = self._unique_entries(entries)
-
         sort = filters.get('sort') or 'timestamp'
-        reverse = (filters.get('order') or 'desc').lower() != 'asc'
+        reverse = str(filters.get('order') or 'desc').lower() != 'asc'
         if sort == 'confidence':
-            entries.sort(key=lambda e: float(e.get('confidence') or 0), reverse=reverse)
+            entries.sort(key=lambda e: self._safe_float(e.get('confidence')), reverse=reverse)
         elif sort == 'plate':
             entries.sort(key=lambda e: self._normalize_plate(e.get('plate_text', '')), reverse=reverse)
         else:
-            entries.sort(key=lambda e: e.get('timestamp', ''), reverse=reverse)
+            entries.sort(key=lambda e: self._local_datetime(self._parse_datetime(e.get('timestamp'))) or datetime.min,
+                         reverse=reverse)
+        return entries
 
-        total = len(entries)
-        limit = int(filters.get('limit') or config_manager.get('search', 'default_limit') or 50)
-        offset = int(filters.get('offset') or 0)
-        return {'entries': entries[offset:offset + limit], 'total': total, 'limit': limit, 'offset': offset}
+    def search_advanced(self, filters=None):
+        filters = filters or {}
+        limit = _page_integer(filters.get('limit'), config_manager.get('search', 'default_limit') or 50,
+                              minimum=1, maximum=1000)
+        offset = _page_integer(filters.get('offset'), 0, maximum=1000000)
+        if self._can_sql_search(filters):
+            with self.lock:
+                rows, total = self._sqlite_store.search_plates(
+                    self._sqlite_search_filters(filters), limit=limit, offset=offset)
+            return {'entries': rows, 'total': total, 'limit': limit, 'offset': offset}
+        entries = self.search_all(filters)
+        return {'entries': entries[offset:offset + limit], 'total': len(entries), 'limit': limit, 'offset': offset}
 
     def get_facets(self):
+        if self._sqlite_store:
+            with self.lock:
+                return self._sqlite_store.plate_facets()
+        with self.lock:
+            history_snapshot = list(self.history)
         def counts(key):
-            c = Counter(str(e.get(key, 'Unbekannt') or 'Unbekannt') for e in self.history)
+            c = Counter(str(e.get(key, 'Unbekannt') or 'Unbekannt') for e in history_snapshot)
             return [{'value': k, 'count': v} for k, v in c.most_common()]
         return {
             'sources': counts('source'),
@@ -1408,10 +1903,14 @@ class HistoryManager:
 
 
     def _safe_float(self, value, default=0.0):
+        # NaN/infinity must not poison confidence filtering or sorting.
         try:
-            return float(value)
-        except Exception:
-            return default
+            number = float(value)
+            if number == number and abs(number) != float('inf'):
+                return number
+        except (ValueError, TypeError, OverflowError):
+            pass
+        return default
 
     def _safe_int(self, value, default=0):
         try:
@@ -1486,11 +1985,17 @@ class HistoryManager:
             'movement_threshold_percent': self._safe_float(filters.get('movement_threshold_percent'), self._safe_float(cfg.get('movement_threshold_percent'), 8.0)),
         }
 
-    def _traffic_entries(self, filters=None):
+    def _traffic_entries(self, filters=None, *, plate_filter=None):
         f = self._traffic_filters_from_request(filters)
         entries = []
         seen_event_ids = set()
-        for entry in self.history:
+        candidate_rows = (self._sqlite_store.traffic_rows(
+            date_from=f['date_from'].replace(tzinfo=None).isoformat() if f['date_from'] else None,
+            date_to=f['date_to'].replace(tzinfo=None).isoformat() if f['date_to'] else None,
+            min_confidence=f['min_confidence'],
+            ignore_unknown=f['ignore_unknown_plates'], plate=plate_filter)
+            if self._sqlite_store else self.history)
+        for entry in candidate_rows:
             ts = self._entry_timestamp(entry)
             if not ts:
                 continue
@@ -1519,8 +2024,8 @@ class HistoryManager:
         entries.sort(key=lambda e: e['_ts'])
         return entries, f
 
-    def _build_traffic_sessions(self, filters=None):
-        entries, f = self._traffic_entries(filters)
+    def _build_traffic_sessions(self, filters=None, *, plate_filter=None):
+        entries, f = self._traffic_entries(filters, plate_filter=plate_filter)
         by_plate = defaultdict(list)
         for entry in entries:
             by_plate[entry['_plate_norm']].append(entry)
@@ -1741,7 +2246,7 @@ class HistoryManager:
 
     def get_plate_profile(self, plate_text, filters=None):
         norm = self._normalize_plate(plate_text)
-        sessions, entries, f = self._build_traffic_sessions(filters)
+        sessions, entries, f = self._build_traffic_sessions(filters, plate_filter=norm)
         plate_sessions = [s for s in sessions if s['plate_text_normalized'] == norm]
         plate_entries = [e for e in entries if e['_plate_norm'] == norm]
         days = sorted({s['date'] for s in plate_sessions})
@@ -1759,10 +2264,20 @@ class HistoryManager:
         }
 
     def get_statistics(self):
-        total = len(self.history)
+        if self._sqlite_store:
+            with self.lock:
+                result = self._sqlite_store.plate_summary(now=datetime.now())
+            result['traffic_today'] = self.get_traffic_statistics({'days': 1}).get('summary', {})
+            return result
+        # Snapshot under the writer lock: reads remain consistent while uploads
+        # append rows, and statistics never use in-progress mutations.
+        with self.lock:
+            snapshot = [entry.copy() for entry in self.history]
+        total = len(snapshot)
         today = datetime.now().date().isoformat()
         now = datetime.now()
-        today_count = sum(1 for e in self.history if e.get('timestamp', '').startswith(today))
+        today_count = sum(1 for e in snapshot
+                          if (self._local_datetime(self._parse_datetime(e.get('timestamp'))) or datetime.min).date().isoformat() == today)
         last_hour_count = 0
         unique_plates = set()
         vehicle_types = Counter()
@@ -1774,7 +2289,7 @@ class HistoryManager:
         daily = defaultdict(int)
         confidence_buckets = {'0-40': 0, '40-60': 0, '60-80': 0, '80-100': 0}
 
-        for e in self.history:
+        for e in snapshot:
             normalized = self._normalize_plate(e.get('plate_text', ''))
             if normalized:
                 unique_plates.add(normalized)
@@ -1784,7 +2299,7 @@ class HistoryManager:
             vehicle_colors[e.get('vehicle_color', 'Unbekannt') or 'Unbekannt'] += 1
             sources[e.get('source', 'unknown') or 'unknown'] += 1
 
-            confidence = float(e.get('confidence') or 0)
+            confidence = max(0.0, min(1.0, self._safe_float(e.get('confidence'))))
             confidence_values.append(confidence)
             if confidence < 0.4:
                 confidence_buckets['0-40'] += 1
@@ -1795,16 +2310,18 @@ class HistoryManager:
             else:
                 confidence_buckets['80-100'] += 1
 
-            ts = self._parse_datetime(e.get('timestamp'))
+            ts = self._local_datetime(self._parse_datetime(e.get('timestamp')))
             if ts:
                 daily[ts.date().isoformat()] += 1
                 hourly[ts.strftime('%H:00')] += 1
-                if (now - ts.replace(tzinfo=None)).total_seconds() <= 3600:
+                if 0 <= (now - ts).total_seconds() <= 3600:
                     last_hour_count += 1
 
         top_plates = plate_counts.most_common(10)
         avg_conf = sum(confidence_values) / len(confidence_values) if confidence_values else 0
-        last_detection = self.history[0] if self.history else None
+        last_detection = ({key: value for key, value in snapshot[0].items()
+                           if key not in ('plate_image', 'vehicle_image', 'full_frame', 'full_frame_image')}
+                          if snapshot else None)
 
         traffic_preview = self.get_traffic_statistics({'days': 1})
         return {
@@ -1821,8 +2338,8 @@ class HistoryManager:
             'daily': dict(sorted(daily.items())[-30:]),
             'confidence_buckets': confidence_buckets,
             'last_detection': last_detection,
-            'valid_plates': sum(1 for e in self.history if e.get('is_valid_plate', True)),
-            'watchlist_hits': sum(1 for e in self.history if e.get('watchlist_match')),
+            'valid_plates': sum(1 for e in snapshot if e.get('is_valid_plate', True)),
+            'watchlist_hits': sum(1 for e in snapshot if e.get('watchlist_match')),
             'traffic_today': traffic_preview.get('summary', {})
         }
 
@@ -1836,35 +2353,63 @@ class WatchlistManager:
 
     WATCHLIST_FILE = 'data/watchlist.json'
 
+    @staticmethod
+    def _validate_notify(value):
+        if isinstance(value, bool):
+            return value
+        if type(value) is int and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in ('true', '1', 'yes', 'on', 'ja', 'oui', 'vero'):
+                return True
+            if text in ('false', '0', 'no', 'off', 'nein', 'non', 'falso'):
+                return False
+        raise ValueError('Benachrichtigung muss true/false oder ja/nein sein')
+
     def __init__(self):
         self.items = self.load()
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
     def load(self):
         value = _load_json_with_backup(self.WATCHLIST_FILE, [])
-        return value if isinstance(value, list) else []
+        if not isinstance(value, list):
+            return []
+        rows = [item for item in value if isinstance(item, dict)]
+        if len(rows) != len(value):
+            logger.warning('Watchlist: %d ungueltige JSON-Zeilen beim Laden ignoriert', len(value) - len(rows))
+        return rows
 
     def save(self):
-        try:
-            _atomic_write_json(self.WATCHLIST_FILE, self.items)
-            return True
-        except Exception as e:
-            logger.error(f"Fehler beim Speichern der Watchlist: {e}")
-            return False
+        with self.lock:
+            try:
+                _atomic_write_json(self.WATCHLIST_FILE, self.items)
+                return True
+            except Exception as exc:
+                logger.error('Watchlist could not be saved: %s', exc)
+                return False
+
+    def _save_or_revert(self, previous):
+        if not self.save():
+            self.items = previous
+            raise OSError('Watchlist konnte nicht gespeichert werden')
 
     def list(self):
-        return self.items
+        with self.lock:
+            return [item.copy() for item in self.items]
 
     def add(self, plate_text, label='', category='known', notes='', notify=True):
         normalized = PlateUtils.normalize(plate_text, compact=True)
         if not normalized:
             raise ValueError('Leeres Kennzeichen')
+        notify = self._validate_notify(notify)
         with self.lock:
             for item in self.items:
                 if item.get('normalized') == normalized:
-                    item.update({'plate_text': PlateUtils.pretty(plate_text), 'label': label or item.get('label', ''), 'category': category or item.get('category', 'known'), 'notes': notes or item.get('notes', ''), 'notify': bool(notify)})
-                    self.save()
-                    return item
+                    previous = [row.copy() for row in self.items]
+                    item.update({'plate_text': PlateUtils.pretty(plate_text), 'label': label or item.get('label', ''), 'category': category or item.get('category', 'known'), 'notes': notes or item.get('notes', ''), 'notify': notify})
+                    self._save_or_revert(previous)
+                    return item.copy()
             item = {
                 'id': str(uuid.uuid4()),
                 'plate_text': PlateUtils.pretty(plate_text),
@@ -1872,29 +2417,85 @@ class WatchlistManager:
                 'label': label,
                 'category': category,
                 'notes': notes,
-                'notify': bool(notify),
+                'notify': notify,
                 'created_at': datetime.now().isoformat()
             }
-            self.items.insert(0, item)
-            self.save()
-            return item
+            previous = self.items
+            self.items = [item] + previous
+            self._save_or_revert(previous)
+            return item.copy()
+
+    def import_items(self, payload, maximum=5000):
+        """Validate and commit the entire watchlist import once or not at all.
+
+        Repeated add() operations left half-imported lists on a disk error.
+        Existing labels are retained when the imported item leaves them blank.
+        """
+        if not isinstance(payload, list) or len(payload) > maximum:
+            raise ValueError(f'Watchlist-Import benötigt eine Liste mit höchstens {maximum} Einträgen.')
+        parsed = []
+        for raw in payload:
+            if not isinstance(raw, dict):
+                continue
+            plate = raw.get('plate_text') or raw.get('plate') or raw.get('normalized')
+            if not plate:
+                continue
+            if not isinstance(plate, str) or len(plate) > 100:
+                raise ValueError('Kennzeichen im Import muss ein kurzer Text sein.')
+            normalized = PlateUtils.normalize(plate, compact=True)
+            if not normalized:
+                raise ValueError('Watchlist enthält ein ungültiges Kennzeichen.')
+            parsed.append((raw, normalized, PlateUtils.pretty(plate)))
+        with self.lock:
+            previous = self.items
+            updated = [row.copy() for row in previous]
+            index = {row.get('normalized'): pos for pos, row in enumerate(updated)}
+            for raw, normalized, formatted in parsed:
+                label = str(raw.get('label') or '')
+                category = str(raw.get('category') or 'known')
+                notes = str(raw.get('notes') or '')
+                notify = self._validate_notify(raw.get('notify', True))
+                if normalized in index:
+                    item = updated[index[normalized]]
+                    item.update({'plate_text': formatted,
+                                 'label': label or item.get('label', ''),
+                                 'category': category or item.get('category', 'known'),
+                                 'notes': notes or item.get('notes', ''),
+                                 'notify': notify})
+                else:
+                    item = {'id': str(uuid.uuid4()), 'plate_text': formatted,
+                            'normalized': normalized, 'label': label,
+                            'category': category, 'notes': notes,
+                            'notify': notify,
+                            'created_at': datetime.now().isoformat()}
+                    index[normalized] = len(updated)
+                    updated.append(item)
+            self.items = updated
+            if parsed:
+                self._save_or_revert(previous)
+        return len(parsed)
 
     def delete(self, item_id):
         with self.lock:
             before = len(self.items)
-            self.items = [i for i in self.items if i.get('id') != item_id and i.get('normalized') != PlateUtils.normalize(item_id, compact=True)]
-            self.save()
-            return len(self.items) != before
+            previous = self.items
+            self.items = [i for i in previous if i.get('id') != item_id and i.get('normalized') != PlateUtils.normalize(item_id, compact=True)]
+            if len(self.items) == before:
+                return False
+            self._save_or_revert(previous)
+            return True
 
     def check(self, plate_text):
         normalized = PlateUtils.normalize(plate_text, compact=True)
         if not normalized:
             return None
-        for item in self.items:
+        with self.lock:
+            snapshot = [item.copy() for item in self.items]
+        for item in snapshot:
             if item.get('normalized') == normalized:
                 return item
         fuzzy_threshold = config_manager.get('history', 'fuzzy_duplicate_similarity') or 0.88
-        for item in self.items:
+        for item in snapshot:
             if PlateUtils.similarity(item.get('normalized'), normalized) >= fuzzy_threshold:
                 match = item.copy()
                 match['fuzzy_match'] = True
@@ -1913,9 +2514,11 @@ class PersonHistoryManager:
     HISTORY_FILE = 'data/people/history.json'
 
     def __init__(self):
-        self.history = self.load_history()
         self.lock = threading.RLock()
+        self._sqlite_store = None
+        self.history = self.load_history()
         self._last_auto_cleanup_ts = 0
+        self._people_config_local = threading.local()
         # Remove expired image files once at startup when automatic cleanup is
         # enabled. Statistical events remain unless event retention is enabled.
         try:
@@ -1924,32 +2527,67 @@ class PersonHistoryManager:
             logger.warning(f"Start-Cleanup Personenbilder fehlgeschlagen: {exc}")
 
     def load_history(self):
+        if globals().get('SQLiteHistoryStore'):
+            self._sqlite_store, rows = _load_history_sqlite(self.HISTORY_FILE, 'people')
+            return rows
         value = _load_json_with_backup(self.HISTORY_FILE, [])
-        return value if isinstance(value, list) else []
+        if not isinstance(value, list):
+            return []
+        rows = [item for item in value if isinstance(item, dict)]
+        if len(rows) != len(value):
+            logger.warning('Personen-Historie: %d ungueltige JSON-Zeilen beim Laden ignoriert', len(value) - len(rows))
+        return rows
 
     def save_history(self):
-        try:
-            _atomic_write_json(self.HISTORY_FILE, self.history)
-            return True
-        except Exception as e:
-            logger.error(f"Fehler beim Speichern der Personen-Historie: {e}")
-            return False
+        with self.lock:
+            try:
+                if globals().get('_read_only_storage'):
+                    raise OSError('Speicher-Schreibschutz aktiv')
+                if self._sqlite_store:
+                    self._sqlite_store.sync(self.history)
+                else:
+                    _atomic_write_json(self.HISTORY_FILE, self.history)
+                return True
+            except Exception as exc:
+                logger.error('People history could not be saved: %s', exc)
+                if self._sqlite_store and isinstance(exc, (sqlite3.Error, HistoryStorageError)):
+                    globals().setdefault('_read_only_storage', {})[str(self._sqlite_store.path.resolve())] = str(exc)[:280]
+                return False
+
+    def _save_or_revert(self, previous):
+        if not self.save_history():
+            self.history = previous
+            raise OSError('Personen-Historie konnte nicht gespeichert werden')
 
     def _parse_datetime(self, value):
         if not value:
             return None
         try:
-            return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+            dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+            return dt.astimezone().replace(tzinfo=None) if dt.tzinfo else dt
         except Exception:
             return None
 
     IMAGE_ROOT = Path('data/people/images')
 
     def _cfg(self):
+        override = getattr(self._people_config_local, 'value', None)
+        if override is not None:
+            return override
         try:
             return config_manager.get('people') or {}
         except Exception:
             return {}
+
+    @contextmanager
+    def override_people_config(self, settings):
+        """Apply test-only people settings to this request, not the live camera."""
+        previous = getattr(self._people_config_local, 'value', None)
+        self._people_config_local.value = dict(settings)
+        try:
+            yield
+        finally:
+            self._people_config_local.value = previous
 
     def _event_dt(self, item):
         return self._parse_datetime((item or {}).get('timestamp'))
@@ -1957,17 +2595,20 @@ class PersonHistoryManager:
     def _position_signature(self, item, tolerance_percent=None):
         """Build a privacy-friendly signature from track/location without face recognition."""
         cfg = self._cfg()
-        tol = float(tolerance_percent or cfg.get('person_recount_position_tolerance_percent') or 12)
+        tol = _safe_numeric(tolerance_percent or cfg.get('person_recount_position_tolerance_percent'), 12.0)
         tol = max(1.0, min(50.0, tol))
-        fw = float(item.get('frame_width') or 100)
-        fh = float(item.get('frame_height') or 100)
-        cx = float(item.get('center_x') or 0)
-        cy = float(item.get('center_y') or 0)
+        # Treat damaged imported geometry as missing; neither gallery nor sessions
+        # should fail with HTTP 500 because one event contains text/NaN instead of pixels.
+        fw = max(1.0, min(1_000_000.0, _safe_numeric(item.get('frame_width'), 100.0)))
+        fh = max(1.0, min(1_000_000.0, _safe_numeric(item.get('frame_height'), 100.0)))
+        cx = max(-1_000_000.0, min(1_000_000.0, _safe_numeric(item.get('center_x'), 0.0)))
+        cy = max(-1_000_000.0, min(1_000_000.0, _safe_numeric(item.get('center_y'), 0.0)))
         bbox = item.get('bbox') or []
-        if len(bbox) == 4:
-            area = max(0, float(bbox[2]) - float(bbox[0])) * max(0, float(bbox[3]) - float(bbox[1]))
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            x1, y1, x2, y2 = (_safe_numeric(value, 0.0) for value in bbox)
+            area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
         else:
-            area = float(item.get('area_percent') or 0) * fw * fh / 100.0
+            area = _safe_numeric(item.get('area_percent'), 0.0) * fw * fh / 100.0
         bx = round((cx / max(1.0, fw) * 100.0) / tol)
         by = round((cy / max(1.0, fh) * 100.0) / tol)
         ba = round(((area / max(1.0, fw * fh)) * 100.0) / max(1.0, tol / 2.0))
@@ -2036,15 +2677,29 @@ class PersonHistoryManager:
         return out
 
     def _save_jpeg(self, image, relative_path, quality=85):
+        """Publish person images atomically inside the image directory only."""
+        if globals().get('_read_only_storage'):
+            raise OSError('Sicherheits-Schreibschutz: Personenbilder dürfen nicht verändert werden')
         if image is None:
             return None
-        target = self.IMAGE_ROOT / relative_path
+        rel = Path(relative_path)
+        if rel.is_absolute() or any(part in ('..', '.') for part in rel.parts):
+            raise ValueError('Invalid person image path')
+        target = self.IMAGE_ROOT / rel
         target.parent.mkdir(parents=True, exist_ok=True)
+        root = self.IMAGE_ROOT.resolve()
+        if not target.resolve().is_relative_to(root) or target.is_symlink():
+            raise ValueError('Person image may not escape the image directory')
         ok, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
         if not ok:
             return None
-        target.write_bytes(buffer.tobytes())
-        return str(relative_path).replace('\\\\', '/')
+        temp = target.with_name(f'.{target.name}.{uuid.uuid4().hex}.tmp')
+        try:
+            temp.write_bytes(buffer.tobytes())
+            os.replace(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
+        return rel.as_posix()
 
     def attach_images(self, item, frame=None, annotated_frame=None):
         cfg = self._cfg()
@@ -2054,8 +2709,9 @@ class PersonHistoryManager:
             return {}
         quality = int(cfg.get('image_history_jpeg_quality') or 85)
         quality = max(35, min(100, quality))
-        date_part = str(item.get('timestamp') or datetime.now().isoformat())[:10]
-        safe_id = str(item.get('id') or uuid.uuid4()).replace('/', '_')
+        event_dt = self._parse_datetime(item.get('timestamp')) or datetime.now()
+        date_part = event_dt.date().isoformat()
+        safe_id = re.sub(r'[^A-Za-z0-9_-]', '_', str(item.get('id') or uuid.uuid4()))[:96] or uuid.uuid4().hex
         images = dict(item.get('images') or {})
         blur = bool(cfg.get('privacy_blur_people'))
         try:
@@ -2064,9 +2720,19 @@ class PersonHistoryManager:
                 if frame is not None and len(bbox) == 4:
                     h, w = frame.shape[:2]
                     x1, y1, x2, y2 = [int(float(v)) for v in bbox]
-                    pad = int(cfg.get('image_history_crop_padding_px') or 8)
-                    x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
-                    x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
+                    # Keep more surroundings (including the head above a tight
+                    # bounding box). This is done BEFORE cropping; CSS alone
+                    # cannot recover pixels missing from a previously saved crop.
+                    pad_px = max(0, min(240, int(cfg.get('image_history_crop_padding_px') or 8)))
+                    try:
+                        pad_percent = max(0, min(150, float(cfg.get('image_history_crop_padding_percent', 100)))) / 100.0
+                    except (TypeError, ValueError, OverflowError):
+                        pad_percent = 1.0
+                    box_w, box_h = max(1, x2 - x1), max(1, y2 - y1)
+                    pad_x = max(pad_px, round(box_w * pad_percent * 0.55))
+                    pad_y = max(pad_px, round(box_h * pad_percent))
+                    x1, y1 = max(0, x1 - pad_x), max(0, y1 - pad_y)
+                    x2, y2 = min(w, x2 + pad_x), min(h, y2 + pad_y)
                     if x2 > x1 and y2 > y1:
                         crop = frame[y1:y2, x1:x2].copy()
                         if blur:
@@ -2095,6 +2761,8 @@ class PersonHistoryManager:
 
     def _delete_images_for_item(self, item):
         images = (item or {}).get('images') or {}
+        if not isinstance(images, dict):
+            return 0
         deleted = 0
         for rel in list(images.values()):
             try:
@@ -2116,9 +2784,10 @@ class PersonHistoryManager:
         now = time.time()
         if now - float(getattr(self, '_last_auto_cleanup_ts', 0) or 0) < 3600:
             return
-        self._last_auto_cleanup_ts = now
         try:
-            self.cleanup_images(cfg.get('image_history_retention_days') or cfg.get('retention_days'))
+            retention = cfg.get('image_history_retention_days')
+            self.cleanup_images(retention if retention is not None else cfg.get('retention_days'))
+            self._last_auto_cleanup_ts = now
         except Exception as exc:
             logger.warning(f"Auto-Cleanup Personenbilder fehlgeschlagen: {exc}")
 
@@ -2149,17 +2818,31 @@ class PersonHistoryManager:
                     item['event_type'] = 'repeat_blocked'
                     item['note'] = f"Nicht erneut gezählt: ähnliche Person/Track innerhalb von {item['repeat_block_minutes']} Minuten."
             self.attach_images(item, frame=frame, annotated_frame=annotated_frame)
-            self.history.insert(0, item)
-            max_entries = int(config_manager.get('people', 'max_history_entries') or config_manager.get('general', 'max_history_entries') or 20000)
-            max_entries = max(100, min(max_entries, 200000))
-            if len(self.history) > max_entries:
-                removed = self.history[max_entries:]
-                for old in removed:
-                    self._delete_images_for_item(old)
-                self.history = self.history[:max_entries]
-            self.save_history()
+            previous = self.history
+            self.history = [item] + previous
+            max_entries = _page_integer(config_manager.get('people', 'max_history_entries') or
+                                        config_manager.get('general', 'max_history_entries'),
+                                        20000, minimum=100, maximum=200000)
+            removed = self.history[max_entries:]
+            self.history = self.history[:max_entries]
+            try:
+                if self._sqlite_store:
+                    if globals().get('_read_only_storage'):
+                        raise OSError('Speicher-Schreibschutz aktiv')
+                    self._sqlite_store.prepend(item, removed_ids=[row.get('id') for row in removed])
+                else:
+                    self._save_or_revert(previous)
+            except Exception as exc:
+                self.history = previous
+                if self._sqlite_store and isinstance(exc, (HistoryStorageError, sqlite3.Error)):
+                    globals().setdefault('_read_only_storage', {})[str(self._sqlite_store.path.resolve())] = str(exc)[:280]
+                # The newly created image must not become an unmanaged orphan.
+                self._delete_images_for_item(item)
+                raise
+            for old in removed:
+                self._delete_images_for_item(old)
             self._maybe_auto_cleanup_images()
-            return item
+            return item.copy()
 
     def _public_item(self, item):
         row = dict(item or {})
@@ -2169,15 +2852,19 @@ class PersonHistoryManager:
         return row
 
     def get_all(self, limit=100, offset=0):
-        limit = max(1, min(int(limit or 100), 500))
-        offset = max(0, int(offset or 0))
-        return [self._public_item(item) for item in self.history[offset:offset + limit]]
+        limit = _page_integer(limit, 100, minimum=1, maximum=500)
+        offset = _page_integer(offset, 0, maximum=1000000)
+        with self.lock:
+            snapshot = (self._sqlite_store.page(limit, offset) if self._sqlite_store else
+                        [item.copy() for item in self.history[offset:offset + limit]])
+        return [self._public_item(item) for item in snapshot]
 
     def get_event(self, event_id):
-        for item in self.history:
-            if str(item.get('id')) == str(event_id):
-                return self._public_item(item)
-        return None
+        with self.lock:
+            item = (self._sqlite_store.get(event_id) if self._sqlite_store else
+                    next((row.copy() for row in self.history
+                          if str(row.get('id')) == str(event_id)), None))
+        return self._public_item(item) if item else None
 
     def update_event(self, event_id, payload):
         payload = dict(payload or {})
@@ -2186,6 +2873,7 @@ class PersonHistoryManager:
             for item in self.history:
                 if str(item.get('id')) != str(event_id):
                     continue
+                previous_item = item.copy()
                 if 'label' in payload:
                     item['label'] = str(payload.get('label') or '').strip()[:120]
                 if 'note' in payload:
@@ -2196,7 +2884,10 @@ class PersonHistoryManager:
                         raise ValueError('Ungültiger Prüfstatus')
                     item['review_status'] = status
                 item['updated_at'] = datetime.now().isoformat()
-                self.save_history()
+                if not self.save_history():
+                    item.clear()
+                    item.update(previous_item)
+                    raise OSError('Personen-Review konnte nicht gespeichert werden')
                 return self._public_item(item)
         return None
 
@@ -2210,26 +2901,35 @@ class PersonHistoryManager:
             kept = []
             deleted = 0
             deleted_images = 0
+            removed = []
             for item in self.history:
                 if str(item.get('id')) in ids:
                     deleted += 1
-                    if delete_images:
-                        deleted_images += self._delete_images_for_item(item)
+                    removed.append(item)
                 else:
                     kept.append(item)
             if deleted:
+                previous = self.history
                 self.history = kept
-                self.save_history()
+                self._save_or_revert(previous)
+                if delete_images:
+                    for item in removed:
+                        deleted_images += self._delete_images_for_item(item)
             return {'success': True, 'deleted': deleted, 'deleted_images': deleted_images, 'remaining': len(self.history)}
 
     def paginated_history(self, filters=None):
         filters = dict(filters or {})
-        limit = max(1, min(int(filters.get('limit') or 50), 200))
-        offset = max(0, int(filters.get('offset') or 0))
-        rows = self.search(filters)
-        total = len(rows)
+        limit = _page_integer(filters.get('limit'), 50, minimum=1, maximum=200)
+        offset = _page_integer(filters.get('offset'), 0, maximum=1000000)
+        if self._sqlite_store:
+            with self.lock:
+                rows, total = self._sqlite_store.search_people(self._filters(filters), limit=limit, offset=offset)
+        else:
+            all_rows = self.search(filters)
+            total = len(all_rows)
+            rows = all_rows[offset:offset + limit]
         return {
-            'entries': [self._public_item(item) for item in rows[offset:offset + limit]],
+            'entries': [self._public_item(item) for item in rows],
             'total': total,
             'limit': limit,
             'offset': offset,
@@ -2240,8 +2940,13 @@ class PersonHistoryManager:
     def get_sessions(self, filters=None):
         filters = dict(filters or {})
         filters.setdefault('counted_only', 'false')
-        rows = list(reversed(self.search(filters)))
-        gap_minutes = max(1, min(int(filters.get('session_gap_minutes') or self._cfg().get('session_gap_minutes') or 5), 240))
+        store = getattr(self, '_sqlite_store', None)
+        if store is not None:
+            rows = store.iter_people(self._filters(filters), chronological=True)
+        else:
+            rows = reversed(self.search(filters))
+        gap_minutes = _page_integer(filters.get('session_gap_minutes'),
+                                    self._cfg().get('session_gap_minutes') or 5, minimum=1, maximum=240)
         gap = timedelta(minutes=gap_minutes)
         current_by_key = {}
         sessions = []
@@ -2252,7 +2957,8 @@ class PersonHistoryManager:
             if track_id is not None and str(track_id) != '':
                 return f"track:{source}:{track_id}"
             bbox = item.get('bbox') or []
-            if len(bbox) == 4 or item.get('center_x') is not None or item.get('center_y') is not None:
+            if ((isinstance(bbox, (list, tuple)) and len(bbox) == 4) or
+                    item.get('center_x') is not None or item.get('center_y') is not None):
                 return self._position_signature(item)
             return f"event:{item.get('id') or uuid.uuid4()}"
 
@@ -2297,16 +3003,19 @@ class PersonHistoryManager:
             session['repeat_blocked'] += 1 if item.get('repeat_blocked') or item.get('event_type') == 'repeat_blocked' else 0
             session['directions'][item.get('direction') or 'unknown'] += 1
             session['event_types'][item.get('event_type') or 'unknown'] += 1
-            confidence = float(item.get('confidence') or 0)
+            confidence = _safe_numeric(item.get('confidence'), 0.0)
             session['confidence_sum'] += confidence
             session['max_confidence'] = max(session['max_confidence'], confidence)
             images = item.get('images') or {}
+            if not isinstance(images, dict):
+                images = {}
             session['image_count'] += len(images)
             if images.get('crop'):
                 session['preview'] = f"/api/people/images/{images['crop']}"
 
         now = datetime.now()
-        active_cutoff = now - timedelta(minutes=int(self._cfg().get('present_timeout_minutes') or 10))
+        active_cutoff = now - timedelta(minutes=_page_integer(
+            self._cfg().get('present_timeout_minutes'), 10, minimum=1, maximum=10080))
         result = []
         for session in sessions:
             duration = max(0, int((session['_last_dt'] - session['_first_dt']).total_seconds()))
@@ -2322,8 +3031,8 @@ class PersonHistoryManager:
                 'active': session['_last_dt'] >= active_cutoff,
             })
         result.sort(key=lambda row: row.get('last_seen') or '', reverse=True)
-        limit = max(1, min(int(filters.get('limit') or 30), 200))
-        offset = max(0, int(filters.get('offset') or 0))
+        limit = _page_integer(filters.get('limit'), 30, minimum=1, maximum=200)
+        offset = _page_integer(filters.get('offset'), 0, minimum=0, maximum=1000000)
         return {
             'sessions': result[offset:offset + limit],
             'total': len(result),
@@ -2336,11 +3045,12 @@ class PersonHistoryManager:
     def clear_history(self, delete_images=True):
         with self.lock:
             deleted_images = 0
-            if delete_images:
-                for item in self.history:
-                    deleted_images += self._delete_images_for_item(item)
+            previous = self.history
             self.history = []
-            self.save_history()
+            self._save_or_revert(previous)
+            if delete_images:
+                for item in previous:
+                    deleted_images += self._delete_images_for_item(item)
             return {'deleted_images': deleted_images}
 
     def purge_simulation_events(self, delete_images=True):
@@ -2353,13 +3063,16 @@ class PersonHistoryManager:
                 is_sim = (item or {}).get('event_type') == 'simulation' or (item or {}).get('source') == 'test_environment' or str((item or {}).get('track_id') or '').startswith('sim-')
                 if is_sim:
                     removed += 1
-                    if delete_images:
-                        deleted_images += self._delete_images_for_item(item)
                 else:
                     kept.append(item)
             if removed:
+                previous = self.history
                 self.history = kept
-                self.save_history()
+                self._save_or_revert(previous)
+                if delete_images:
+                    for item in previous:
+                        if (item or {}).get('event_type') == 'simulation' or (item or {}).get('source') == 'test_environment' or str((item or {}).get('track_id') or '').startswith('sim-'):
+                            deleted_images += self._delete_images_for_item(item)
                 logger.info(f"Personenanalyse Demo-Daten entfernt: entries={removed}, images={deleted_images}")
             return {'removed': removed, 'deleted_images': deleted_images}
 
@@ -2371,14 +3084,15 @@ class PersonHistoryManager:
             for item in self.history:
                 if str(item.get('id')) == str(event_id):
                     deleted = item
-                    if delete_images:
-                        deleted_images += self._delete_images_for_item(item)
                 else:
                     kept.append(item)
             if deleted is None:
                 return {'success': False, 'deleted': 0, 'deleted_images': 0}
+            previous = self.history
             self.history = kept
-            self.save_history()
+            self._save_or_revert(previous)
+            if delete_images:
+                deleted_images = self._delete_images_for_item(deleted)
             return {'success': True, 'deleted': 1, 'deleted_images': deleted_images, 'item': deleted}
 
     def image_days(self, filters=None):
@@ -2389,23 +3103,24 @@ class PersonHistoryManager:
         # A wide date range is intentional here; only events that still have image
         # files are included, so the result remains small and useful.
         filters.setdefault('days', 3650)
-        grouped = defaultdict(lambda: {'count': 0, 'crop_count': 0, 'annotated_count': 0, 'full_frame_count': 0})
-        for item in self.search(filters):
-            images = item.get('images') or {}
-            if not images:
-                continue
-            dt = self._event_dt(item)
-            if not dt:
-                continue
-            day = dt.date().isoformat()
-            grouped[day]['count'] += 1
-            for key in ('crop', 'annotated', 'full_frame'):
-                if images.get(key):
-                    grouped[day][f'{key}_count'] += 1
-        days = []
-        for day in sorted(grouped.keys(), reverse=True):
-            row = {'date': day, **grouped[day]}
-            days.append(row)
+        if self._sqlite_store:
+            days = self._sqlite_store.people_image_days(self._filters(filters))
+        else:
+            grouped = defaultdict(lambda: {'count': 0, 'crop_count': 0, 'annotated_count': 0, 'full_frame_count': 0})
+            for item in self.search(filters):
+                images = item.get('images') or {}
+                if not isinstance(images, dict) or not images:
+                    continue
+                dt = self._event_dt(item)
+                if not dt:
+                    continue
+                day = dt.date().isoformat()
+                grouped[day]['count'] += 1
+                for key in ('crop', 'annotated', 'full_frame'):
+                    if images.get(key):
+                        grouped[day][f'{key}_count'] += 1
+            days = [{'date': day, **grouped[day]}
+                    for day in sorted(grouped.keys(), reverse=True)]
         cfg = self._cfg()
         return {
             'days': days,
@@ -2425,24 +3140,36 @@ class PersonHistoryManager:
         # counted by the line-crossing logic. Otherwise Test & Upload can save
         # six person entries but the /people image gallery appears empty.
         filters.setdefault('counted_only', 'false')
-        limit = max(1, min(int(filters.get('limit') or 60), 200))
-        offset = max(0, int(filters.get('offset') or 0))
-        rows = []
-        for item in self.search(filters):
+        limit = _page_integer(filters.get('limit'), 60, minimum=1, maximum=200)
+        offset = _page_integer(filters.get('offset'), 0, maximum=1000000)
+        if self._sqlite_store:
+            # Ask SQLite for one page of images and the matching count. The
+            # previous route deserialized *all* people events, then paginated.
+            selected = dict(filters)
+            selected['has_images'] = 'true'
+            with self.lock:
+                page, total = self._sqlite_store.search_people(
+                    self._filters(selected), limit=limit, offset=offset)
+        else:
+            rows = [row for row in self.search(filters)
+                    if isinstance(row.get('images'), dict) and row.get('images')]
+            total = len(rows)
+            page = rows[offset:offset + limit]
+        public = []
+        for item in page:
             images = item.get('images') or {}
-            if not images:
+            if not isinstance(images, dict) or not images:
                 continue
             row = dict(item)
             row['image_count'] = len(images)
             row['image_urls'] = {k: f"/api/people/images/{v}" for k, v in images.items()}
-            rows.append(row)
-        page = rows[offset:offset + limit]
+            public.append(self._public_item(row))
         return {
-            'entries': [self._public_item(item) for item in page],
-            'total': len(rows),
+            'entries': public,
+            'total': total,
             'limit': limit,
             'offset': offset,
-            'has_more': offset + limit < len(rows),
+            'has_more': offset + limit < total,
             'date_from': filters.get('date_from'),
             'date_to': filters.get('date_to'),
             'retention_days': int(self._cfg().get('image_history_retention_days') or 0),
@@ -2451,7 +3178,12 @@ class PersonHistoryManager:
     def cleanup_images(self, retention_days=None, delete_orphan_files=True, delete_records=False):
         """Delete old person image files. By default keep the statistical person events."""
         cfg = self._cfg()
-        days = int(retention_days or cfg.get('image_history_retention_days') or cfg.get('retention_days') or 0)
+        configured_days = retention_days
+        if configured_days is None:
+            configured_days = cfg.get('image_history_retention_days')
+        if configured_days is None:
+            configured_days = cfg.get('retention_days')
+        days = _page_integer(configured_days, 0, minimum=0, maximum=3650)
         if days <= 0:
             return {'cleared_image_events': 0, 'removed_events': 0, 'deleted_images': 0, 'remaining': len(self.history), 'retention_days': days}
         cutoff = datetime.now() - timedelta(days=days)
@@ -2459,12 +3191,14 @@ class PersonHistoryManager:
         removed_events = 0
         cleared_image_events = 0
         kept = []
+        pending_image_deletes = []
         with self.lock:
-            for item in self.history:
+            previous = self.history
+            for original in previous:
+                item = dict(original)
                 ts = self._event_dt(item)
-                ts = ts.replace(tzinfo=None) if ts and getattr(ts, 'tzinfo', None) else ts
                 if ts and ts < cutoff and item.get('images'):
-                    deleted_images += self._delete_images_for_item(item)
+                    pending_image_deletes.append(original)
                     cleared_image_events += 1
                     if delete_records:
                         removed_events += 1
@@ -2473,23 +3207,52 @@ class PersonHistoryManager:
                     item['images_deleted_at'] = datetime.now().isoformat()
                 kept.append(item)
             self.history = kept
-            self.save_history()
-        # delete orphan files older than cutoff
-        if delete_orphan_files and self.IMAGE_ROOT.exists():
-            for file in self.IMAGE_ROOT.rglob('*.jpg'):
-                try:
-                    mtime = datetime.fromtimestamp(file.stat().st_mtime)
-                    if mtime < cutoff:
-                        file.unlink()
-                        deleted_images += 1
-                except Exception:
-                    pass
+            self._save_or_revert(previous)
+            # An imported/restored image can have a very old mtime even when a
+            # recent event still refers to it. Retention is based on the event,
+            # not the file timestamp. Keep shared files referenced by any row.
+            root = self.IMAGE_ROOT.resolve()
+            referenced = set()
+            for entry in kept:
+                images = entry.get('images') or {}
+                if isinstance(images, dict):
+                    for relative in images.values():
+                        if not isinstance(relative, str):
+                            continue
+                        target = (root / relative).resolve()
+                        if target.is_relative_to(root):
+                            referenced.add(target)
+            for old in pending_image_deletes:
+                images = old.get('images') or {}
+                if not isinstance(images, dict):
+                    continue
+                deletable = {key: value for key, value in images.items()
+                             if isinstance(value, str) and (root / value).resolve() not in referenced}
+                if deletable:
+                    deleted_images += self._delete_images_for_item({'images': deletable})
+            # The orphan sweep also needs the same reference protection. Do it
+            # while holding the history lock, so a concurrent add cannot race.
+            if delete_orphan_files and root.exists():
+                for file in root.rglob('*'):
+                    if file.suffix.lower() not in ('.jpg', '.jpeg', '.png', '.webp'):
+                        continue
+                    try:
+                        if (file.is_symlink() or not file.is_file() or
+                                file.resolve() in referenced):
+                            continue
+                        if datetime.fromtimestamp(file.stat().st_mtime) < cutoff:
+                            file.unlink()
+                            deleted_images += 1
+                    except OSError as exc:
+                        logger.warning('Altes Personenbild konnte nicht bereinigt werden: %s', exc)
         return {'cleared_image_events': cleared_image_events, 'removed_events': removed_events, 'deleted_images': deleted_images, 'remaining': len(self.history), 'retention_days': days}
 
     def _filters(self, filters=None):
         filters = filters or {}
         now = datetime.now()
-        days = max(1, min(int(filters.get('days') or config_manager.get('dashboard', 'default_range_days') or 7), 3650))
+        days = _page_integer(filters.get('days'),
+                             config_manager.get('dashboard', 'default_range_days') or 7,
+                             minimum=1, maximum=3650)
 
         def parse(value):
             if not value:
@@ -2498,7 +3261,7 @@ class PersonHistoryManager:
                 dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
                 if len(str(value)) <= 10:
                     dt = dt.replace(hour=0, minute=0, second=0, microsecond=0)
-                return dt.replace(tzinfo=None) if getattr(dt, 'tzinfo', None) else dt
+                return dt.astimezone().replace(tzinfo=None) if getattr(dt, 'tzinfo', None) else dt
             except Exception:
                 return None
 
@@ -2535,7 +3298,7 @@ class PersonHistoryManager:
         return {
             'date_from': date_from,
             'date_to': date_to,
-            'min_confidence': max(0.0, min(float(filters.get('min_confidence') or 0), 1.0)),
+            'min_confidence': max(0.0, min(_safe_numeric(filters.get('min_confidence'), 0.0), 1.0)),
             'counted': counted,
             'event_type': str(filters.get('event_type') or '').strip(),
             'direction': str(filters.get('direction') or '').strip(),
@@ -2549,6 +3312,9 @@ class PersonHistoryManager:
 
     def search(self, filters=None):
         f = self._filters(filters)
+        if self._sqlite_store:
+            with self.lock:
+                return self._sqlite_store.search_people(f)[0]
         rows = []
         for item in self.history:
             ts = self._parse_datetime(item.get('timestamp'))
@@ -2559,7 +3325,7 @@ class PersonHistoryManager:
                 continue
             if f['date_to'] and ts > f['date_to']:
                 continue
-            if float(item.get('confidence') or 0) < f['min_confidence']:
+            if _safe_numeric(item.get('confidence'), 0.0) < f['min_confidence']:
                 continue
             if f['counted'] is not None and bool(item.get('counted', True)) != f['counted']:
                 continue
@@ -2588,7 +3354,9 @@ class PersonHistoryManager:
         return rows
 
     def cleanup(self, retention_days=None):
-        retention_days = int(retention_days or config_manager.get('people', 'retention_days') or 0)
+        retention_days = _page_integer(
+            retention_days if retention_days is not None else config_manager.get('people', 'retention_days'),
+            0, minimum=0, maximum=3650)
         if retention_days <= 0:
             return {'removed': 0, 'remaining': len(self.history), 'retention_days': retention_days}
         cutoff = datetime.now() - timedelta(days=retention_days)
@@ -2596,21 +3364,27 @@ class PersonHistoryManager:
             before = len(self.history)
             kept = []
             deleted_images = 0
+            removed = []
             for item in self.history:
                 ts = self._parse_datetime(item.get('timestamp'))
-                if ts and ts.replace(tzinfo=None) < cutoff:
-                    deleted_images += self._delete_images_for_item(item)
+                if ts and ts < cutoff:
+                    removed.append(item)
                     continue
                 kept.append(item)
+            previous = self.history
             self.history = kept
-            self.save_history()
+            self._save_or_revert(previous)
+            for item in removed:
+                deleted_images += self._delete_images_for_item(item)
         return {'removed': before - len(self.history), 'deleted_images': deleted_images, 'remaining': len(self.history), 'retention_days': retention_days}
 
     def get_presence(self):
         timeout = int(config_manager.get('people', 'present_timeout_minutes') or 10)
         cutoff = datetime.now() - timedelta(minutes=timeout)
         active_tracks = {}
-        for item in self.history:
+        candidates = (self._sqlite_store.people_since(cutoff.isoformat())
+                      if self._sqlite_store else self.history)
+        for item in candidates:
             ts = self._parse_datetime(item.get('timestamp'))
             if not ts:
                 continue
@@ -2627,7 +3401,48 @@ class PersonHistoryManager:
         rows.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
         return {'active_count': len(rows), 'timeout_minutes': timeout, 'active': rows[:100]}
 
+    def _sqlite_statistics(self, filters):
+        """Person statistics: SQL counts and day/hour aggregation, same API."""
+        f = dict(filters or {})
+        f.setdefault('counted_only', 'false')
+        with self.lock:
+            sql = self._sqlite_store.people_analytics(self._filters(f))
+        total, persons, uncounted, repeated, images, confidence = sql['counts']
+        daily = sql['daily']
+        hourly = sql['hourly']
+        today = datetime.now().date().isoformat()
+        today_persons = next((r['persons'] for r in daily if r['date'] == today), 0)
+        peak_hour = max(hourly, key=lambda pair: pair[1], default=None)
+        sessions = self.get_sessions({**f, 'limit': 1, 'offset': 0})
+        presence = self.get_presence()
+        return {
+            'summary': {
+                'total_persons': persons,
+                'today_persons': today_persons,
+                'events': total,
+                'uncounted_events': uncounted,
+                'repeat_blocked': repeated,
+                'unique_tracks': sql['unique_tracks'],
+                'session_count': sessions.get('total', 0),
+                'active_now': presence.get('active_count', 0),
+                'image_events': images,
+                'average_confidence': round(confidence, 4),
+                'busiest_day': max(daily, key=lambda item: item['persons'], default=None),
+                'peak_hour': {'hour': peak_hour[0], 'count': peak_hour[1]} if peak_hour else None,
+                'note': 'Für genaue Durchgangszählung sollte die virtuelle Linie passend zur Kameraposition eingestellt werden.'
+            },
+            'daily': daily,
+            'hourly': [{'hour': key, 'count': value} for key, value in sorted(hourly)],
+            'directions': sql['directions'],
+            'event_types': sql['event_types'],
+            'sources': sql['sources'],
+            'latest': [self._public_item(item) for item in sql['latest']],
+            'config': config_manager.get('people') or {}
+        }
+
     def get_statistics(self, filters=None):
+        if self._sqlite_store:
+            return self._sqlite_statistics(filters)
         filters = dict(filters or {})
         filters.setdefault('counted_only', 'false')
         rows = self.search(filters)
@@ -2675,7 +3490,7 @@ class PersonHistoryManager:
             sources[item.get('source') or 'unknown'] += 1
             if item.get('track_id') is not None:
                 tracks.add(f"{item.get('source') or 'unknown'}:{item.get('track_id')}")
-            confidences.append(float(item.get('confidence') or 0))
+            confidences.append(_safe_numeric(item.get('confidence'), 0.0))
 
         daily_items = []
         for _, row in sorted(daily.items()):
@@ -2724,6 +3539,20 @@ class PersonHistoryManager:
 # KENNZEICHEN-DETEKTOR
 # ============================================================
 
+def _serialize_model_operation(function):
+    """Protect shared YOLO/OCR/tracking objects across RTSP, uploads and jobs.
+
+    Ultralytics prediction and mutable person-tracker state are not safe to
+    reuse concurrently on the same detector instance. The lock is reentrant
+    because inference may trigger a first model load.
+    """
+    @wraps(function)
+    def wrapper(self, *args, **kwargs):
+        with self.inference_lock:
+            return function(self, *args, **kwargs)
+    return wrapper
+
+
 class LicensePlateDetector:
     """Haupt-Erkennungsklasse"""
     
@@ -2770,10 +3599,13 @@ class LicensePlateDetector:
         self.fast_plate_cache_key = None
         self.models_loaded = False
         self.load_lock = threading.Lock()
+        self.inference_lock = threading.RLock()
         self.recent_plates = {}
         self.person_tracks = {}
         self.person_next_track_id = 1
+        self._people_config_local = threading.local()
     
+    @_serialize_model_operation
     def load_models(self):
         with self.load_lock:
             if self.models_loaded:
@@ -3462,7 +4294,18 @@ class LicensePlateDetector:
 
 
     def _person_config(self):
-        return self.config_manager.get('people') or {}
+        override = getattr(self._people_config_local, 'value', None)
+        return override if override is not None else (self.config_manager.get('people') or {})
+
+    @contextmanager
+    def override_people_config(self, settings):
+        """Isolate preview/one-off overrides from RTSP and other uploads."""
+        previous = getattr(self._people_config_local, 'value', None)
+        self._people_config_local.value = dict(settings)
+        try:
+            yield
+        finally:
+            self._people_config_local.value = previous
 
     def _person_runtime_model(self):
         cfg = self._person_config()
@@ -3750,6 +4593,7 @@ class LicensePlateDetector:
                 cv2.putText(annotated, label, (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
         return people
 
+    @_serialize_model_operation
     def process_frame(self, frame, apply_analysis_area=False, runtime_roi_polygon=None, filter_duplicates=True):
         """Verarbeitet einen einzelnen Frame"""
         if not self.models_loaded:
@@ -4049,6 +4893,7 @@ class LicensePlateDetector:
                             'plate_detector_source': frame_info.get('source'),
                             'plate_bbox_raw': [orig_raw_px1, orig_raw_py1, orig_raw_px2, orig_raw_py2],
                             'duplicate_suppressed': duplicate_detection,
+                            'plate_sharpness': plate_image_sharpness(plate_crop_scaled),
                             'plate_image_base64': plate_image_b64,
                             'vehicle_image_base64': vehicle_image_b64,
                             'vehicle_type': vehicle['type'] if vehicle else 'Unbekannt',
@@ -4148,6 +4993,137 @@ history_manager = HistoryManager()
 watchlist_manager = WatchlistManager()
 person_history_manager = PersonHistoryManager()
 try:
+    watchlist_alert_center = WatchlistAlertStore()
+except (OSError, sqlite3.Error, ValueError) as exc:
+    logger.error('Watchlist alarm inbox unavailable: %s', type(exc).__name__)
+    watchlist_alert_center = None
+
+
+def _ha_settings_snapshot():
+    with config_manager.lock:
+        return ha_settings_from_config(config_manager.config.get('alerts') or {})
+
+
+def _indirect_ha_settings_present(payload):
+    """Only the separately confirmed HA API may change external recipients."""
+    if not isinstance(payload, dict):
+        return False
+    alerts = payload.get('alerts')
+    return isinstance(alerts, dict) and any(
+        isinstance(key, str) and key.startswith('ha_') for key in alerts)
+
+
+def _alert_delivery_active():
+    """Whether queued *external* watchlist messages may currently be sent.
+
+    HA channels are a separate opt-in: disabling the global alarm switch or
+    watchlist matching must never leave an old push deliverable on re-enable.
+    """
+    return (notification_enabled(config_manager.get('alerts', 'watchlist_notifications')) and
+            notification_enabled(config_manager.get('plate_recognition', 'watchlist_enabled')))
+
+
+def _ha_worker_settings():
+    """The worker gets the current global opt-out without changing the public HA API."""
+    with config_manager.lock:
+        settings = _ha_settings_snapshot()
+        settings['alerts_enabled'] = _alert_delivery_active()
+        return settings
+
+
+def _cancel_delivery_after_settings_change(previous, previous_active=None):
+    """Drop unsent messages after a recipient, privacy or global consent change.
+
+    In particular, toggling alarms off AND back on must not revive messages
+    created before the first opt-out. Already accepted messages remain in HA.
+    """
+    worker = globals().get('ha_delivery_worker')
+    def cancel_if_changed():
+        changed_policy = (previous_active is not None and
+                          previous_active != _alert_delivery_active())
+        if ((previous != _ha_settings_snapshot() or changed_policy) and
+                globals().get('watchlist_alert_center') is not None):
+            watchlist_alert_center.cancel_pending_deliveries()
+    # Older integrations without a worker can still reset configuration.
+    guard = getattr(worker, 'delivery_lock', None)
+    if guard is None:
+        cancel_if_changed()
+    else:
+        with guard:
+            cancel_if_changed()
+
+
+def _persist_config_update(change):
+    """Commit a generic settings change without racing an external HA send.
+
+    Lock order: delivery -> configuration -> SQLite. Roll back mutations that
+    fail before the disk commit, and remove stale outbox tasks on consent
+    changes. Import and bulk settings edits use the same path.
+    """
+    worker = globals().get('ha_delivery_worker')
+    with getattr(worker, 'delivery_lock', config_manager.lock):
+        with config_manager.lock:
+            previous = _ha_settings_snapshot()
+            previous_active = _alert_delivery_active()
+            snapshot = _json_clone(config_manager.config)
+            try:
+                change(config_manager.config)
+                if (previous != _ha_settings_snapshot() or
+                        previous_active != _alert_delivery_active()):
+                    store = globals().get('watchlist_alert_center')
+                    if store is not None:
+                        # Privacy first: purge before committing the new
+                        # policy, so a failed purge cannot leave stale tasks
+                        # deliverable after a later re-enable.
+                        store.cancel_pending_deliveries()
+                if not config_manager.save_config():
+                    raise OSError('Konfiguration konnte nicht dauerhaft gespeichert werden')
+            except Exception:
+                config_manager.config = _json_clone(
+                    getattr(config_manager, '_committed_config', snapshot))
+                raise
+        return config_manager.config
+
+
+ha_delivery_worker = (HADeliveryWorker(watchlist_alert_center, _ha_worker_settings,
+                                       logger=logger).start()
+                      if watchlist_alert_center is not None else None)
+
+
+def _record_watchlist_notification(entry, center):
+    """Create a local alert and its optional outbox tasks under one consent lock.
+
+    Without this guard a settings change could purge the outbox immediately
+    before a capture thread added another message addressed to the old phone.
+    """
+    worker = globals().get('ha_delivery_worker')
+    guard = getattr(worker, 'delivery_lock',
+                    getattr(config_manager, 'lock', threading.RLock()))
+    with guard:
+        if not notification_enabled(config_manager.get('alerts', 'watchlist_notifications')):
+            return None
+        if not notification_enabled(config_manager.get('plate_recognition', 'watchlist_enabled')):
+            return None
+        match = entry.get('watchlist_match')
+        if not isinstance(match, dict) or not notification_enabled(match.get('notify', True)):
+            return None
+        minimum = _safe_numeric(config_manager.get('alerts', 'min_alert_confidence'), 0.65)
+        cooldown = _page_integer(config_manager.get('alerts', 'watchlist_alert_cooldown_seconds'),
+                                 180, minimum=0, maximum=3600)
+        # Tests and older integrations without the HA helper still record local
+        # alarms; the optional channels are empty in that case.
+        ha_snapshot = globals().get('_ha_settings_snapshot')
+        ha_settings = ha_snapshot() if callable(ha_snapshot) else {}
+        channel_fn = globals().get('channels_for_settings')
+        channels = channel_fn(ha_settings) if callable(channel_fn) else ()
+        result = center.record(entry, minimum_confidence=minimum, cooldown_seconds=cooldown,
+                               ha_channels=channels,
+                               ha_include_plate=ha_settings.get('ha_include_plate') is True)
+        if result and result.get('created') and worker is not None:
+            worker.wake()
+        return result
+
+try:
     person_history_manager.purge_simulation_events(delete_images=True)
 except Exception as exc:
     logger.warning(f"Personenanalyse Demo-Daten konnten nicht automatisch bereinigt werden: {exc}")
@@ -4184,6 +5160,13 @@ def dashboard():
                           stream_status=stream_manager.get_status(),
                           config=config_manager.config)
 
+@app.route('/alerts')
+def watchlist_alerts_page():
+    return render_template('alerts.html', page='alerts',
+                           stream_status=stream_manager.get_status(),
+                           config=config_manager.config)
+
+
 @app.route('/history')
 def history():
     # Parameter aus URL lesen
@@ -4203,8 +5186,6 @@ def history():
         'source': source_filter,
         'vehicle_type': vehicle_type_filter,
         'unique': unique_only,
-        'limit': 100000,
-        'offset': 0,
     }
     if sort_order == 'oldest':
         filters.update({'sort': 'timestamp', 'order': 'asc'})
@@ -4213,8 +5194,7 @@ def history():
     else:
         filters.update({'sort': 'timestamp', 'order': 'desc'})
 
-    search_result = history_manager.search_advanced(filters)
-    entries = search_result.get('entries', [])
+    entries = history_manager.search_all(filters)
 
     total_filtered = len(entries)
     total_all = len(history_manager.history)
@@ -4255,7 +5235,7 @@ def statistics_page():
 @app.route('/people')
 def people_page():
     if not config_manager.get('people', 'enabled'):
-        return redirect(url_for('settings') + '#dashboardUiSettings')
+        return redirect(_platevision_url_for(url_for('settings')) + '#dashboardUiSettings')
     return render_template('people.html',
                           page='people',
                           stream_status=stream_manager.get_status(),
@@ -4264,7 +5244,7 @@ def people_page():
 @app.route('/people/gallery')
 def people_gallery_page():
     if not config_manager.get('people', 'enabled'):
-        return redirect(url_for('settings') + '#dashboardUiSettings')
+        return redirect(_platevision_url_for(url_for('settings')) + '#dashboardUiSettings')
     return render_template('people_gallery.html',
                           page='people_gallery',
                           stream_status=stream_manager.get_status(),
@@ -4532,7 +5512,7 @@ def _config_defaults_copy():
     return json.loads(json.dumps(config_manager.DEFAULT_CONFIG))
 
 
-def _apply_default_scope(scope='all', preserve_rtsp=True, preserve_model_uploads=True):
+def _apply_default_scope(scope='all', preserve_rtsp=True, preserve_model_uploads=True, save=True):
     """Apply known-good defaults without accidentally deleting important runtime data.
 
     scope='recognition'/'test' resets the values used by Test & Upload and RTSP.
@@ -4573,7 +5553,8 @@ def _apply_default_scope(scope='all', preserve_rtsp=True, preserve_model_uploads
         people['save_full_frame'] = False
         people['image_history_store_full_frame'] = False
         config_manager.config = config_manager._normalize_analysis_area(current)
-        config_manager.save_config()
+        if save and not config_manager.save_config():
+            raise OSError('Erkennungs-Standardwerte konnten nicht gespeichert werden')
         return config_manager.config
 
     preserved_rtsp = json.loads(json.dumps(current.get('rtsp', {}))) if preserve_rtsp else None
@@ -4598,17 +5579,24 @@ def _apply_default_scope(scope='all', preserve_rtsp=True, preserve_model_uploads
                 models[key] = preserved_models[key]
 
     config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
-    config_manager.save_config()
+    if save and not config_manager.save_config():
+        raise OSError('Standardkonfiguration konnte nicht gespeichert werden')
     return config_manager.config
 
 
 @app.route('/api/config/reset', methods=['POST'])
 def api_reset_config():
-    # Legacy endpoint: true full reset, kept for compatibility.
-    config_manager.config = _config_defaults_copy()
-    config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
-    config_manager.save_config()
-    return jsonify({'success': True, 'config': _public_config()})
+    # Legacy endpoint: true full reset, kept for compatibility. It must
+    # remove external jobs BEFORE the newly enabled default is persisted.
+    try:
+        def change(_current):
+            config_manager.config = _config_defaults_copy()
+            config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
+        _persist_config_update(change)
+        _invalidate_model_cache()
+        return jsonify({'success': True, 'config': _public_config()})
+    except (OSError, sqlite3.Error):
+        return jsonify({'success': False, 'error': 'Konfiguration konnte nicht zurueckgesetzt werden'}), 503
 
 
 @app.route('/api/config/defaults', methods=['POST'])
@@ -4618,19 +5606,27 @@ def api_config_defaults():
         scope = data.get('scope') or 'global'
         preserve_rtsp = data.get('preserve_rtsp', True) is not False
         preserve_model_uploads = data.get('preserve_model_uploads', True) is not False
-        cfg = _apply_default_scope(scope, preserve_rtsp=preserve_rtsp, preserve_model_uploads=preserve_model_uploads)
-        detector.ocr_reader = None
-        detector.fast_plate_recognizer = None
-        detector.fast_plate_cache_key = None
-        detector.models_loaded = False
-        detector.human_model = None
+        def change(_current):
+            # Apply in memory only; the shared policy-aware commit cancels
+            # stale HA tasks before the new defaults reach persistent storage.
+            _apply_default_scope(scope, preserve_rtsp=preserve_rtsp,
+                                 preserve_model_uploads=preserve_model_uploads,
+                                 save=False)
+        _persist_config_update(change)
         if data.get('reload_models', scope in ('recognition', 'test', 'demo')):
-            threading.Thread(target=detector.load_models, daemon=True).start()
+            _queue_model_reload()
+        else:
+            _invalidate_model_cache()
         logger.info('[Defaults] scope=%s preserve_rtsp=%s preserve_model_uploads=%s people=%s', scope, preserve_rtsp, preserve_model_uploads, config_manager.get('people', 'enabled'))
         return jsonify({'success': True, 'config': _public_config(), 'models': _scan_model_files()})
     except Exception as e:
         logger.exception(f'Default-Einstellungen konnten nicht angewendet werden: {e}')
-        return jsonify({'success': False, 'error': str(e)}), 400
+        # A full disk or read-only config is a persistence failure, not a
+        # malformed user request.  Do not misleadingly report HTTP 400.
+        storage_error = isinstance(e, (OSError, sqlite3.Error))
+        message = ('Standardkonfiguration oder ausstehende Meldungen konnten nicht gespeichert werden'
+                   if storage_error else str(e))
+        return jsonify({'success': False, 'error': message}), 503 if storage_error else 400
 
 @app.route('/api/config', methods=['GET'])
 def api_get_config():
@@ -4639,21 +5635,30 @@ def api_get_config():
 @app.route('/api/config', methods=['POST'])
 def api_save_config():
     try:
-        data = request.json
-        
-        def deep_update(d, u):
-            for k, v in u.items():
-                if isinstance(v, dict):
-                    d[k] = deep_update(d.get(k, {}), v)
-                else:
-                    d[k] = v
-            return d
-        
-        deep_update(config_manager.config, data)
-        config_manager.save_config()
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({'success': False, 'error': 'Konfiguration muss ein Objekt sein.'}), 400
+        if _indirect_ha_settings_present(data):
+            return jsonify({'success': False,
+                            'error': 'HA-Benachrichtigungen nur in der Alarmzentrale einstellen'}), 400
+
+        def change(current):
+            def deep_update(target, payload):
+                for key, value in payload.items():
+                    if isinstance(value, dict) and isinstance(target.get(key), dict):
+                        deep_update(target[key], value)
+                    else:
+                        target[key] = value
+            deep_update(current, data)
+
+        _persist_config_update(change)
+        if any(key in data for key in ('models', 'people', 'ocr')):
+            _invalidate_model_cache()
         return jsonify({'success': True})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+    except (OSError, sqlite3.Error):
+        return jsonify({'success': False, 'error': 'Konfiguration konnte nicht gespeichert werden'}), 503
+    except (TypeError, ValueError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
 
 @app.route('/api/config/rtsp', methods=['GET', 'POST'])
 def api_save_rtsp_config():
@@ -4711,13 +5716,9 @@ def api_save_ocr_config():
             del data['preprocessing']
         
         config_manager.config['ocr'].update(data)
-        config_manager.save_config()
-        
-        detector.ocr_reader = None
-        detector.fast_plate_recognizer = None
-        detector.fast_plate_cache_key = None
-        detector.models_loaded = False
-        threading.Thread(target=detector.load_models, daemon=True).start()
+        if not config_manager.save_config():
+            raise OSError('OCR-Einstellungen konnten nicht gespeichert werden')
+        _queue_model_reload()
         
         return jsonify({'success': True})
     except Exception as e:
@@ -4764,11 +5765,10 @@ def api_save_people_config():
         if selected_path:
             config_manager.config.setdefault('models', {})['person_detector'] = selected_path
             config_manager.config.setdefault('people', {})['model_path'] = selected_path
-        config_manager.save_config()
+        if not config_manager.save_config():
+            raise OSError('Personen-Einstellungen konnten nicht gespeichert werden')
         if data.get('reload'):
-            detector.models_loaded = False
-            detector.human_model = None
-            threading.Thread(target=detector.load_models, daemon=True).start()
+            _queue_model_reload()
         return jsonify({'success': True, 'config': _public_config()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
@@ -4785,13 +5785,12 @@ def api_save_models_config():
         if data.get('person_detector'):
             config_manager.config.setdefault('people', {})['custom_model_path'] = data.get('person_detector')
             config_manager.config.setdefault('people', {})['model_path'] = data.get('person_detector')
-        config_manager.save_config()
         if reload_requested:
-            detector.models_loaded = False
-            detector.human_model = None
             config_manager.config['models']['last_reload_at'] = datetime.now().isoformat()
-            config_manager.save_config()
-            threading.Thread(target=detector.load_models, daemon=True).start()
+        if not config_manager.save_config():
+            raise OSError('Modell-Einstellungen konnten nicht gespeichert werden')
+        if reload_requested:
+            _queue_model_reload()
         return jsonify({'success': True, 'config': _public_config(), 'reload': reload_requested})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
@@ -4814,6 +5813,18 @@ def api_save_about_config():
 # API ROUTEN - HISTORIE
 # ============================================================
 
+def _history_api_entries(entries, filters):
+    """Optional compact API response: image bytes are available per entry URL."""
+    if str((filters or {}).get('include_images', 'true')).lower() not in ('false', '0', 'no'):
+        return entries
+    return [{**{k: v for k, v in row.items()
+                if k not in ('plate_image', 'vehicle_image', 'full_frame', 'full_frame_image')},
+             'has_plate_image': bool(row.get('plate_image')),
+             'has_vehicle_image': bool(row.get('vehicle_image')),
+             'has_full_frame': bool(row.get('full_frame') or row.get('full_frame_image'))}
+            for row in entries]
+
+
 @app.route('/api/history')
 def api_get_history():
     filters = request.args.to_dict()
@@ -4825,7 +5836,10 @@ def api_get_history():
     for key in ('unique', 'regex', 'fuzzy', 'valid_only', 'watchlist_only'):
         if key in filters:
             filters[key] = str(filters[key]).lower() in ('true', '1', 'yes', 'on', 'ja')
+    if _invalid_search_regex(filters):
+        return jsonify({'success': False, 'error': 'Ungültiger oder zu komplexer Regex-Ausdruck.'}), 400
     result = history_manager.search_advanced(filters)
+    result['entries'] = _history_api_entries(result['entries'], filters)
     return jsonify({'entries': result.get('entries', []), 'total': result.get('total', 0), 'total_all': len(history_manager.history), 'limit': result.get('limit'), 'offset': result.get('offset')})
 
 @app.route('/api/history/<entry_id>', methods=['GET'])
@@ -4837,17 +5851,61 @@ def api_get_history_entry(entry_id):
 
 @app.route('/api/history/<entry_id>', methods=['DELETE'])
 def api_delete_history_entry(entry_id):
-    history_manager.delete_entry(entry_id)
+    if not history_manager.delete_entry(entry_id):
+        return jsonify({'success': False, 'error': 'Eintrag nicht gefunden'}), 404
     return jsonify({'success': True})
+
+@app.route('/api/history/review-summary')
+def api_history_review_summary():
+    return jsonify({'success': True, **history_manager.review_counts()})
+
+
+@app.route('/api/history/<entry_id>/review', methods=['POST', 'PATCH'])
+def api_history_review_entry(entry_id):
+    # Small structured request: never accept images, arbitrary history fields,
+    # or unbounded notes. The normal mutating-request security rules apply.
+    if request.content_length is not None and request.content_length > 8192:
+        return jsonify({'success': False, 'error': 'Anfrage zu groß'}), 413
+    # Bound even chunked/unknown-length bodies *before* JSON decoding. Global
+    # MAX_CONTENT_LENGTH is intentionally much larger for legitimate videos.
+    if not request.is_json:
+        return jsonify({'success': False, 'error': 'JSON-Objekt erwartet'}), 400
+    raw = request.stream.read(8193)
+    if len(raw) > 8192:
+        return jsonify({'success': False, 'error': 'Anfrage zu groß'}), 413
+    try:
+        payload = json.loads(raw.decode('utf-8'))
+    except (UnicodeError, json.JSONDecodeError):
+        return jsonify({'success': False, 'error': 'Ungültiges JSON'}), 400
+    if not isinstance(payload, dict):
+        return jsonify({'success': False, 'error': 'JSON-Objekt erwartet'}), 400
+    status = payload.get('review_status')
+    note = payload.get('review_note', '')
+    expected = payload.get('expected_updated_at')
+    try:
+        entry = history_manager.update_review(entry_id, status, note, expected_updated_at=expected)
+    except ReviewConflictError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    if entry is None:
+        return jsonify({'success': False, 'error': 'Eintrag nicht gefunden'}), 404
+    return jsonify({'success': True, 'entry': _history_api_entries([entry], {'include_images': False})[0]})
+
 
 @app.route('/api/history/clear', methods=['POST'])
 def api_clear_history():
-    history_manager.clear_history()
-    return jsonify({'success': True})
+    deleted = history_manager.clear_history()
+    return jsonify({'success': True, 'deleted': deleted})
 
 @app.route('/api/history/statistics')
 def api_history_statistics():
     return jsonify(history_manager.get_statistics())
+
+def _invalid_search_regex(filters):
+    return (bool(filters.get('regex')) and
+            _compile_plate_search_regex(str(filters.get('q') or filters.get('search') or '')) is None)
+
 
 @app.route('/api/history/search', methods=['GET', 'POST'])
 def api_history_search():
@@ -4856,38 +5914,88 @@ def api_history_search():
     for key in ('unique', 'regex', 'fuzzy', 'valid_only', 'watchlist_only'):
         if key in filters:
             filters[key] = str(filters[key]).lower() in ('true', '1', 'yes', 'on', 'ja')
-    return jsonify(history_manager.search_advanced(filters))
+    if _invalid_search_regex(filters):
+        return jsonify({'success': False, 'error': 'Unsicherer oder ungültiger Regex-Ausdruck. Erlaubt sind einfache Muster ohne Gruppen und Alternativen.'}), 400
+    result = history_manager.search_advanced(filters)
+    result['entries'] = _history_api_entries(result['entries'], filters)
+    return jsonify(result)
 
 @app.route('/api/history/facets')
 def api_history_facets():
     return jsonify(history_manager.get_facets())
 
+def _csv_safe_cell(value):
+    """Protect spreadsheet users from formula injection in exported CSV text."""
+    if value is None:
+        return ''
+    if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')):
+        return "'" + value
+    return value
+
+
 @app.route('/api/history/export')
 def api_history_export():
+    """Stream every matching history row without building another huge response.
+
+    The interactive page size stays capped at 1,000; the export deliberately
+    has no pagination and does not embed private image data by default.
+    """
     fmt = request.args.get('format', 'csv').lower()
+    if fmt not in ('csv', 'json'):
+        return jsonify({'success': False, 'error': 'Exportformat muss csv oder json sein.'}), 400
     filters = request.args.to_dict()
-    filters['limit'] = int(filters.get('limit') or 100000)
+    filters.pop('limit', None)
+    filters.pop('offset', None)
     for key in ('unique', 'regex', 'fuzzy', 'valid_only', 'watchlist_only'):
         if key in filters:
             filters[key] = str(filters[key]).lower() in ('true', '1', 'yes', 'on', 'ja')
-    rows = history_manager.search_advanced(filters)['entries']
+    if _invalid_search_regex(filters):
+        return jsonify({'success': False, 'error': 'Ungültiger oder zu komplexer Regex-Ausdruck.'}), 400
+    rows = (history_manager.iter_search(filters) if hasattr(history_manager, 'iter_search')
+            else iter(history_manager.search_all(filters)))
     filename = f"platevision_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    fields = ['timestamp', 'plate_text', 'plate_text_normalized', 'confidence', 'source', 'vehicle_type', 'vehicle_color', 'vehicle_color_hex', 'plate_country_display', 'plate_country', 'plate_country_prob', 'ocr_engine', 'ocr_model', 'plate_format', 'is_valid_plate', 'filename']
+    fields = ['timestamp', 'plate_text', 'plate_text_normalized', 'confidence', 'source',
+              'vehicle_type', 'vehicle_color', 'vehicle_color_hex', 'plate_country_display',
+              'plate_country', 'plate_country_prob', 'ocr_engine', 'ocr_model', 'plate_format',
+              'is_valid_plate', 'filename', 'review_status', 'review_note', 'review_updated_at']
     if fmt == 'json':
-        return Response(json.dumps(rows, indent=2, ensure_ascii=False), mimetype='application/json', headers={'Content-Disposition': f'attachment; filename={filename}.json'})
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
-    writer.writeheader()
-    for row in rows:
-        writer.writerow(row)
-    return Response(output.getvalue(), mimetype='text/csv; charset=utf-8', headers={'Content-Disposition': f'attachment; filename={filename}.csv'})
+        include_images = (str(request.args.get('include_images', 'false')).lower() == 'true'
+                          and bool(config_manager.get('privacy', 'export_include_images')))
+        def json_chunks():
+            yield '[\n'
+            for index, row in enumerate(rows):
+                if index:
+                    yield ',\n'
+                filtered = row if include_images else _history_api_entries([row], {'include_images': False})[0]
+                yield json.dumps(filtered, ensure_ascii=False)
+            yield '\n]\n'
+        response = Response(json_chunks(), mimetype='application/json; charset=utf-8')
+        response.headers['Content-Disposition'] = f'attachment; filename={filename}.json'
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+
+    def csv_chunks():
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction='ignore')
+        writer.writeheader()
+        yield buffer.getvalue()
+        for row in rows:
+            buffer.seek(0)
+            buffer.truncate(0)
+            writer.writerow({field: _csv_safe_cell(row.get(field)) for field in fields})
+            yield buffer.getvalue()
+    response = Response(csv_chunks(), mimetype='text/csv; charset=utf-8')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}.csv'
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 def _parse_iso_datetime(value):
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace('Z', '+00:00')).replace(tzinfo=None)
-    except Exception:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return parsed.astimezone().replace(tzinfo=None) if parsed.tzinfo else parsed
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -4942,6 +6050,41 @@ def _latest_person_entry():
     return None
 
 
+def _presentation_vehicle_settings():
+    cfg = config_manager.get('dashboard') or {}
+    enabled = cfg.get('show_only_best_vehicle') is True
+    try:
+        minimum = max(0.8, min(1.0, float(cfg.get('best_vehicle_min_confidence', .8))))
+        seconds = max(10, min(900, int(cfg.get('best_vehicle_window_seconds', 180))))
+    except (TypeError, ValueError, OverflowError):
+        minimum, seconds = .8, 180
+    # Do not silently treat malformed settings as a valid sharpness score.
+    prefer_sharpness = cfg.get('best_vehicle_prefer_sharpness', True) is True
+    try:
+        weight = float(cfg.get('best_vehicle_sharpness_weight', 0.25))
+        weight = max(0.0, min(0.4, weight)) if __import__('math').isfinite(weight) else 0.25
+    except (ValueError, TypeError, OverflowError):
+        weight = 0.25
+    return enabled, minimum, seconds, prefer_sharpness, weight
+
+
+def _display_vehicle_entry():
+    """Best image within the recent pass, never delete/filter historical events."""
+    enabled, minimum, seconds, sharpness, weight = _presentation_vehicle_settings()
+    if not enabled:
+        rows = history_manager.get_all(limit=1)
+        return rows[0] if rows else None
+    with history_manager.lock:
+        if history_manager._sqlite_store:
+            return history_manager._sqlite_store.best_vehicle_for_display(
+                minimum=minimum, window_seconds=seconds,
+                prefer_sharpness=sharpness, sharpness_weight=weight)
+        rows = list(history_manager.history[:150])
+        chosen = best_image_candidate(rows, minimum=minimum, window_seconds=seconds,
+                                      prefer_sharpness=sharpness, sharpness_weight=weight)
+        return dict(chosen) if chosen else None
+
+
 @app.route('/api/dashboard/overview')
 def api_dashboard_overview():
     stats = history_manager.get_statistics()
@@ -4951,8 +6094,14 @@ def api_dashboard_overview():
     traffic_today = traffic_data_today.get('summary', {})
     people_data_today = person_history_manager.get_statistics({'days': 1})
     people_stats = people_data_today.get('summary', {})
-    today_entries = [e for e in history_manager.history if _is_today(e.get('timestamp'))]
-    today_unique = history_manager._unique_entries(today_entries)
+    if history_manager._sqlite_store:
+        today_count, today_unique_count = history_manager._sqlite_store.today_plate_counts(
+            now=datetime.now(), fuzzy=bool(config_manager.get('history', 'fuzzy_duplicate_detection')),
+            similarity=config_manager.get('history', 'fuzzy_duplicate_similarity') or .88)
+    else:
+        today_entries = [e for e in history_manager.history if _is_today(e.get('timestamp'))]
+        today_count = len(today_entries)
+        today_unique_count = len(history_manager._unique_entries(today_entries))
     repeat_vehicles = max(0, int(traffic_today.get('repeat_vehicles') or 0))
     arrivals_today = sum(1 for session in traffic_data_today.get('sessions', []) if session.get('arrival_detected'))
     if not arrivals_today:
@@ -4963,10 +6112,13 @@ def api_dashboard_overview():
     for row in people_data_today.get('daily', []):
         if row.get('date') == today_iso:
             line_crossings_today += int(row.get('line_crossings') or 0)
-    latest_vehicle_entries = history_manager.get_all(limit=1)
-    latest_vehicle = _entry_image_flags(latest_vehicle_entries[0]) if latest_vehicle_entries else None
+    chosen_vehicle = _display_vehicle_entry()
+    latest_vehicle = _entry_image_flags(chosen_vehicle) if chosen_vehicle else None
     if latest_vehicle is not None:
-        latest_vehicle['image_url'] = '/api/latest/vehicle/image' if latest_vehicle.get('has_vehicle_image') else '/api/latest/plate/image'
+        from urllib.parse import quote
+        chosen_id = quote(str(latest_vehicle.get('id') or ''), safe='')
+        image_kind = 'vehicle' if latest_vehicle.get('has_vehicle_image') else 'plate'
+        latest_vehicle['image_url'] = f'/api/history/{chosen_id}/image/{image_kind}'
     latest_person = _latest_person_entry()
     if latest_person is not None:
         latest_person = dict(latest_person)
@@ -4981,8 +6133,8 @@ def api_dashboard_overview():
         'statistics': stats,
         'today': {
             # New compact names
-            'raw_detections': len(today_entries),
-            'unique_vehicles': len(today_unique),
+            'raw_detections': today_count,
+            'unique_vehicles': today_unique_count,
             'traffic_visits': traffic_today.get('total_visits') or 0,
             'repeat_vehicles': repeat_vehicles,
             'currently_present': traffic_today.get('currently_present') or 0,
@@ -4996,13 +6148,15 @@ def api_dashboard_overview():
             'stream_connected': bool(status.get('connected')),
             'fps': status.get('fps') or 0,
             # Backward-compatible names used by current dashboard widgets
-            'plate_events': len(today_entries),
+            'plate_events': today_count,
             'traffic': traffic_today,
             'people': people_stats,
             'watchlist_hits_total': stats.get('watchlist_hits', 0)
         },
         'latest': [_entry_image_flags(e) for e in latest_unique],
         'latest_vehicle': latest_vehicle,
+        'vehicle_display': dict(zip(('best_only', 'min_confidence', 'window_seconds', 'prefer_sharpness', 'sharpness_weight'),
+                                   _presentation_vehicle_settings())),
         'latest_person': latest_person,
         'stream': status,
         'facets': history_manager.get_facets(),
@@ -5047,17 +6201,256 @@ def api_watchlist():
             data.get('notify', True)
         )
         return jsonify({'success': True, 'item': item})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+    except OSError:
+        return jsonify({'success': False, 'error': 'Watchlist konnte nicht gespeichert werden.'}), 503
+    except (ValueError, TypeError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
 
 @app.route('/api/watchlist/<item_id>', methods=['DELETE'])
 def api_watchlist_delete(item_id):
-    return jsonify({'success': watchlist_manager.delete(item_id)})
+    try:
+        return jsonify({'success': watchlist_manager.delete(item_id)})
+    except OSError:
+        return jsonify({'success': False, 'error': 'Watchlist konnte nicht gespeichert werden.'}), 503
+
+
+def _alert_store_or_error():
+    if watchlist_alert_center is None:
+        return None, (jsonify({'success': False, 'error': 'Alarmdatenbank nicht verfuegbar'}), 503)
+    return watchlist_alert_center, None
+
+
+@app.route('/api/alerts')
+def api_alerts():
+    store, error = _alert_store_or_error()
+    if error:
+        return error
+    try:
+        only_unread = str(request.args.get('unread', '')).lower() in ('true', '1', 'yes')
+        page = store.page(limit=_page_integer(request.args.get('limit'), 30, 1, 100),
+                          offset=_page_integer(request.args.get('offset'), 0, 0, 1000000),
+                          unread_only=only_unread)
+        return jsonify({**page, 'status': store.status(), 'success': True})
+    except (sqlite3.Error, OSError):
+        logger.exception('Watchlist alert query failed')
+        return jsonify({'success': False, 'error': 'Alarmdatenbank konnte nicht gelesen werden'}), 503
+
+
+@app.route('/api/alerts/settings', methods=['GET', 'POST'])
+def api_alerts_settings():
+    def display():
+        return {'enabled': notification_enabled(config_manager.get('alerts', 'watchlist_notifications')),
+                'min_confidence': _safe_numeric(config_manager.get('alerts', 'min_alert_confidence'), .65),
+                'cooldown_seconds': _page_integer(config_manager.get('alerts', 'watchlist_alert_cooldown_seconds'),
+                                                  180, minimum=0, maximum=3600)}
+    if request.method == 'GET':
+        return jsonify({'success': True, 'settings': display()})
+    values = request.get_json(silent=True)
+    if not isinstance(values, dict) or set(values) != {'enabled', 'min_confidence', 'cooldown_seconds'}:
+        return jsonify({'success': False, 'error': 'Ungueltige Alarm-Einstellungen'}), 400
+    if type(values['enabled']) is not bool:
+        return jsonify({'success': False, 'error': 'Aktivierung muss true oder false sein'}), 400
+    try:
+        minimum = float(values['min_confidence'])
+        cooldown = values['cooldown_seconds']
+    except (TypeError, ValueError, OverflowError):
+        return jsonify({'success': False, 'error': 'Konfidenz und Sperrzeit muessen Zahlen sein'}), 400
+    if (not 0 <= minimum <= 1 or type(cooldown) is not int or not 0 <= cooldown <= 3600):
+        return jsonify({'success': False, 'error': 'Konfidenz 0-100 %; Sperrzeit 0-3600 s'}), 400
+    try:
+        with getattr(globals().get('ha_delivery_worker'), 'delivery_lock', config_manager.lock):
+            with config_manager.lock:
+                previously_enabled = notification_enabled(
+                    config_manager.get('alerts', 'watchlist_notifications'))
+                section = config_manager.config.setdefault('alerts', {})
+                # On both opt-out and opt-in, discard old tasks first. In
+                # particular, toggling back on must not revive a stale push.
+                if previously_enabled != values['enabled'] and watchlist_alert_center is not None:
+                    watchlist_alert_center.cancel_pending_deliveries()
+                section.update({'watchlist_notifications': values['enabled'],
+                                'min_alert_confidence': minimum,
+                                'watchlist_alert_cooldown_seconds': cooldown})
+                if not config_manager.save_config():
+                    raise OSError('Fehler beim Speichern der Alarmeinstellungen')
+        return jsonify({'success': True, 'settings': display()})
+    except (OSError, sqlite3.Error):
+        return jsonify({'success': False, 'error': 'Alarmeinstellungen konnten nicht gespeichert werden'}), 503
+
+
+@app.route('/api/alerts/status')
+def api_alerts_status():
+    store, error = _alert_store_or_error()
+    if error:
+        return error
+    try:
+        return jsonify({'success': True, **store.status()})
+    except (sqlite3.Error, OSError):
+        return jsonify({'success': False, 'error': 'Alarmdatenbank konnte nicht gelesen werden'}), 503
+
+
+@app.route('/api/alerts/homeassistant', methods=['GET', 'POST'])
+def api_alerts_homeassistant():
+    """Opt-in settings, never expose the internal Supervisor token to browsers."""
+    if request.method == 'GET':
+        try:
+            delivery = (watchlist_alert_center.delivery_status() if watchlist_alert_center
+                        else {'pending': 0, 'sending': 0, 'accepted': 0, 'failed': 0})
+            return jsonify({'success': True, 'settings': _ha_settings_snapshot(),
+                            'token_available': bool(os.environ.get('SUPERVISOR_TOKEN')),
+                            'paused': not _alert_delivery_active(),
+                            'delivery': delivery})
+        except (sqlite3.Error, OSError):
+            return jsonify({'success': False, 'error': 'HA-Zustellstatus nicht verfuegbar'}), 503
+    if request.content_length and request.content_length > 4096:
+        return jsonify({'success': False, 'error': 'Einstellungen zu gross'}), 413
+    data = request.get_json(silent=True)
+    keys = {'ha_persistent_enabled','ha_mobile_enabled','ha_mobile_service','ha_include_plate'}
+    if not isinstance(data, dict) or set(data) != keys:
+        return jsonify({'success': False, 'error': 'Ungueltige HA-Einstellungen'}), 400
+    if any(type(data[k]) is not bool for k in keys if k != 'ha_mobile_service'):
+        return jsonify({'success': False, 'error': 'Schalter muessen true/false sein'}), 400
+    target = data['ha_mobile_service']
+    if not isinstance(target, str) or len(target) > 95:
+        return jsonify({'success': False, 'error': 'Ungueltiger Handy-Dienst'}), 400
+    target = target.strip().lower()
+    if target.startswith('notify.'):
+        target = target[len('notify.'): ]
+    if (target and not valid_mobile_service(target)) or (data['ha_mobile_enabled'] and not target):
+        return jsonify({'success': False, 'error': 'Bitte notify.mobile_app_DEIN_GERAET eintragen'}), 400
+    new_values = {**data, 'ha_mobile_service': target}
+    try:
+        # Lock order is ALWAYS delivery -> configuration -> SQLite.  The
+        # sender uses the first lock across its entire HA HTTP request.
+        # Without this guard, changing a phone target can complete while an
+        # old recipient is still being notified in the same process.
+        with getattr(globals().get('ha_delivery_worker'), 'delivery_lock', config_manager.lock):
+            with config_manager.lock:
+                previous = _ha_settings_snapshot()
+                # Fail closed if SQLite cannot purge a previous recipient.
+                # This can lose old queued deliveries if the subsequent JSON
+                # write fails, but it cannot transmit them to a retired phone.
+                if previous != new_values and watchlist_alert_center is not None:
+                    watchlist_alert_center.cancel_pending_deliveries()
+                config_manager.config.setdefault('alerts', {}).update(new_values)
+                if not config_manager.save_config():
+                    raise OSError('HA-Einstellungen nicht gespeichert')
+            if ha_delivery_worker is not None:
+                ha_delivery_worker.wake()
+        return jsonify({'success': True, 'settings': _ha_settings_snapshot()})
+    except (OSError, sqlite3.Error):
+        return jsonify({'success': False, 'error': 'HA-Einstellungen oder ausstehende Meldungen nicht gespeichert'}), 503
+
+
+_ha_test_lock = threading.Lock()
+_ha_last_test_at = 0.0
+
+
+@app.route('/api/alerts/homeassistant/test', methods=['POST'])
+def api_alerts_homeassistant_test():
+    """Explicit neutral test; never accepts a URL, service, or plate from POST."""
+    global _ha_last_test_at
+    with getattr(globals().get('ha_delivery_worker'), 'delivery_lock', config_manager.lock):
+        channels = channels_for_settings(_ha_settings_snapshot())
+        if not channels:
+            return jsonify({'success': False, 'error': 'Zuerst HA-Meldungen aktivieren und speichern'}), 400
+        sender = HomeAssistantSender()
+        if not sender.available():
+            return jsonify({'success': False, 'error': 'Home-Assistant-Token nicht verfuegbar. Add-on neu bauen.'}), 503
+        with _ha_test_lock:
+            if time.monotonic() - _ha_last_test_at < 20:
+                return jsonify({'success': False, 'error': 'Verbindungstest erst in 20 Sekunden erneut moeglich'}), 429
+            _ha_last_test_at = time.monotonic()
+        accepted = []
+        failed = []
+        for channel, target in channels:
+            try:
+                sender.send_test(channel=channel, target=target)
+                accepted.append(channel)
+            except HADeliveryError as exc:
+                failed.append(f'{channel}: {exc}')
+    if failed:
+        return jsonify({'success': False, 'accepted': accepted,
+                        'error': '; '.join(failed)[:200]}), 503
+    return jsonify({'success': True, 'accepted': accepted,
+                    'message': 'Home Assistant hat die Testmeldung angenommen'})
+
+
+@app.route('/api/alerts/homeassistant/retry', methods=['POST'])
+def api_alerts_homeassistant_retry():
+    store, error = _alert_store_or_error()
+    if error:
+        return error
+    try:
+        with getattr(globals().get('ha_delivery_worker'), 'delivery_lock', config_manager.lock):
+            if not _alert_delivery_active() or not channels_for_settings(_ha_settings_snapshot()):
+                return jsonify({'success': False, 'error': 'Watchlist- oder HA-Meldungen sind deaktiviert'}), 400
+            count = store.retry_failed_deliveries()
+            if ha_delivery_worker is not None:
+                ha_delivery_worker.wake()
+        return jsonify({'success': True, 'queued': count})
+    except (OSError, sqlite3.Error):
+        return jsonify({'success': False, 'error': 'Fehlgeschlagene Zustellungen nicht ladbar'}), 503
+
+
+@app.route('/api/alerts/homeassistant/deliveries')
+def api_alerts_homeassistant_deliveries():
+    """Small, private status log without plates, watchlist notes or phone IDs."""
+    store, error = _alert_store_or_error()
+    if error:
+        return error
+    try:
+        limit = _page_integer(request.args.get('limit'), 20, minimum=1, maximum=50)
+        return jsonify({'success': True, 'items': store.recent_deliveries(limit=limit),
+                        'status': store.delivery_status()})
+    except (sqlite3.Error, OSError):
+        return jsonify({'success': False, 'error': 'Zustellprotokoll nicht verfuegbar'}), 503
+
+
+@app.route('/api/alerts/<int:alert_id>/read', methods=['POST'])
+def api_alert_mark_read(alert_id):
+    store, error = _alert_store_or_error()
+    if error:
+        return error
+    try:
+        if not store.acknowledge(alert_id):
+            return jsonify({'success': False, 'error': 'Eintrag nicht gefunden'}), 404
+        return jsonify({'success': True})
+    except (sqlite3.Error, OSError):
+        return jsonify({'success': False, 'error': 'Alarmstatus konnte nicht gespeichert werden'}), 503
+
+
+@app.route('/api/alerts/read-all', methods=['POST'])
+def api_alert_mark_all_read():
+    store, error = _alert_store_or_error()
+    if error:
+        return error
+    try:
+        return jsonify({'success': True, 'updated': store.acknowledge_all()})
+    except (sqlite3.Error, OSError):
+        return jsonify({'success': False, 'error': 'Alarmstatus konnte nicht gespeichert werden'}), 503
+
+
+@app.route('/api/alerts/<int:alert_id>', methods=['DELETE'])
+def api_alert_delete(alert_id):
+    store, error = _alert_store_or_error()
+    if error:
+        return error
+    try:
+        if not store.delete(alert_id):
+            return jsonify({'success': False, 'error': 'Eintrag nicht gefunden'}), 404
+        return jsonify({'success': True})
+    except (sqlite3.Error, OSError):
+        return jsonify({'success': False, 'error': 'Alarm konnte nicht entfernt werden'}), 503
 
 @app.route('/api/config/advanced', methods=['POST'])
 def api_save_advanced_config():
     try:
         data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({'success': False, 'error': 'Konfiguration muss ein Objekt sein'}), 400
+        if _indirect_ha_settings_present(data):
+            return jsonify({'success': False,
+                            'error': 'HA-Benachrichtigungen nur in der Alarmzentrale einstellen'}), 400
         def deep_update(target, payload):
             for key, value in (payload or {}).items():
                 if isinstance(value, dict) and isinstance(target.get(key), dict):
@@ -5065,16 +6458,22 @@ def api_save_advanced_config():
                 else:
                     target[key] = value
             return target
-        for section in ('general', 'ui', 'privacy', 'plate_recognition', 'search', 'dashboard', 'alerts',
-                        'traffic', 'people', 'recognition_profiles', 'detection', 'ocr', 'models', 'history', 'storage', 'rtsp'):
-            if section in data:
-                config_manager.config.setdefault(section, {})
-                deep_update(config_manager.config[section], data[section])
-        config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
-        config_manager.save_config()
-        return jsonify({'success': True, 'config': config_manager.config})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        def change(current):
+            for section in ('general', 'ui', 'privacy', 'plate_recognition', 'search', 'dashboard', 'alerts',
+                            'traffic', 'people', 'recognition_profiles', 'detection', 'ocr', 'models', 'history', 'storage', 'rtsp'):
+                if section in data:
+                    if not isinstance(data[section], dict):
+                        raise ValueError(f'Konfigurationsabschnitt {section} muss ein Objekt sein')
+                    current.setdefault(section, {})
+                    deep_update(current[section], data[section])
+            config_manager.config = config_manager._normalize_analysis_area(current)
+
+        cfg = _persist_config_update(change)
+        return jsonify({'success': True, 'config': _public_config()})
+    except (OSError, sqlite3.Error):
+        return jsonify({'success': False, 'error': 'Einstellungen konnten nicht gespeichert werden'}), 503
+    except (ValueError, TypeError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
 
 
 
@@ -5158,129 +6557,101 @@ def api_storage_info():
     })
 
 
+def _delete_top_level_files(folder):
+    """Delete regular files only and report partial failures accurately."""
+    deleted = 0
+    failed = 0
+    path = Path(folder)
+    if not path.exists():
+        return deleted, failed
+    try:
+        for candidate in path.iterdir():
+            if not candidate.is_file() or candidate.is_symlink():
+                continue
+            try:
+                candidate.unlink()
+                deleted += 1
+            except OSError as exc:
+                failed += 1
+                logger.warning('Datei konnte nicht entfernt werden: %s: %s', candidate, exc)
+    except OSError as exc:
+        failed += 1
+        logger.warning('Speicherordner konnte nicht gelesen werden: %s: %s', path, exc)
+    return deleted, failed
+
+
+def _deletion_response(deleted, failed, label, **additional):
+    response = {'success': not failed, 'deleted_count': deleted,
+                'failed_count': failed, 'message': f'{deleted} {label} gelöscht', **additional}
+    if failed:
+        response['error'] = f'{failed} Datei(en) oder Metadaten konnten nicht gelöscht werden. Speicher prüfen.'
+    return jsonify(response), (503 if failed else 200)
+
+
 @app.route('/api/storage/clear/plates', methods=['POST'])
 def api_clear_plates():
-    """Löscht alle Kennzeichen-Bilder"""
-    import shutil
-    from pathlib import Path
-    
-    plates_dir = Path('data/plates_detected')
-    deleted_count = 0
-    
-    if plates_dir.exists():
-        for file in plates_dir.iterdir():
-            if file.is_file():
-                try:
-                    file.unlink()
-                    deleted_count += 1
-                except Exception as e:
-                    logger.warning(f"Konnte Datei nicht löschen: {file} - {e}")
-    
-    return jsonify({
-        'success': True,
-        'deleted_count': deleted_count,
-        'message': f'{deleted_count} Kennzeichen-Bilder gelöscht'
-    })
+    deleted, failed = _delete_top_level_files('data/plates_detected')
+    return _deletion_response(deleted, failed, 'Kennzeichen-Bilder')
 
 
 @app.route('/api/storage/clear/vehicles', methods=['POST'])
 def api_clear_vehicles():
-    """Löscht alle Fahrzeug-Bilder"""
-    from pathlib import Path
-    
-    vehicles_dir = Path('data/vehicles_detected')
-    deleted_count = 0
-    
-    if vehicles_dir.exists():
-        for file in vehicles_dir.iterdir():
-            if file.is_file():
-                try:
-                    file.unlink()
-                    deleted_count += 1
-                except Exception as e:
-                    logger.warning(f"Konnte Datei nicht löschen: {file} - {e}")
-    
-    return jsonify({
-        'success': True,
-        'deleted_count': deleted_count,
-        'message': f'{deleted_count} Fahrzeug-Bilder gelöscht'
-    })
+    deleted, failed = _delete_top_level_files('data/vehicles_detected')
+    return _deletion_response(deleted, failed, 'Fahrzeug-Bilder')
 
 
 @app.route('/api/storage/clear/uploads', methods=['POST'])
 def api_clear_uploads():
-    """Löscht alle hochgeladenen und verarbeiteten Dateien"""
-    from pathlib import Path
-    
-    dirs_to_clear = [
-        'uploads/images',
-        'uploads/videos',
-        'uploads/processed'
-    ]
-    
-    deleted_count = 0
-    
-    for dir_path in dirs_to_clear:
-        path = Path(dir_path)
-        if path.exists():
-            for file in path.iterdir():
-                if file.is_file():
-                    try:
-                        file.unlink()
-                        deleted_count += 1
-                    except Exception as e:
-                        logger.warning(f"Konnte Datei nicht löschen: {file} - {e}")
-    
-    # Video-Jobs auch leeren
-    global video_processing_jobs
-    video_processing_jobs = {}
-    
-    return jsonify({
-        'success': True,
-        'deleted_count': deleted_count,
-        'message': f'{deleted_count} Upload-Dateien gelöscht'
-    })
+    with video_jobs_lock:
+        if _video_active_jobs():
+            return jsonify({'success': False,
+                            'error': 'Während der Video-Verarbeitung können Uploads nicht gelöscht werden. Bitte Job zuerst abbrechen.'}), 409
+        deleted = failed = 0
+        for folder in ('uploads/images', 'uploads/videos', 'uploads/processed'):
+            d, f = _delete_top_level_files(folder)
+            deleted += d
+            failed += f
+        # Keep completed job metadata if any file deletion failed: this allows
+        # the operator to identify downloads which might still be available.
+        if not failed:
+            previous_jobs = dict(video_processing_jobs)
+            previous_events = dict(video_job_cancel_events)
+            video_processing_jobs.clear()
+            video_job_cancel_events.clear()
+            if not _persist_video_jobs():
+                video_processing_jobs.update(previous_jobs)
+                video_job_cancel_events.update(previous_events)
+                failed += 1
+    return _deletion_response(deleted, failed, 'Upload-Dateien')
 
 
 @app.route('/api/storage/clear/all', methods=['POST'])
 def api_clear_all_storage():
-    """Löscht alle gespeicherten Daten"""
-    from pathlib import Path
-    
-    dirs_to_clear = [
-        'data/plates_detected',
-        'data/vehicles_detected',
-        'uploads/images',
-        'uploads/videos',
-        'uploads/processed'
-    ]
-    
-    deleted_count = 0
-    
-    for dir_path in dirs_to_clear:
-        path = Path(dir_path)
-        if path.exists():
-            for file in path.iterdir():
-                if file.is_file():
-                    try:
-                        file.unlink()
-                        deleted_count += 1
-                    except Exception as e:
-                        logger.warning(f"Konnte Datei nicht löschen: {file} - {e}")
-    
-    # Historie löschen
-    history_manager.clear_history()
-    
-    # Video-Jobs leeren
-    global video_processing_jobs
-    video_processing_jobs = {}
-    
-    return jsonify({
-        'success': True,
-        'deleted_count': deleted_count,
-        'message': f'Alle Daten gelöscht ({deleted_count} Dateien + Historie)'
-    })
-
+    with video_jobs_lock:
+        if _video_active_jobs():
+            return jsonify({'success': False,
+                            'error': 'Während der Video-Verarbeitung können Uploads nicht gelöscht werden. Bitte Job zuerst abbrechen.'}), 409
+        try:
+            cleared_history = history_manager.clear_history()
+        except (OSError, ValueError) as exc:
+            logger.error('Gesamtlöschung abgebrochen, weil Historie nicht gespeichert werden konnte: %s', exc)
+            return jsonify({'success': False, 'error': 'Historie konnte nicht gespeichert werden; keine Dateien gelöscht.'}), 503
+        deleted = failed = 0
+        for folder in ('data/plates_detected', 'data/vehicles_detected',
+                       'uploads/images', 'uploads/videos', 'uploads/processed'):
+            d, f = _delete_top_level_files(folder)
+            deleted += d
+            failed += f
+        if not failed:
+            previous_jobs = dict(video_processing_jobs)
+            previous_events = dict(video_job_cancel_events)
+            video_processing_jobs.clear()
+            video_job_cancel_events.clear()
+            if not _persist_video_jobs():
+                video_processing_jobs.update(previous_jobs)
+                video_job_cancel_events.update(previous_events)
+                failed += 1
+    return _deletion_response(deleted, failed, 'Dateien', cleared_history=cleared_history)
 
 # ============================================================
 # API ROUTEN - BILD VERARBEITUNG
@@ -5292,15 +6663,12 @@ def api_process_image():
         return jsonify({'success': False, 'error': 'Keine Datei'}), 400
     
     file = request.files['file']
-    if file.filename == '':
-        return jsonify({'success': False, 'error': 'Keine Datei ausgewählt'}), 400
-    
+    payload, error = _safe_image_upload(file)
+    if error:
+        return jsonify({'success': False, 'error': error}), 400
+    image = payload['image']
+
     try:
-        file_bytes = np.frombuffer(file.read(), np.uint8)
-        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        
-        if image is None:
-            return jsonify({'success': False, 'error': 'Ungültiges Bild'}), 400
         
         logger.info('[TestUpload] Bildanalyse gestartet: filename=%s shape=%s plate_model=%s vehicle_model=%s ocr=%s',
                     file.filename, getattr(image, 'shape', None), config_manager.get('models', 'license_plate_detector'),
@@ -5313,14 +6681,18 @@ def api_process_image():
         _, buffer = cv2.imencode('.jpg', result['annotated_frame'])
         result_image_b64 = base64.b64encode(buffer).decode('utf-8')
         
+        # Distinguish separate uploads even when the browser reuses a name.
+        image_upload_id = str(uuid.uuid4())
         for detection in result['detections']:
             if detection.get('plate_text'):
                 entry = {
+                    'upload_id': image_upload_id,
                     'plate_text': detection['plate_text'],
                     'confidence': detection.get('confidence', 0),
                     'source': 'image_upload',
                     'filename': file.filename,
                     'plate_image': detection.get('plate_image_base64'),
+                    'plate_sharpness': detection.get('plate_sharpness'),
                     'vehicle_image': detection.get('vehicle_image_base64'),
                     'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
                     'vehicle_type_en': detection.get('vehicle_type_en', 'unknown'),
@@ -5381,14 +6753,9 @@ def api_history_entry_image(entry_id, kind):
     }.get(str(kind or '').lower())
     if not image_key:
         return jsonify({'success': False, 'error': 'Unbekannter Bildtyp'}), 404
-    entry = None
-    try:
-        for item in history_manager.history:
-            if str(item.get('id')) == str(entry_id):
-                entry = item
-                break
-    except Exception:
-        entry = None
+    # SQLite has a primary-key index. Scanning the cached history on every
+    # image fetch is O(history size) and stalls a gallery with many entries.
+    entry = history_manager.get_by_id(entry_id)
     if not entry:
         return jsonify({'success': False, 'error': 'Historie-Eintrag nicht gefunden'}), 404
     data = entry.get(image_key)
@@ -5408,6 +6775,24 @@ def api_latest_detection():
     if entries:
         return jsonify(entries[0])
     return jsonify({'error': 'Keine Erkennung vorhanden', 'plate_text': None})
+
+@app.route('/api/latest/display')
+def api_latest_display():
+    """Front-end only; legacy /api/latest continues to return the raw last record."""
+    selected = _display_vehicle_entry()
+    enabled, minimum, seconds, sharpness, weight = _presentation_vehicle_settings()
+    if selected:
+        # Browser clients use metadata and protected image endpoints, avoiding
+        # megabytes of Base64 on each five-second refresh. Existing API clients
+        # retain the original full payload by default.
+        compact = str(request.args.get('images', '')).strip().lower() in ('0', 'false', 'no')
+        payload = _entry_image_flags(selected) if compact else dict(selected)
+        payload['best_image_mode'] = enabled
+        payload['display_min_confidence'] = minimum
+        return jsonify(payload)
+    return jsonify({'error': ('Keine Erkennung in der letzten Serie mit mindestens '
+                              f'{round(minimum*100)} % Qualität' if enabled else 'Keine Erkennung vorhanden'),
+                    'best_image_mode': enabled, 'display_min_confidence': minimum})
 
 @app.route('/api/latest/plate')
 def api_latest_plate_text():
@@ -5431,7 +6816,8 @@ def api_latest_plate_text():
 
 @app.route('/api/latest/plate/image')
 def api_latest_plate_image():
-    entries = history_manager.get_all(limit=1)
+    picked = _display_vehicle_entry()
+    entries = [picked] if picked else []
     if entries:
         plate_image = entries[0].get('plate_image')
         if plate_image:
@@ -5454,7 +6840,8 @@ def api_latest_plate_image():
 @app.route('/api/latest/vehicle/')
 def api_latest_vehicle():
     """Gibt die letzte Fahrzeug-Erkennung als JSON zurück"""
-    entries = history_manager.get_all(limit=1)
+    picked = _display_vehicle_entry()
+    entries = [picked] if picked else []
     if entries:
         entry = entries[0]
         return jsonify({
@@ -5484,7 +6871,8 @@ def api_latest_vehicle():
 @app.route('/api/latest/vehicle/image/')
 def api_latest_vehicle_image():
     """Gibt das letzte Fahrzeug-Bild als JPEG zurück"""
-    entries = history_manager.get_all(limit=1)
+    picked = _display_vehicle_entry()
+    entries = [picked] if picked else []
     if entries:
         vehicle_image = entries[0].get('vehicle_image')
         if vehicle_image:
@@ -5780,11 +7168,21 @@ def _safe_image_upload(file_storage):
     suffix = Path(filename).suffix.lower()
     if suffix not in {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}:
         return None, 'Nur Bilddateien JPG, PNG, WEBP oder BMP sind erlaubt'
-    data = file_storage.read()
+    size_limit = _page_integer(os.environ.get('PLATEVISION_MAX_IMAGE_MB'), 25, minimum=1, maximum=128) * 1024 * 1024
+    data = file_storage.read(size_limit + 1)
     if not data:
         return None, 'Leere Datei'
-    arr = np.frombuffer(data, np.uint8)
-    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if len(data) > size_limit:
+        return None, f'Bilddatei ist zu groß (maximal {size_limit // (1024 * 1024)} MB)'
+    try:
+        # Read the dimensions before decoding potentially huge pixel buffers.
+        with Image.open(io.BytesIO(data)) as candidate:
+            width, height = candidate.size
+        if not (1 <= width <= 10000 and 1 <= height <= 10000 and width * height <= 32000000):
+            return None, 'Bildauflösung ist zu groß (maximal 32 Megapixel)'
+    except Exception:
+        return None, 'Ungültiges oder beschädigtes Bild'
+    image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         return None, 'Ungültiges oder beschädigtes Bild'
     return {'filename': filename, 'data': data, 'image': image, 'suffix': suffix}, None
@@ -5811,13 +7209,16 @@ def _attach_person_crop_previews(people, frame, quality=88):
             if len(bbox) != 4:
                 continue
             x1, y1, x2, y2 = [int(float(v)) for v in bbox]
-            pad = 8
+            crop_cfg = config_manager.get('people') or {}
             try:
-                pad = int((config_manager.get('people') or {}).get('image_history_crop_padding_px') or 8)
-            except Exception:
-                pass
-            x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
-            x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
+                pad_px = max(0, min(240, int(crop_cfg.get('image_history_crop_padding_px') or 8)))
+                extra = max(0, min(150, float(crop_cfg.get('image_history_crop_padding_percent', 100)))) / 100.0
+            except (TypeError, ValueError, OverflowError):
+                pad_px, extra = 8, 1.0
+            pad_x = max(pad_px, round(max(1, x2 - x1) * extra * .55))
+            pad_y = max(pad_px, round(max(1, y2 - y1) * extra))
+            x1, y1 = max(0, x1 - pad_x), max(0, y1 - pad_y)
+            x2, y2 = min(w, x2 + pad_x), min(h, y2 + pad_y)
             if x2 <= x1 or y2 <= y1:
                 continue
             crop = frame[y1:y2, x1:x2].copy()
@@ -6205,6 +7606,41 @@ def api_models_available():
     return jsonify({'success': True, 'models': _scan_model_files(), 'config': config_manager.get('models') or {}})
 
 
+
+def _store_limited_model_upload(upload, path, max_bytes):
+    """Stream model data with a hard cap rather than saving first and checking after."""
+    received = 0
+    with Path(path).open('wb') as destination:
+        while True:
+            block = upload.stream.read(1024 * 1024)
+            if not block:
+                break
+            received += len(block)
+            if received > max_bytes:
+                raise ValueError('Modelldatei überschreitet das Upload-Limit.')
+            destination.write(block)
+        destination.flush()
+        os.fsync(destination.fileno())
+    if received <= 0:
+        raise ValueError('Die hochgeladene Modelldatei ist leer.')
+    return received
+
+
+@app.before_request
+def _reject_oversized_admin_import():
+    if request.method != 'POST':
+        return None
+    if request.path in ('/api/config/import', '/api/watchlist/import'):
+        maximum = 5 * 1024 * 1024
+        if request.content_length is not None and request.content_length > maximum:
+            return jsonify({'success': False, 'error': 'JSON-Import ist zu groß (maximal 4 MB).'}), 413
+    elif request.path == '/api/models/upload':
+        maximum = max(1, min(480, _safe_numeric(config_manager.get('models', 'model_upload_max_mb'), 480)))
+        if request.content_length is not None and request.content_length > maximum * 1024 * 1024 + 1024 * 1024:
+            return jsonify({'success': False, 'error': 'Modelldatei überschreitet das Upload-Limit.'}), 413
+    return None
+
+
 @app.route('/api/models/upload', methods=['POST'])
 def api_models_upload():
     """Upload custom YOLO/ONNX/TensorRT models from the settings UI.
@@ -6229,7 +7665,7 @@ def api_models_upload():
         select_after_upload = _bool_from_request(request.form.get('select_after_upload'), models_cfg.get('model_upload_select_after_upload', True))
         reload_after_upload = _bool_from_request(request.form.get('reload'), False)
         overwrite = _bool_from_request(request.form.get('overwrite'), models_cfg.get('model_upload_allow_overwrite', False))
-        max_mb = float(models_cfg.get('model_upload_max_mb') or 500)
+        max_mb = max(1, min(480, _safe_numeric(models_cfg.get('model_upload_max_mb'), 480)))
         content_length = request.content_length or 0
         if max_mb > 0 and content_length and content_length > max_mb * 1024 * 1024:
             return jsonify({'success': False, 'error': f'Datei ist größer als das Limit von {max_mb:g} MB.'}), 413
@@ -6241,12 +7677,7 @@ def api_models_upload():
 
         temp_target = target.with_name(f'.{target.name}.{uuid.uuid4().hex}.upload')
         try:
-            upload.save(str(temp_target))
-            actual_size = temp_target.stat().st_size
-            if actual_size <= 0:
-                raise ValueError('Die hochgeladene Modelldatei ist leer.')
-            if max_mb > 0 and actual_size > max_mb * 1024 * 1024:
-                raise ValueError(f'Datei ist größer als das Limit von {max_mb:g} MB.')
+            _store_limited_model_upload(upload, temp_target, int(max_mb * 1024 * 1024))
             os.replace(temp_target, target)
         finally:
             try:
@@ -6274,13 +7705,12 @@ def api_models_upload():
         elif role in ('plate', 'license', 'kennzeichen') and select_after_upload:
             cfg_models['license_plate_detector'] = info['path']
 
-        config_manager.save_config()
         if reload_after_upload:
-            detector.models_loaded = False
-            detector.human_model = None
             cfg_models['last_reload_at'] = datetime.now().isoformat()
-            config_manager.save_config()
-            threading.Thread(target=detector.load_models, daemon=True).start()
+        if not config_manager.save_config():
+            raise OSError('Modelldatei wurde gespeichert, aber die Auswahl konnte nicht übernommen werden')
+        if reload_after_upload:
+            _queue_model_reload()
 
         return jsonify({
             'success': True,
@@ -6291,9 +7721,14 @@ def api_models_upload():
             'models': _scan_model_files(),
             'config': _public_config()
         })
-    except Exception as e:
-        logger.error(f'Modell-Upload Fehler: {e}')
-        return jsonify({'success': False, 'error': str(e)}), 500
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 413 if 'Limit' in str(exc) else 400
+    except OSError as exc:
+        logger.error('Modelldatei konnte nicht gespeichert werden: %s', exc)
+        return jsonify({'success': False, 'error': 'Modelldatei konnte nicht auf dem Datenträger gespeichert werden.'}), 503
+    except Exception:
+        logger.exception('Unerwarteter Modell-Uploadfehler')
+        return jsonify({'success': False, 'error': 'Modell-Upload ist fehlgeschlagen.'}), 500
 
 @app.route('/api/models/people/options')
 def api_people_model_options():
@@ -6326,11 +7761,10 @@ def api_people_model_select():
             config_manager.config['people']['custom_model_path'] = path
             config_manager.config['people']['model_path'] = path
             config_manager.config.setdefault('models', {})['person_detector'] = path
-        config_manager.save_config()
+        if not config_manager.save_config():
+            raise OSError('Personenmodell-Auswahl konnte nicht gespeichert werden')
         if data.get('reload', True):
-            detector.models_loaded = False
-            detector.human_model = None
-            threading.Thread(target=detector.load_models, daemon=True).start()
+            _queue_model_reload()
         return jsonify({'success': True, 'config': _public_config(), 'resolved_path': resolved_path})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
@@ -6353,17 +7787,108 @@ def api_models_status():
         'ocr_engine': config_manager.get('ocr', 'engine') or 'fast_plate_ocr'
     })
 
+# Model reloads share the lock used for live/video/image inference. Never
+# clear active model objects from the HTTP request thread while inference runs.
+_model_reload_lock = threading.Lock()
+
+
+def _reload_models_background():
+    try:
+        with detector.inference_lock:
+            detector.models_loaded = False
+            detector.coco_model = None
+            detector.license_model = None
+            detector.human_model = None
+            detector.ocr_reader = None
+            detector.fast_plate_recognizer = None
+            detector.fast_plate_cache_key = None
+            detector.load_models()
+    except Exception:
+        logger.exception('Modelle konnten nicht neu geladen werden')
+    finally:
+        _model_reload_lock.release()
+
+
+
+# One background worker plus (at most) one coalesced follow-up worker. A config
+# write during a model reload must not mutate live models or spawn an unlimited
+# number of competing model-loading threads.
+_model_reload_followup_lock = threading.Lock()
+_model_reload_pending_lock = threading.Lock()
+_model_reload_queued = False
+
+
+def _invalidate_model_cache():
+    with detector.inference_lock:
+        detector.models_loaded = False
+        detector.coco_model = None
+        detector.license_model = None
+        detector.human_model = None
+        detector.ocr_reader = None
+        detector.fast_plate_recognizer = None
+        detector.fast_plate_cache_key = None
+
+
+def _pending_model_reload_worker():
+    global _model_reload_queued
+    owned = False
+    try:
+        while True:
+            with _model_reload_pending_lock:
+                _model_reload_queued = False
+            _model_reload_lock.acquire()
+            owned = True
+            # This routine releases _model_reload_lock, also on model failures.
+            _reload_models_background()
+            owned = False
+            with _model_reload_pending_lock:
+                if not _model_reload_queued:
+                    _model_reload_followup_lock.release()
+                    return
+    except Exception:
+        logger.exception('Ausstehender Modell-Neustart fehlgeschlagen')
+        with _model_reload_pending_lock:
+            if owned and _model_reload_lock.locked():
+                _model_reload_lock.release()
+            _model_reload_followup_lock.release()
+
+
+def _queue_model_reload():
+    """Start a safe model reload or coalesce changes into one subsequent run."""
+    global _model_reload_queued
+    with _model_reload_pending_lock:
+        if _model_reload_lock.acquire(blocking=False):
+            try:
+                threading.Thread(target=_reload_models_background, daemon=True,
+                                 name='platevision-model-reload').start()
+                return 'started'
+            except Exception:
+                _model_reload_lock.release()
+                raise OSError('Modell-Neustart konnte nicht gestartet werden')
+        _model_reload_queued = True
+        if _model_reload_followup_lock.acquire(blocking=False):
+            try:
+                threading.Thread(target=_pending_model_reload_worker, daemon=True,
+                                 name='platevision-model-reload-pending').start()
+            except Exception:
+                _model_reload_queued = False
+                _model_reload_followup_lock.release()
+                raise OSError('Modell-Neustart konnte nicht eingeplant werden')
+    return 'queued'
+
+
 @app.route('/api/models/reload', methods=['POST'])
 def api_reload_models():
-    detector.models_loaded = False
-    detector.coco_model = None
-    detector.license_model = None
-    detector.human_model = None
-    detector.ocr_reader = None
-    detector.fast_plate_recognizer = None
-    detector.fast_plate_cache_key = None
-    threading.Thread(target=detector.load_models, daemon=True).start()
-    return jsonify({'success': True, 'message': 'Modelle werden neu geladen...'})
+    if not _model_reload_lock.acquire(blocking=False):
+        return jsonify({'success': False, 'error': 'Modell-Neustart läuft bereits.'}), 409
+    try:
+        threading.Thread(target=_reload_models_background, daemon=True,
+                         name='platevision-model-reload').start()
+    except Exception:
+        _model_reload_lock.release()
+        logger.exception('Modell-Neustart konnte nicht gestartet werden')
+        return jsonify({'success': False, 'error': 'Modell-Neustart konnte nicht gestartet werden.'}), 503
+    return jsonify({'success': True, 'message': 'Modelle werden exklusiv neu geladen...'})
 
 @app.route('/api/system/info')
 def api_system_info():
@@ -6383,318 +7908,598 @@ def api_system_info():
 # API ROUTEN - VIDEO VERARBEITUNG
 # ============================================================
 
+class VideoJobCancelled(Exception):
+    """A user-requested cancellation, not a processing failure."""
+
+
+def _video_history_cooldown():
+    """Cooldown is based on video timestamp, never processing wall clock."""
+    return _page_integer(os.environ.get('PLATEVISION_VIDEO_PLATE_COOLDOWN_SECONDS'),
+                         10, minimum=0, maximum=600)
+
+
+def _persist_video_jobs():
+    """Persist public metadata only; derive paths from UUID on restart."""
+    with video_jobs_lock:
+        snapshot = [_video_status_payload(j) for j in video_processing_jobs.values()]
+        try:
+            _atomic_write_json(VIDEO_JOB_STATE_FILE, snapshot)
+            return True
+        except Exception as exc:
+            logger.error('Video job registry write failed: %s', exc)
+            return False
+
+
+def _restore_video_jobs():
+    """Restore completed video downloads after a container restart.
+
+    Never trust stored paths; reconstruct file locations from validated UUIDs.
+    Jobs that were interrupted are marked as errors, not restarted on their own.
+    """
+    rows = _load_json_with_backup(VIDEO_JOB_STATE_FILE, [])
+    if not isinstance(rows, list):
+        return 0
+    restored = 0
+    abandoned = []
+    with video_jobs_lock:
+        for row in rows[-500:]:
+            if not isinstance(row, dict):
+                continue
+            job_id = str(row.get('id') or '')
+            try:
+                if str(uuid.UUID(job_id)) != job_id:
+                    continue
+            except (ValueError, AttributeError):
+                continue
+            if job_id in video_processing_jobs:
+                continue
+            safe_name = Path(str(row.get('filename') or 'video.mp4').replace('\\', '/')).name[:160]
+            suffix = Path(safe_name).suffix.lower()
+            if suffix not in ('.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm'):
+                suffix = '.mp4'
+            output = Path('uploads/processed') / f'{job_id}_output.mp4'
+            upload = Path('uploads/videos') / f'{job_id}{suffix}'
+            original_status = str(row.get('status') or 'error')
+            status = original_status
+            # A terminated Python process cannot run the usual finally block.
+            # Roll back every unfinished/failed video's provisional detections.
+            if original_status != 'completed':
+                abandoned.append(job_id)
+            if status not in ('completed', 'cancelled', 'error'):
+                status = 'error'
+                row['error'] = 'Videoverarbeitung wurde durch einen Neustart unterbrochen.'
+            if status == 'completed' and not output.is_file():
+                status = 'error'
+                row['error'] = 'Die Ausgabedatei ist nicht mehr vorhanden.'
+            job = {key: row.get(key) for key in (
+                'id', 'filename', 'created_at', 'started_at', 'completed_at',
+                'current_frame', 'total_frames', 'detections_count',
+                'saved_history_count', 'elapsed_time', 'fps_processing', 'fps',
+                'resolution', 'recent_plates', 'progress', 'eta', 'error', 'history_cleanup_pending')}
+            job.update({'id': job_id, 'filename': safe_name, 'status': status,
+                        'video_path': str(upload) if upload.is_file() else None,
+                        'output_path': str(output) if output.is_file() else None})
+            video_processing_jobs[job_id] = job
+            restored += 1
+    for job_id in abandoned:
+        try:
+            history_manager.delete_video_job_entries(job_id)
+        except Exception as exc:
+            logger.error('Unvollständige Video-Erkennungen konnten nach Neustart nicht bereinigt werden (%s): %s', job_id, exc)
+            with video_jobs_lock:
+                video_processing_jobs[job_id]['history_cleanup_pending'] = True
+                video_processing_jobs[job_id]['error'] = 'Erkennungsdaten konnten noch nicht bereinigt werden. Speicher prüfen.'
+        else:
+            with video_jobs_lock:
+                video_processing_jobs[job_id]['history_cleanup_pending'] = False
+                video_processing_jobs[job_id]['saved_history_count'] = 0
+    if restored and not _persist_video_jobs():
+        logger.warning('Wiederhergestellte Video-Jobliste konnte nicht dauerhaft gespeichert werden')
+    return restored
+
+
+def _video_max_active_jobs():
+    # On a typical Home Assistant device the detector is the bottleneck.
+    return _page_integer(os.environ.get('PLATEVISION_MAX_VIDEO_JOBS'), 1, minimum=1, maximum=4)
+
+
+def _video_max_upload_mb():
+    # Flask's MAX_CONTENT_LENGTH is 500 MB including multipart framing.
+    return _page_integer(os.environ.get('PLATEVISION_MAX_VIDEO_MB'), 400, minimum=16, maximum=480)
+
+
+def _store_limited_video(upload, path):
+    """Stream input to disk, stopping BEFORE consuming unlimited storage."""
+    max_bytes = _video_max_upload_mb() * 1024 * 1024
+    total_bytes = 0
+    with Path(path).open('wb') as output:
+        while True:
+            block = upload.read(1024 * 1024)
+            if not block:
+                break
+            total_bytes += len(block)
+            if total_bytes > max_bytes:
+                raise ValueError(f'Video überschreitet das Upload-Limit von {_video_max_upload_mb()} MB')
+            output.write(block)
+    if total_bytes == 0:
+        raise ValueError('Die Videodatei ist leer')
+    return total_bytes
+
+
+def _video_retention_hours():
+    # Older completed uploads are deleted on the next jobs request/upload.
+    # Set to 0 to retain jobs until they are manually deleted.
+    return _page_integer(os.environ.get('PLATEVISION_VIDEO_RETENTION_HOURS'), 168, minimum=0, maximum=8760)
+
+
+def _video_active_jobs():
+    with video_jobs_lock:
+        return sum(j.get('status') in ('queued', 'processing', 'cancelling')
+                   for j in video_processing_jobs.values())
+
+
+def _video_status_payload(job):
+    """Never include server paths or large in-memory recognition results."""
+    fields = ('id', 'filename', 'status', 'progress', 'current_frame', 'total_frames',
+              'detections_count', 'saved_history_count', 'elapsed_time', 'fps_processing', 'eta', 'error',
+              'created_at', 'started_at', 'completed_at', 'fps', 'resolution', 'recent_plates',
+              'history_cleanup_pending')
+    result = {key: job.get(key) for key in fields if key in job}
+    result['job_id'] = job.get('id')
+    result['output_available'] = bool(job.get('status') == 'completed' and
+                                      job.get('output_path') and Path(job['output_path']).is_file())
+    return result
+
+
+def _cleanup_orphan_video_files():
+    """Remove expired UUID-named upload files left by a power loss/restart.
+
+    The in-memory job dictionary is empty after a restart, but persistent
+    uploads otherwise accumulate forever. Preserve every file referenced by
+    an existing job and never touch unrelated user files.
+    """
+    hours = _video_retention_hours()
+    if not hours:
+        return 0
+    cutoff = time.time() - hours * 3600
+    removed = 0
+    with video_jobs_lock:
+        preserved = {str(Path(job[key]).resolve())
+                     for job in video_processing_jobs.values()
+                     for key in ('video_path', 'output_path') if job.get(key)}
+        for dirname in ('uploads/videos', 'uploads/processed'):
+            directory = Path(dirname)
+            if not directory.is_dir():
+                continue
+            for path in directory.iterdir():
+                if not path.is_file() or str(path.resolve()) in preserved:
+                    continue
+                stem = path.stem.removesuffix('_output')
+                try:
+                    uuid.UUID(stem)
+                except (ValueError, AttributeError):
+                    continue  # never remove manually stored/non-PlateVision files
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        path.unlink()
+                        removed += 1
+                except OSError as exc:
+                    logger.warning('Verwaiste Video-Datei konnte nicht gelöscht werden: %s', exc)
+    return removed
+
+
+def _cleanup_old_video_jobs():
+    """Expire finished jobs transactionally before deleting their media.
+
+    The persistent job list must be committed first. Otherwise a full disk can
+    keep an outdated completed job after its only download has been deleted.
+    A failed registry write restores the in-memory jobs and preserves files.
+    """
+    hours = _video_retention_hours()
+    if hours == 0:
+        return 0
+    cutoff = datetime.now() - timedelta(hours=hours)
+    expired = []
+    with video_jobs_lock:
+        for job_id, job in list(video_processing_jobs.items()):
+            if job.get('status') not in ('completed', 'error', 'cancelled'):
+                continue
+            try:
+                finished = datetime.fromisoformat(job.get('completed_at') or job.get('created_at'))
+                if finished.tzinfo is not None:
+                    finished = finished.astimezone().replace(tzinfo=None)
+            except (ValueError, TypeError, OverflowError):
+                continue
+            if finished < cutoff:
+                expired.append((job_id, job, video_job_cancel_events.get(job_id)))
+        if expired:
+            for job_id, _, _ in expired:
+                video_processing_jobs.pop(job_id, None)
+                video_job_cancel_events.pop(job_id, None)
+            if not _persist_video_jobs():
+                for job_id, job, cancellation in expired:
+                    video_processing_jobs[job_id] = job
+                    if cancellation is not None:
+                        video_job_cancel_events[job_id] = cancellation
+                logger.error('Abgelaufene Video-Jobs behalten: Jobliste konnte nicht gespeichert werden')
+                return 0
+            # The registry is committed: stale references cannot reappear after
+            # a restart, so old media can now safely be removed.
+            for _, job, _ in expired:
+                for key in ('video_path', 'output_path'):
+                    if job.get(key):
+                        try:
+                            Path(job[key]).unlink(missing_ok=True)
+                        except OSError as exc:
+                            logger.warning('Konnte altes Video nicht entfernen: %s', exc)
+    _cleanup_orphan_video_files()
+    return len(expired)
+
 def process_video_job(job_id, video_path, original_filename):
-    """Hintergrund-Thread für Video-Verarbeitung"""
-    global video_processing_jobs
-    
-    try:
-        job = video_processing_jobs[job_id]
+    """Process a video safely with predictable cleanup and cancellation."""
+    cap = None
+    writer = None
+    output_path = f'uploads/processed/{job_id}_output.mp4'
+    start_time = time.monotonic()
+    frame_count = 0
+    detections_count = 0
+    saved_history_count = 0
+    last_saved_video_time = {}
+    # Hold only small alert metadata, not Base64 images. Alert notifications
+    # are committed AFTER successful completion, never for cancelled videos.
+    pending_video_alerts = {}
+    cooldown = _video_history_cooldown()
+    succeeded = False
+    with video_jobs_lock:
+        job = video_processing_jobs.get(job_id)
+        cancel = video_job_cancel_events.get(job_id)
+        if job is None or cancel is None:
+            return
         job['status'] = 'processing'
         job['started_at'] = datetime.now().isoformat()
-        
-        # Video öffnen
+        job['output_path'] = output_path
+
+    try:
+        if cancel.is_set():
+            raise VideoJobCancelled()
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            raise Exception("Video konnte nicht geöffnet werden")
-        
-        # Video-Eigenschaften
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 25
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
-        job['total_frames'] = total_frames
-        job['fps'] = fps
-        job['resolution'] = f"{width}x{height}"
-        
-        # Output Video Writer
-        output_path = f"uploads/processed/{job_id}_output.mp4"
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        
-        # Verarbeitungs-Einstellungen
-        process_every_n_frames = max(1, int(fps / 2))  # ~2 FPS Analyse
-        
-        frame_count = 0
-        detections_count = 0
-        start_time = time.time()
-        all_detections = []
-        
+            raise ValueError('Video konnte nicht geöffnet werden')
+        total_frames = max(0, int(_safe_numeric(cap.get(cv2.CAP_PROP_FRAME_COUNT), 0)))
+        fps = _safe_numeric(cap.get(cv2.CAP_PROP_FPS), 25.0)
+        if fps <= 0 or fps > 240:
+            fps = 25.0
+        width = int(_safe_numeric(cap.get(cv2.CAP_PROP_FRAME_WIDTH), 0))
+        height = int(_safe_numeric(cap.get(cv2.CAP_PROP_FRAME_HEIGHT), 0))
+        if not (1 <= width <= 8192 and 1 <= height <= 8192 and width * height <= 35000000):
+            raise ValueError('Video-Auflösung ist ungültig oder zu groß')
+        with video_jobs_lock:
+            job.update({'total_frames': total_frames, 'fps': round(fps, 2),
+                        'resolution': f'{width}x{height}'})
+        writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+        if not writer.isOpened():
+            raise ValueError('MP4-Ausgabedatei konnte nicht erstellt werden (Codec nicht verfügbar)')
+        process_every_n_frames = max(1, int(fps / 2))
+        recent_plates = []
         while cap.isOpened():
+            if cancel.is_set():
+                raise VideoJobCancelled()
             ret, frame = cap.read()
             if not ret:
                 break
-            
             frame_count += 1
-            annotated_frame = frame.copy()
-            
-            # Nur jeden n-ten Frame analysieren
+            annotated_frame = frame
             if frame_count % process_every_n_frames == 0:
                 try:
-                    result = detector.process_frame(frame)
-                    annotated_frame = result['annotated_frame']
-                    
-                    # Neue Erkennungen speichern
-                    for detection in result['detections']:
-                        if detection.get('plate_text'):
-                            detections_count += 1
-                            
-                            entry = {
-                                'plate_text': detection['plate_text'],
-                                'confidence': detection.get('confidence', 0),
-                                'source': 'video_upload',
-                                'filename': original_filename,
-                                'frame_number': frame_count,
-                                'timestamp_video': frame_count / fps,
-                                'plate_image': detection.get('plate_image_base64'),
-                                'vehicle_image': detection.get('vehicle_image_base64'),
-                                'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
-                                'vehicle_type_en': detection.get('vehicle_type_en', 'unknown'),
-                                'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
-                                'vehicle_color_hex': detection.get('vehicle_color_hex'),
-                                'vehicle_color_rgb': detection.get('vehicle_color_rgb'),
-                                'vehicle_color_coverage': detection.get('vehicle_color_coverage'),
-                                'plate_country': detection.get('plate_country'),
-                                'plate_country_display': detection.get('plate_country_display'),
-                                'plate_country_prob': detection.get('plate_country_prob'),
-                                'ocr_engine': detection.get('ocr_engine'),
-                                'ocr_model': detection.get('ocr_model'),
-                            }
-                            history_manager.add_entry(entry)
-                            all_detections.append(entry)
-                            
-                except Exception as e:
-                    logger.error(f"Frame-Verarbeitung Fehler: {e}")
-            
-            # Frame schreiben
-            out.write(annotated_frame)
-            
-            # Progress Update
-            elapsed = time.time() - start_time
-            progress = int((frame_count / total_frames) * 100) if total_frames > 0 else 0
-            fps_processing = round(frame_count / elapsed, 1) if elapsed > 0 else 0
-            eta = int((total_frames - frame_count) / fps_processing) if fps_processing > 0 else 0
-            
-            job['current_frame'] = frame_count
-            job['progress'] = progress
-            job['detections_count'] = detections_count
-            job['elapsed_time'] = int(elapsed)
-            job['fps_processing'] = fps_processing
-            job['eta'] = eta
-            
-            # WebSocket Progress (alle 30 Frames)
+                    results = detector.process_frame(frame)
+                    maybe_annotated = results.get('annotated_frame')
+                    if maybe_annotated is not None and maybe_annotated.shape[:2] == frame.shape[:2]:
+                        annotated_frame = maybe_annotated
+                    for detection in results.get('detections', []):
+                        plate = detection.get('plate_text')
+                        if not plate:
+                            continue
+                        detections_count += 1
+                        entry = {
+                            'plate_text': plate, 'confidence': detection.get('confidence', 0),
+                            'source': 'video_upload', 'filename': original_filename,
+                            'frame_number': frame_count, 'timestamp_video': frame_count / fps,
+                            'plate_image': detection.get('plate_image_base64'),
+                            'plate_sharpness': detection.get('plate_sharpness'),
+                            'vehicle_image': detection.get('vehicle_image_base64'),
+                            'vehicle_type': detection.get('vehicle_type', 'Unbekannt'),
+                            'vehicle_type_en': detection.get('vehicle_type_en', 'unknown'),
+                            'vehicle_color': detection.get('vehicle_color', 'Unbekannt'),
+                            'vehicle_color_hex': detection.get('vehicle_color_hex'),
+                            'vehicle_color_rgb': detection.get('vehicle_color_rgb'),
+                            'vehicle_color_coverage': detection.get('vehicle_color_coverage'),
+                            'plate_country': detection.get('plate_country'),
+                            'plate_country_display': detection.get('plate_country_display'),
+                            'plate_country_prob': detection.get('plate_country_prob'),
+                            'ocr_engine': detection.get('ocr_engine'),
+                            'ocr_model': detection.get('ocr_model'),
+                        }
+                        video_seconds = frame_count / fps
+                        normalized_plate = str(plate).upper().replace(' ', '').replace('-', '')
+                        previous_second = last_saved_video_time.get(normalized_plate)
+                        if previous_second is None or video_seconds - previous_second >= cooldown:
+                            entry['video_job_id'] = job_id
+                            # Video-based cooldown is deterministic even for fast playback.
+                            saved_video_entry = history_manager.add_entry(entry, check_duplicate=False)
+                            if (saved_video_entry and isinstance(saved_video_entry.get('watchlist_match'), dict)
+                                    and globals().get('watchlist_alert_center') is not None):
+                                alert_key = (str(saved_video_entry['watchlist_match'].get('id') or ''),
+                                             str(saved_video_entry.get('plate_text_normalized') or ''))
+                                earlier = pending_video_alerts.get(alert_key)
+                                if (earlier is None or _safe_numeric(saved_video_entry.get('confidence')) >
+                                        _safe_numeric(earlier.get('confidence'))):
+                                    pending_video_alerts[alert_key] = {key: saved_video_entry.get(key) for key in
+                                        ('id','plate_text','plate_text_normalized','confidence','source',
+                                         'video_job_id','watchlist_match')}
+                            last_saved_video_time[normalized_plate] = video_seconds
+                            saved_history_count += 1
+                        if plate not in recent_plates:
+                            recent_plates.append(plate)
+                            recent_plates = recent_plates[-20:]
+                except OSError:
+                    # A failed durable history write invalidates the job.
+                    # Never announce successful processing with lost results.
+                    raise
+                except Exception as exc:
+                    logger.exception('Video-Frame %d: Erkennung fehlgeschlagen: %s', frame_count, exc)
+            if cancel.is_set():
+                raise VideoJobCancelled()
+            writer.write(annotated_frame)
+            elapsed = max(0.001, time.monotonic() - start_time)
+            speed = round(frame_count / elapsed, 1)
+            progress = min(99, int(frame_count / total_frames * 100)) if total_frames else 0
+            eta = int(max(0, total_frames - frame_count) / speed) if speed and total_frames else 0
+            with video_jobs_lock:
+                job.update({'current_frame': frame_count, 'progress': progress,
+                            'detections_count': detections_count,
+                            'saved_history_count': saved_history_count,
+                            'elapsed_time': int(elapsed),
+                            'fps_processing': speed, 'eta': eta, 'recent_plates': list(recent_plates)})
             if frame_count % 30 == 0:
                 try:
-                    socketio.emit('video_progress', {
-                        'job_id': job_id,
-                        'progress': progress,
-                        'current_frame': frame_count,
-                        'total_frames': total_frames,
-                        'detections_count': detections_count,
-                        'elapsed_time': int(elapsed),
-                        'fps_processing': fps_processing,
-                        'eta': eta,
-                        'status': 'processing'
-                    })
-                except:
+                    socketio.emit('video_progress', _video_status_payload(job))
+                except Exception:
                     pass
-        
-        # Aufräumen
+
+        if cancel.is_set():
+            raise VideoJobCancelled()
+        if frame_count == 0:
+            raise ValueError('Video enthält keine lesbaren Frames')
+        # Mark finished only once both OpenCV resources have been closed.
         cap.release()
-        out.release()
-        
-        # Job abschließen
-        job['status'] = 'completed'
-        job['completed_at'] = datetime.now().isoformat()
-        job['progress'] = 100
-        job['current_frame'] = total_frames
-        job['output_path'] = output_path
-        job['all_detections'] = all_detections
-        
-        # WebSocket Completion
+        cap = None
+        writer.release()
+        writer = None
+        with video_jobs_lock:
+            job.update({'status': 'completed', 'progress': 100,
+                        'current_frame': frame_count, 'total_frames': frame_count,
+                        'completed_at': datetime.now().isoformat(), 'eta': 0})
+            job['saved_history_count'] = saved_history_count
+            completed_status = _video_status_payload(job)
+        if not _persist_video_jobs():
+            raise OSError('Video-Ergebnis konnte nicht dauerhaft als abgeschlossen gespeichert werden')
+        succeeded = True
+        if globals().get('watchlist_alert_center') is not None:
+            for pending in pending_video_alerts.values():
+                try:
+                    _record_watchlist_notification(pending, watchlist_alert_center)
+                except Exception as exc:
+                    logger.error('Watchlist alarm for completed video failed: %s', type(exc).__name__)
         try:
-            socketio.emit('video_completed', {
-                'job_id': job_id,
-                'status': 'completed',
-                'detections_count': detections_count,
-                'total_frames': total_frames,
-                'processing_time': int(time.time() - start_time)
-            })
-        except:
-            pass
-        
-        logger.info(f"Video-Job {job_id} abgeschlossen: {detections_count} Erkennungen in {total_frames} Frames")
-        
-    except Exception as e:
-        logger.error(f"Video-Verarbeitung Fehler: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        video_processing_jobs[job_id]['status'] = 'error'
-        video_processing_jobs[job_id]['error'] = str(e)
-        
+            socketio.emit('video_completed', completed_status)
+        except Exception as exc:
+            logger.debug('WebSocket-Benachrichtigung fehlgeschlagen: %s', exc)
+        logger.info('Video-Job %s abgeschlossen: %d Erkennungen in %d Frames', job_id, detections_count, frame_count)
+    except VideoJobCancelled:
+        with video_jobs_lock:
+            job.update({'status': 'cancelled', 'error': None,
+                        'completed_at': datetime.now().isoformat()})
+            completed_status = _video_status_payload(job)
+        _persist_video_jobs()
         try:
-            socketio.emit('video_completed', {
-                'job_id': job_id,
-                'status': 'error',
-                'error': str(e)
-            })
-        except:
-            pass
+            socketio.emit('video_completed', completed_status)
+        except Exception as exc:
+            logger.debug('WebSocket-Benachrichtigung fehlgeschlagen: %s', exc)
+    except Exception as exc:
+        logger.exception('Video-Job %s fehlgeschlagen', job_id)
+        with video_jobs_lock:
+            job.update({'status': 'error', 'error': str(exc)[:300],
+                        'completed_at': datetime.now().isoformat()})
+            completed_status = _video_status_payload(job)
+        _persist_video_jobs()
+        try:
+            socketio.emit('video_completed', completed_status)
+        except Exception as exc:
+            logger.debug('WebSocket-Benachrichtigung fehlgeschlagen: %s', exc)
+    finally:
+        if cap is not None:
+            cap.release()
+        if writer is not None:
+            writer.release()
+        if not succeeded:
+            try:
+                history_manager.delete_video_job_entries(job_id)
+            except AttributeError:
+                pass  # legacy test fixtures without the history rollback method
+            except Exception as exc:
+                logger.error('Video history rollback failed for %s: %s', job_id, exc)
+                with video_jobs_lock:
+                    job['history_cleanup_pending'] = True
+                    job['error'] = ('Erkennungsdaten konnten noch nicht bereinigt werden. '
+                                    'Speicher prüfen und Anwendung neu starten.')
+            else:
+                with video_jobs_lock:
+                    job['saved_history_count'] = 0
+                    job['history_cleanup_pending'] = False
+            try:
+                Path(output_path).unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning('Unvollständiges Video konnte nicht entfernt werden: %s', exc)
+        if not succeeded:
+            try:
+                Path(video_path).unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning('Abgebrochener oder defekter Upload konnte nicht entfernt werden: %s', exc)
+        with video_jobs_lock:
+            video_job_cancel_events.pop(job_id, None)
+        if not succeeded:
+            _persist_video_jobs()
+
+
+@app.before_request
+def _reject_oversized_video_request():
+    """Reject very large multipart bodies before Flask buffers file parts."""
+    if request.path == '/api/process/video' and request.method == 'POST':
+        # Reserve 1 MiB for multipart headers and form fields.
+        allowed = _video_max_upload_mb() * 1024 * 1024 + 1024 * 1024
+        if request.content_length is not None and request.content_length > allowed:
+            return jsonify({'success': False,
+                            'error': f'Video überschreitet das Upload-Limit von {_video_max_upload_mb()} MB'}), 413
+
 
 
 @app.route('/api/process/video', methods=['POST'])
 def api_process_video():
-    """Video-Datei hochladen und Verarbeitung starten"""
+    """Upload a video, limiting concurrent ML jobs to avoid exhausting RAM."""
     if 'file' not in request.files:
         return jsonify({'success': False, 'error': 'Keine Datei'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
+    upload = request.files['file']
+    if not upload.filename:
         return jsonify({'success': False, 'error': 'Keine Datei ausgewählt'}), 400
-    
-    # Dateiendung prüfen
     allowed_extensions = {'mp4', 'avi', 'mkv', 'mov', 'wmv', 'flv', 'webm'}
-    file_ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
-    
+    file_ext = upload.filename.rsplit('.', 1)[-1].lower() if '.' in upload.filename else ''
     if file_ext not in allowed_extensions:
-        return jsonify({'success': False, 'error': f'Ungültiges Videoformat. Erlaubt: {", ".join(allowed_extensions)}'}), 400
-    
-    try:
-        # Job erstellen
-        job_id = str(uuid.uuid4())
-        
-        # Video speichern
-        video_filename = f"{job_id}.{file_ext}"
-        video_path = os.path.join('uploads/videos', video_filename)
-        file.save(video_path)
-        
-        # Job registrieren
+        return jsonify({'success': False, 'error': 'Ungültiges Videoformat'}), 400
+    _cleanup_old_video_jobs()
+    job_id = str(uuid.uuid4())
+    video_path = f'uploads/videos/{job_id}.{file_ext}'
+    original_name = upload.filename.replace('\\', '/').rsplit('/', 1)[-1][:160]
+    with video_jobs_lock:
+        if _video_active_jobs() >= _video_max_active_jobs():
+            return jsonify({'success': False, 'error': 'Eine Video-Verarbeitung läuft bereits. Bitte zuerst abschließen oder abbrechen.'}), 429
         video_processing_jobs[job_id] = {
-            'id': job_id,
-            'filename': file.filename,
-            'video_path': video_path,
-            'status': 'queued',
-            'progress': 0,
-            'current_frame': 0,
-            'total_frames': 0,
-            'detections_count': 0,
+            'id': job_id, 'filename': original_name, 'video_path': video_path,
+            'status': 'queued', 'progress': 0, 'current_frame': 0,
+            'total_frames': 0, 'detections_count': 0, 'saved_history_count': 0,
             'created_at': datetime.now().isoformat(),
-            'error': None
+            'recent_plates': [], 'error': None,
         }
-        
-        # Verarbeitung im Hintergrund starten
-        thread = threading.Thread(
-            target=process_video_job,
-            args=(job_id, video_path, file.filename),
-            daemon=True
-        )
+        video_job_cancel_events[job_id] = threading.Event()
+    try:
+        _store_limited_video(upload, video_path)
+        # Persist the queued job BEFORE starting a worker that can append to
+        # the history. Otherwise a restart in this small window leaves
+        # provisional detections with no recoverable job identifier.
+        if not _persist_video_jobs():
+            raise OSError('Video-Auftrag konnte nicht dauerhaft registriert werden')
+        thread = threading.Thread(target=process_video_job,
+                                  args=(job_id, video_path, original_name), daemon=True)
         thread.start()
-        
-        logger.info(f"Video-Job gestartet: {job_id} - {file.filename}")
-        
-        return jsonify({
-            'success': True,
-            'job_id': job_id,
-            'message': 'Video-Verarbeitung gestartet'
-        })
-        
-    except Exception as e:
-        logger.error(f"Video-Upload Fehler: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': True, 'job_id': job_id, 'message': 'Video-Verarbeitung gestartet'})
+    except Exception as exc:
+        logger.exception('Video-Upload fehlgeschlagen')
+        with video_jobs_lock:
+            video_processing_jobs.pop(job_id, None)
+            video_job_cancel_events.pop(job_id, None)
+        try:
+            Path(video_path).unlink(missing_ok=True)
+        except OSError as cleanup_exc:
+            logger.warning('Fehlgeschlagener Upload konnte nicht entfernt werden: %s', cleanup_exc)
+        # A thread startup failure may happen AFTER the queued job was
+        # persisted; do not leave a phantom job after it was removed in memory.
+        if not _persist_video_jobs():
+            logger.warning('Video-Jobliste konnte nach Upload-Fehler nicht bereinigt werden')
+        code = 503 if isinstance(exc, OSError) else (413 if 'Upload-Limit' in str(exc) else 400)
+        return jsonify({'success': False, 'error': str(exc)[:300]}), code
 
 
 @app.route('/api/process/video/<job_id>/status')
 def api_video_job_status(job_id):
-    """Status eines Video-Jobs abrufen"""
-    if job_id not in video_processing_jobs:
-        return jsonify({'error': 'Job nicht gefunden'}), 404
-    
-    job = video_processing_jobs[job_id]
-    
-    return jsonify({
-        'job_id': job_id,
-        'status': job.get('status'),
-        'progress': job.get('progress', 0),
-        'current_frame': job.get('current_frame', 0),
-        'total_frames': job.get('total_frames', 0),
-        'detections_count': job.get('detections_count', 0),
-        'elapsed_time': job.get('elapsed_time', 0),
-        'fps_processing': job.get('fps_processing', 0),
-        'eta': job.get('eta', 0),
-        'error': job.get('error'),
-        'filename': job.get('filename'),
-        'created_at': job.get('created_at'),
-        'completed_at': job.get('completed_at')
-    })
+    with video_jobs_lock:
+        job = video_processing_jobs.get(job_id)
+        if job is None:
+            return jsonify({'success': False, 'error': 'Job nicht gefunden'}), 404
+        return jsonify(_video_status_payload(job))
+
+
+@app.route('/api/process/video/<job_id>/cancel', methods=['POST'])
+def api_video_job_cancel(job_id):
+    """Request cooperative cancellation; keep progress visible until exit."""
+    with video_jobs_lock:
+        job = video_processing_jobs.get(job_id)
+        if job is None:
+            return jsonify({'success': False, 'error': 'Job nicht gefunden'}), 404
+        if job.get('status') in ('completed', 'error', 'cancelled'):
+            return jsonify({'success': False, 'error': 'Dieser Job ist bereits beendet.'}), 409
+        cancel = video_job_cancel_events.get(job_id)
+        if cancel is None:
+            return jsonify({'success': False, 'error': 'Job ist nicht mehr aktiv.'}), 409
+        cancel.set()
+        job['status'] = 'cancelling'
+        return jsonify({'success': True, 'status': 'cancelling'}), 202
 
 
 @app.route('/api/process/video/<job_id>/output')
 def api_video_job_output(job_id):
-    """Verarbeitetes Video herunterladen"""
-    if job_id not in video_processing_jobs:
-        return jsonify({'error': 'Job nicht gefunden'}), 404
-    
-    job = video_processing_jobs[job_id]
-    
-    if job.get('status') != 'completed':
-        return jsonify({'error': 'Video noch nicht fertig'}), 400
-    
-    output_path = job.get('output_path')
-    if not output_path or not os.path.exists(output_path):
+    with video_jobs_lock:
+        job = video_processing_jobs.get(job_id)
+        if job is None:
+            return jsonify({'error': 'Job nicht gefunden'}), 404
+        if job.get('status') != 'completed':
+            return jsonify({'error': 'Video noch nicht fertig'}), 409
+        output_path = job.get('output_path')
+        original_name = job.get('filename') or 'video'
+    if not output_path or not Path(output_path).is_file():
         return jsonify({'error': 'Output-Datei nicht gefunden'}), 404
-    
-    directory = os.path.dirname(output_path)
-    filename = os.path.basename(output_path)
-    
-    # Originaler Dateiname für Download
-    original_name = job.get('filename', 'video')
-    if '.' in original_name:
-        original_name = original_name.rsplit('.', 1)[0]
-    download_name = f"{original_name}_processed.mp4"
-    
-    return send_from_directory(
-        directory,
-        filename,
-        as_attachment=True,
-        download_name=download_name
-    )
+    safe_name = secure_filename(Path(original_name).stem) or 'video'
+    return send_from_directory(str(Path(output_path).parent), Path(output_path).name,
+                               as_attachment=True, download_name=f'{safe_name}_processed.mp4')
 
 
 @app.route('/api/process/jobs')
 def api_get_jobs():
-    """Alle Video-Jobs abrufen"""
-    # Jobs als Dictionary zurückgeben (so erwartet es das Frontend)
-    return jsonify(video_processing_jobs)
+    _cleanup_old_video_jobs()
+    with video_jobs_lock:
+        return jsonify({job_id: _video_status_payload(job)
+                        for job_id, job in video_processing_jobs.items()})
 
 
 @app.route('/api/process/jobs/<job_id>', methods=['DELETE'])
 def api_delete_job(job_id):
-    """Video-Job löschen"""
-    if job_id not in video_processing_jobs:
-        return jsonify({'error': 'Job nicht gefunden'}), 404
-    
-    job = video_processing_jobs[job_id]
-    
-    # Dateien löschen
-    try:
-        video_path = job.get('video_path')
-        if video_path and os.path.exists(video_path):
-            os.remove(video_path)
-        
-        output_path = job.get('output_path')
-        if output_path and os.path.exists(output_path):
-            os.remove(output_path)
-    except Exception as e:
-        logger.warning(f"Fehler beim Löschen der Job-Dateien: {e}")
-    
-    # Job entfernen
-    del video_processing_jobs[job_id]
-    
+    with video_jobs_lock:
+        job = video_processing_jobs.get(job_id)
+        if job is None:
+            return jsonify({'success': False, 'error': 'Job nicht gefunden'}), 404
+        if job.get('status') in ('queued', 'processing', 'cancelling'):
+            return jsonify({'success': False, 'error': 'Laufende Jobs müssen zuerst abgebrochen oder beendet werden.'}), 409
+        job = video_processing_jobs.pop(job_id)
+        cancel_event = video_job_cancel_events.pop(job_id, None)
+        # Persist the removal before deleting the corresponding media files.
+        # A disk-full error must not leave stale on-disk job metadata while
+        # making the only accessible output files disappear.
+        if not _persist_video_jobs():
+            video_processing_jobs[job_id] = job
+            if cancel_event is not None:
+                video_job_cancel_events[job_id] = cancel_event
+            return jsonify({'success': False,
+                            'error': 'Jobliste konnte nicht gespeichert werden; Dateien bleiben erhalten.'}), 503
+    file_errors = []
+    for key in ('video_path', 'output_path'):
+        if job.get(key):
+            try:
+                Path(job[key]).unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning('Job-Datei konnte nicht gelöscht werden: %s', exc)
+                file_errors.append(key)
+    if file_errors:
+        return jsonify({'success': False, 'error': 'Job wurde entfernt, aber einzelne Dateien konnten nicht gelöscht werden.',
+                        'files_not_removed': file_errors}), 503
     return jsonify({'success': True})
-
-
-
 
 
 @app.route('/api/system/about')
@@ -6831,24 +8636,136 @@ TRANSLATIONS = {
         'dashboard': 'Dashboard', 'history': 'Historie', 'search': 'Suche & Analyse',
         'statistics': 'Statistik', 'people': 'Personenanalyse', 'settings': 'Einstellungen', 'diagnostics': 'Diagnose', 'live': 'Live Stream',
         'latest': 'Letzte Erkennung', 'test': 'Test & Upload', 'stream': 'Stream',
+        'nav_main': 'Hauptnavigation',
+        'nav_overview': 'Übersicht',
+        'nav_plates': 'Kennzeichen',
+        'nav_persons': 'Personen',
+        'nav_tools': 'Werkzeuge',
+        'nav_system': 'System',
+        'nav_live_label': 'Live-Ansicht',
+        'nav_search_label': 'Suche',
+        'nav_people_label': 'Personen',
+        'nav_people_images': 'Personenbilder',
+        'nav_alerts': 'Alarmzentrale',
+        'nav_rtsp': 'RTSP Stream',
+        'nav_license': 'Lizenz & Modelle',
+        'nav_quick_search': 'Bereiche finden',
+        'nav_search_placeholder': 'Seite suchen ...',
+        'nav_clear_search': 'Suche löschen',
+        'nav_shortcut_hint': 'Strg + K zum Suchen',
+        'nav_toggle_all': 'Alle Menügruppen öffnen oder schließen',
+        'nav_show_all': 'Alle öffnen',
+        'nav_close_all': 'Schließen',
+        'nav_favorites': 'Favoriten',
+        'nav_add_favorite': 'Als Favorit markieren',
+        'nav_remove_favorite': 'Favorit entfernen',
+        'nav_max_favorites': 'Maximal sechs Favoriten möglich',
+        'nav_no_results': 'Keine passende Seite gefunden',
+        'nav_results': 'Treffer',
+        'nav_location': 'Aktueller Bereich',
+        'nav_related': 'Weiter zu',
         'plates': 'Kennzeichen', 'confidence': 'Konfidenz', 'watchlist': 'Watchlist', 'traffic': 'Verkehr', 'arrived': 'Gekommen', 'departed': 'Gegangen'
     },
     'en': {
         'dashboard': 'Dashboard', 'history': 'History', 'search': 'Search & Analysis',
         'statistics': 'Statistics', 'people': 'People analysis', 'settings': 'Settings', 'diagnostics': 'Diagnostics', 'live': 'Live Stream',
         'latest': 'Latest Detection', 'test': 'Test & Upload', 'stream': 'Stream',
+        'nav_main': 'Main navigation',
+        'nav_overview': 'Overview',
+        'nav_plates': 'License plates',
+        'nav_persons': 'People',
+        'nav_tools': 'Tools',
+        'nav_system': 'System',
+        'nav_live_label': 'Live view',
+        'nav_search_label': 'Search',
+        'nav_people_label': 'People',
+        'nav_people_images': 'People images',
+        'nav_alerts': 'Alert inbox',
+        'nav_rtsp': 'RTSP stream',
+        'nav_license': 'License & models',
+        'nav_quick_search': 'Find sections',
+        'nav_search_placeholder': 'Search pages ...',
+        'nav_clear_search': 'Clear search',
+        'nav_shortcut_hint': 'Ctrl + K to search',
+        'nav_toggle_all': 'Expand or collapse all menu groups',
+        'nav_show_all': 'Expand all',
+        'nav_close_all': 'Collapse',
+        'nav_favorites': 'Favorites',
+        'nav_add_favorite': 'Add to favorites',
+        'nav_remove_favorite': 'Remove favorite',
+        'nav_max_favorites': 'Maximum of six favorites',
+        'nav_no_results': 'No matching page',
+        'nav_results': 'results',
+        'nav_location': 'Current location',
+        'nav_related': 'Go to',
         'plates': 'License plates', 'confidence': 'Confidence', 'watchlist': 'Watchlist', 'traffic': 'Traffic', 'arrived': 'Arrived', 'departed': 'Departed'
     },
     'fr': {
         'dashboard': 'Tableau de bord', 'history': 'Historique', 'search': 'Recherche & Analyse',
         'statistics': 'Statistiques', 'people': 'Analyse personnes', 'settings': 'Paramètres', 'diagnostics': 'Diagnostic', 'live': 'Flux en direct',
         'latest': 'Dernière détection', 'test': 'Test & Upload', 'stream': 'Flux',
+        'nav_main': 'Navigation principale',
+        'nav_overview': 'Aperçu',
+        'nav_plates': 'Plaques',
+        'nav_persons': 'Personnes',
+        'nav_tools': 'Outils',
+        'nav_system': 'Système',
+        'nav_live_label': 'Vue en direct',
+        'nav_search_label': 'Recherche',
+        'nav_people_label': 'Personnes',
+        'nav_people_images': 'Images de personnes',
+        'nav_alerts': 'Alertes',
+        'nav_rtsp': 'Flux RTSP',
+        'nav_license': 'Licence et modèles',
+        'nav_quick_search': 'Trouver une section',
+        'nav_search_placeholder': 'Rechercher une page ...',
+        'nav_clear_search': 'Effacer la recherche',
+        'nav_shortcut_hint': 'Ctrl + K pour chercher',
+        'nav_toggle_all': 'Ouvrir ou fermer les groupes du menu',
+        'nav_show_all': 'Tout ouvrir',
+        'nav_close_all': 'Fermer',
+        'nav_favorites': 'Favoris',
+        'nav_add_favorite': 'Ajouter aux favoris',
+        'nav_remove_favorite': 'Retirer des favoris',
+        'nav_max_favorites': 'Six favoris au maximum',
+        'nav_no_results': 'Aucune page trouvée',
+        'nav_results': 'résultats',
+        'nav_location': 'Section actuelle',
+        'nav_related': 'Accès rapide',
         'plates': 'Plaques', 'confidence': 'Confiance', 'watchlist': 'Liste', 'traffic': 'Trafic', 'arrived': 'Arrivé', 'departed': 'Parti'
     },
     'it': {
         'dashboard': 'Dashboard', 'history': 'Cronologia', 'search': 'Ricerca & Analisi',
         'statistics': 'Statistiche', 'people': 'Analisi persone', 'settings': 'Impostazioni', 'diagnostics': 'Diagnostica', 'live': 'Live Stream',
         'latest': 'Ultimo rilevamento', 'test': 'Test & Upload', 'stream': 'Stream',
+        'nav_main': 'Navigazione principale',
+        'nav_overview': 'Panoramica',
+        'nav_plates': 'Targhe',
+        'nav_persons': 'Persone',
+        'nav_tools': 'Strumenti',
+        'nav_system': 'Sistema',
+        'nav_live_label': 'Vista live',
+        'nav_search_label': 'Ricerca',
+        'nav_people_label': 'Persone',
+        'nav_people_images': 'Immagini persone',
+        'nav_alerts': 'Avvisi',
+        'nav_rtsp': 'Flusso RTSP',
+        'nav_license': 'Licenza e modelli',
+        'nav_quick_search': 'Trova una sezione',
+        'nav_search_placeholder': 'Cerca una pagina ...',
+        'nav_clear_search': 'Cancella ricerca',
+        'nav_shortcut_hint': 'Ctrl + K per cercare',
+        'nav_toggle_all': 'Espandi o comprimi i gruppi del menu',
+        'nav_show_all': 'Apri tutti',
+        'nav_close_all': 'Chiudi',
+        'nav_favorites': 'Preferiti',
+        'nav_add_favorite': 'Aggiungi ai preferiti',
+        'nav_remove_favorite': 'Rimuovi preferito',
+        'nav_max_favorites': 'Massimo sei preferiti',
+        'nav_no_results': 'Nessuna pagina trovata',
+        'nav_results': 'risultati',
+        'nav_location': 'Sezione attuale',
+        'nav_related': 'Vai a',
         'plates': 'Targhe', 'confidence': 'Confidenza', 'watchlist': 'Watchlist', 'traffic': 'Traffico', 'arrived': 'Arrivato', 'departed': 'Uscito'
     }
 }
@@ -6873,6 +8790,8 @@ def inject_i18n_helpers():
         'app_source_url': APP_SOURCE_URL,
         'app_config': config_manager.config,
         'people_menu_enabled': bool(config_manager.get('people', 'enabled') is not False),
+        'pv_prefix': _platevision_ingress_prefix(),
+        'pv_url_for': _platevision_url_for,
     }
 
 
@@ -7098,17 +9017,14 @@ def api_test_settings():
             people_cfg['save_full_frame'] = False
             people_cfg['image_history_store_full_frame'] = False
 
-        config_manager.save_config()
-
-        detector.ocr_reader = None
-        detector.fast_plate_recognizer = None
-        detector.fast_plate_cache_key = None
-        detector.models_loaded = False
-        detector.human_model = None
         if reload_requested:
             config_manager.config.setdefault('models', {})['last_reload_at'] = datetime.now().isoformat()
-            config_manager.save_config()
-            threading.Thread(target=detector.load_models, daemon=True).start()
+        if not config_manager.save_config():
+            raise OSError('Test-Einstellungen konnten nicht gespeichert werden')
+        if reload_requested:
+            _queue_model_reload()
+        else:
+            _invalidate_model_cache()
 
         logger.info('[TestSettings] Gespeichert: plate_model=%s vehicle_model=%s person_model=%s plate_conf=%s ocr=%s people=%s interval=%ss roi_crop=%s motion_gate=%s',
                     config_manager.get('models', 'license_plate_detector'),
@@ -7175,19 +9091,31 @@ def api_config_export():
 @app.route('/api/config/import', methods=['POST'])
 def api_config_import():
     try:
-        payload = None
-        if request.files.get('file'):
-            payload = json.load(request.files['file'].stream)
-        else:
-            payload = request.get_json(silent=True)
+        payload = _read_limited_import_json()
         if not isinstance(payload, dict):
             raise ValueError('Keine gültige JSON-Konfiguration')
         merged = config_manager._merge_configs(config_manager.DEFAULT_CONFIG, payload)
-        config_manager.config = merged
-        config_manager.save_config()
-        return jsonify({'success': True, 'config': _public_config()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        # A portable config import must not silently opt the receiving add-on
+        # into transmitting plate data to a different person's smartphone.
+        def change(current):
+            alerts = merged.setdefault('alerts', {})
+            live_alerts = current.get('alerts') or {}
+            for key in list(alerts):
+                if isinstance(key, str) and key.startswith('ha_'):
+                    alerts.pop(key)
+            for key, value in live_alerts.items():
+                if isinstance(key, str) and key.startswith('ha_'):
+                    alerts[key] = _json_clone(value)
+            config_manager.config = merged
+
+        _persist_config_update(change)
+        _invalidate_model_cache()
+        return jsonify({'success': True, 'config': _public_config(),
+                        'ha_notification_settings_preserved': True})
+    except (OSError, sqlite3.Error):
+        return jsonify({'success': False, 'error': 'Importierte Konfiguration konnte nicht gespeichert werden'}), 503
+    except (TypeError, ValueError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
 
 
 @app.route('/api/profile/apply/<profile_name>', methods=['POST'])
@@ -7217,7 +9145,13 @@ def api_plate_batch_analyze():
     data = request.get_json(silent=True) or {}
     values = data.get('plates') or data.get('values') or []
     if isinstance(values, str):
+        if len(values) > 16000:
+            return jsonify({'success': False, 'error': 'Zu viele Eingabezeichen (maximal 16.000).'}), 413
         values = re.split(r'[\n,;]+', values)
+    if not isinstance(values, list) or len(values) > 200:
+        return jsonify({'success': False, 'error': 'Maximal 200 Kennzeichen pro Analyse.'}), 413
+    if any(not isinstance(value, (str, int, float)) or len(str(value)) > 80 for value in values):
+        return jsonify({'success': False, 'error': 'Ungültiges oder zu langes Kennzeichen.'}), 400
     country_hint = data.get('country_hint') or config_manager.get('plate_recognition', 'country_hint') or 'auto'
     rows = [{'input': value, 'best': PlateUtils.best_candidate(value, country_hint=country_hint), 'candidates': PlateUtils.generate_candidates(value, country_hint=country_hint, max_candidates=5)} for value in values if str(value).strip()]
     return jsonify({'rows': rows, 'total': len(rows)})
@@ -7226,7 +9160,9 @@ def api_plate_batch_analyze():
 @app.route('/api/history/autocomplete')
 def api_history_autocomplete():
     q = PlateUtils.normalize(request.args.get('q', ''), compact=True)
-    limit = request.args.get('limit', 12, type=int)
+    limit = _page_integer(request.args.get('limit'), 12, minimum=1, maximum=50)
+    if getattr(history_manager, '_sqlite_store', None):
+        return jsonify({'items': history_manager._sqlite_store.autocomplete(q, limit)})
     counter = Counter()
     for entry in history_manager.history:
         plate = PlateUtils.normalize(entry.get('plate_text', ''), compact=True)
@@ -7238,7 +9174,11 @@ def api_history_autocomplete():
 @app.route('/api/history/timeline')
 def api_history_timeline():
     bucket = request.args.get('bucket', 'day')
-    limit = request.args.get('limit', 60, type=int)
+    limit = _page_integer(request.args.get('limit'), 60, minimum=1, maximum=366)
+    if bucket not in ('day', 'hour'):
+        bucket = 'day'
+    if getattr(history_manager, '_sqlite_store', None):
+        return jsonify({'bucket': bucket, 'items': history_manager._sqlite_store.timeline(bucket=bucket, limit=limit)})
     counts = Counter()
     for entry in history_manager.history:
         ts = history_manager._parse_datetime(entry.get('timestamp'))
@@ -7252,10 +9192,13 @@ def api_history_timeline():
 
 @app.route('/api/history/duplicates')
 def api_history_duplicates():
-    threshold = request.args.get('similarity', config_manager.get('history', 'fuzzy_duplicate_similarity') or 0.88, type=float)
+    threshold = max(0.5, min(1.0, _safe_numeric(request.args.get('similarity'),
+                    _safe_numeric(config_manager.get('history', 'fuzzy_duplicate_similarity'), 0.88))))
     groups = []
     used = set()
-    entries = history_manager.history[:1000]
+    with history_manager.lock:
+        entries = (history_manager._sqlite_store.page(1000,0) if getattr(history_manager, '_sqlite_store', None)
+                   else [row.copy() for row in history_manager.history[:1000]])
     for idx, entry in enumerate(entries):
         if idx in used:
             continue
@@ -7272,29 +9215,31 @@ def api_history_duplicates():
                 group.append(other)
                 used.add(j)
         if len(group) > 1:
-            groups.append({'plate': entry.get('plate_text', plate), 'normalized': plate, 'count': len(group), 'entries': group[:10]})
+            groups.append({'plate': entry.get('plate_text', plate), 'normalized': plate, 'count': len(group),
+                           'entries': _history_api_entries(group[:10], {'include_images': False})})
     return jsonify({'groups': groups, 'total_groups': len(groups), 'similarity': threshold})
 
 
 @app.route('/api/history/cleanup', methods=['POST'])
 def api_history_cleanup():
     data = request.get_json(silent=True) or {}
-    retention_days = int(data.get('retention_days') or config_manager.get('privacy', 'retention_days') or 0)
+    retention_days = _page_integer(data.get('retention_days'), config_manager.get('privacy', 'retention_days') or 0, minimum=0, maximum=36500)
     dry_run = str(data.get('dry_run', True)).lower() in ('true', '1', 'yes', 'on')
     if retention_days <= 0:
         return jsonify({'success': True, 'deleted': 0, 'kept': len(history_manager.history), 'dry_run': dry_run})
     cutoff = datetime.now().timestamp() - retention_days * 86400
-    keep, delete = [], []
-    for entry in history_manager.history:
-        ts = history_manager._parse_datetime(entry.get('timestamp'))
-        if ts and ts.timestamp() < cutoff:
-            delete.append(entry)
-        else:
-            keep.append(entry)
-    if not dry_run:
-        with history_manager.lock:
+    with history_manager.lock:
+        keep, delete = [], []
+        for entry in history_manager.history:
+            ts = history_manager._parse_datetime(entry.get('timestamp'))
+            if ts and ts.timestamp() < cutoff:
+                delete.append(entry)
+            else:
+                keep.append(entry)
+        if not dry_run:
+            previous = history_manager.history
             history_manager.history = keep
-            history_manager.save_history()
+            history_manager._save_or_revert(previous)
     return jsonify({'success': True, 'deleted': len(delete), 'kept': len(keep), 'dry_run': dry_run, 'retention_days': retention_days})
 
 
@@ -7307,26 +9252,16 @@ def api_watchlist_export():
 @app.route('/api/watchlist/import', methods=['POST'])
 def api_watchlist_import():
     try:
-        payload = None
-        if request.files.get('file'):
-            payload = json.load(request.files['file'].stream)
-        else:
-            payload = request.get_json(silent=True)
+        payload = _read_limited_import_json()
         if isinstance(payload, dict):
             payload = payload.get('items') or payload.get('watchlist') or []
-        if not isinstance(payload, list):
-            raise ValueError('Watchlist muss eine Liste sein')
-        added = 0
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
-            plate = item.get('plate_text') or item.get('plate') or item.get('normalized')
-            if plate:
-                watchlist_manager.add(plate, item.get('label', ''), item.get('category', 'known'), item.get('notes', ''), item.get('notify', True))
-                added += 1
+        added = watchlist_manager.import_items(payload)
         return jsonify({'success': True, 'added': added, 'items': watchlist_manager.list()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+    except OSError as exc:
+        logger.error('Watchlist-Import konnte nicht gespeichert werden: %s', exc)
+        return jsonify({'success': False, 'error': 'Watchlist konnte nicht gespeichert werden.'}), 503
+    except (ValueError, TypeError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
 
 
 
@@ -7363,7 +9298,7 @@ def api_statistics_export():
     writer.writerow([])
     writer.writerow(['plate_text', 'visits', 'detections', 'days_seen', 'first_seen', 'last_seen', 'last_status', 'vehicle_type', 'vehicle_color'])
     for row in data.get('top_plates', []):
-        writer.writerow([row.get('plate_text'), row.get('visits'), row.get('detections'), row.get('days_seen'), row.get('first_seen'), row.get('last_seen'), row.get('last_status'), row.get('vehicle_type'), row.get('vehicle_color')])
+        writer.writerow([_csv_safe_cell(row.get('plate_text')), row.get('visits'), row.get('detections'), row.get('days_seen'), row.get('first_seen'), row.get('last_seen'), _csv_safe_cell(row.get('last_status')), _csv_safe_cell(row.get('vehicle_type')), _csv_safe_cell(row.get('vehicle_color'))])
     response = app.response_class(response=output.getvalue(), status=200, mimetype='text/csv')
     response.headers['Content-Disposition'] = f'attachment; filename={filename}.csv'
     return response
@@ -7472,21 +9407,56 @@ def api_people_history_event(event_id):
             return jsonify({'success': False, 'error': 'Ereignis nicht gefunden'}), 404
         return jsonify({'success': True, 'event': item})
     try:
-        item = person_history_manager.update_event(event_id, request.get_json(silent=True) or {})
-    except ValueError as exc:
+        changes = request.get_json(silent=True)
+        if changes is None:
+            changes = {}
+        if not isinstance(changes, dict):
+            raise ValueError('JSON-Objekt mit Personenänderungen erwartet')
+        item = person_history_manager.update_event(event_id, changes)
+    except (ValueError, TypeError) as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
     if item is None:
         return jsonify({'success': False, 'error': 'Ereignis nicht gefunden'}), 404
     return jsonify({'success': True, 'event': item})
 
-@app.route('/api/people/history/bulk-delete', methods=['POST'])
-def api_people_history_bulk_delete():
-    data = request.get_json(silent=True) or {}
+def _parse_api_bool(value, default=True):
+    """Do not accidentally turn JSON 'false' strings into destructive True."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ('false', '0', 'off', 'no', 'nein'):
+            return False
+        if normalized in ('true', '1', 'on', 'yes', 'ja'):
+            return True
+    raise ValueError('Boolescher Wert true/false erwartet')
+
+
+def _people_delete_payload():
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError('JSON-Objekt erwartet')
     ids = data.get('ids') or data.get('event_ids') or []
     if isinstance(ids, str):
         ids = [ids]
+    if (not isinstance(ids, list) or len(ids) > 500 or
+            any(not isinstance(item, str) or not item.strip() or len(item) > 160
+                for item in ids)):
+        raise ValueError('Maximal 500 gültige Ereignis-IDs als Liste erwartet')
+    return ids, _parse_api_bool(data.get('delete_images'), True)
+
+
+@app.route('/api/people/history/bulk-delete', methods=['POST'])
+def api_people_history_bulk_delete():
     try:
-        result = person_history_manager.bulk_delete(ids, delete_images=data.get('delete_images', True))
+        ids, delete_images = _people_delete_payload()
+        result = person_history_manager.bulk_delete(ids, delete_images=delete_images)
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
     return jsonify(result)
@@ -7498,13 +9468,25 @@ def api_people_sessions():
 @app.route('/api/people/history/clear', methods=['POST'])
 def api_people_history_clear():
     data = request.get_json(silent=True) or {}
-    result = person_history_manager.clear_history(delete_images=data.get('delete_images', True))
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'JSON-Objekt erwartet'}), 400
+    try:
+        delete_images = _parse_api_bool(data.get('delete_images'), True)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    result = person_history_manager.clear_history(delete_images=delete_images)
     return jsonify({'success': True, **(result or {})})
 
 @app.route('/api/people/history/<event_id>/delete', methods=['POST', 'DELETE'])
 def api_people_history_delete_event(event_id):
     data = request.get_json(silent=True) or {}
-    result = person_history_manager.delete_event(event_id, delete_images=data.get('delete_images', True))
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'JSON-Objekt erwartet'}), 400
+    try:
+        delete_images = _parse_api_bool(data.get('delete_images'), True)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    result = person_history_manager.delete_event(event_id, delete_images=delete_images)
     status = 200 if result.get('success') else 404
     return jsonify(result), status
 
@@ -7520,29 +9502,33 @@ def api_people_images_days():
 def api_people_images_file(filename):
     root = person_history_manager.IMAGE_ROOT.resolve()
     target = (root / filename).resolve()
-    if not target.is_relative_to(root) or not target.exists() or not target.is_file():
+    if (not target.is_relative_to(root) or target.suffix.lower() not in ('.jpg', '.jpeg', '.png', '.webp')
+            or not target.exists() or not target.is_file()):
         return jsonify({'success': False, 'error': 'Bild nicht gefunden'}), 404
     return send_from_directory(str(root), filename)
 
 @app.route('/api/people/images/delete', methods=['POST'])
 def api_people_images_delete():
-    data = request.get_json(silent=True) or {}
-    ids = data.get('ids') or data.get('event_ids') or []
-    if isinstance(ids, str):
-        ids = [ids]
-    deleted_events = 0
-    deleted_images = 0
-    for event_id in ids:
-        result = person_history_manager.delete_event(event_id, delete_images=True)
-        if result.get('success'):
-            deleted_events += 1
-            deleted_images += int(result.get('deleted_images') or 0)
-    return jsonify({'success': True, 'deleted_events': deleted_events, 'deleted_images': deleted_images})
+    # One transaction instead of partly successful individual deletions.
+    try:
+        ids, _ = _people_delete_payload()
+        result = person_history_manager.bulk_delete(ids, delete_images=True)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    return jsonify({'success': True, 'deleted_events': result.get('deleted', 0),
+                    'deleted_images': result.get('deleted_images', 0),
+                    'remaining': result.get('remaining', 0)})
 
 @app.route('/api/people/images/cleanup', methods=['POST'])
 def api_people_images_cleanup():
     data = request.get_json(silent=True) or {}
-    result = person_history_manager.cleanup_images(data.get('retention_days'), delete_records=bool(data.get('delete_records', False)))
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'JSON-Objekt erwartet'}), 400
+    try:
+        delete_records = _parse_api_bool(data.get('delete_records'), False)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    result = person_history_manager.cleanup_images(data.get('retention_days'), delete_records=delete_records)
     return jsonify({'success': True, **result})
 
 
@@ -7558,7 +9544,7 @@ def api_people_export():
     writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
     writer.writeheader()
     for row in rows:
-        writer.writerow(row)
+        writer.writerow({field: _csv_safe_cell(row.get(field)) for field in fields})
     return Response(output.getvalue(), mimetype='text/csv; charset=utf-8', headers={'Content-Disposition': f'attachment; filename={filename}.csv'})
 
 @app.route('/api/people/test/snapshot', methods=['POST'])
@@ -7566,12 +9552,11 @@ def api_people_test_snapshot():
     frame = stream_manager.get_raw_frame()
     if frame is None:
         return jsonify({'success': False, 'error': 'Kein Live-Frame verfügbar. Es wird in den Einstellungen automatisch ein Fallback-Bild für die Kalibrierung angezeigt.'}), 400
-    previous_enabled = config_manager.get('people', 'enabled')
     cfg = dict(config_manager.get('people') or {})
-    config_manager.config.setdefault('people', {})['enabled'] = True
-    try:
+    cfg['enabled'] = True
+    with detector.override_people_config(cfg), person_history_manager.override_people_config(cfg):
         result = detector.process_frame(frame)
-        annotated = _draw_people_calibration_overlay(result.get('annotated_frame'), config_manager.get('people') or {}, source_label='RTSP Live-Frame')
+        annotated = _draw_people_calibration_overlay(result.get('annotated_frame'), cfg, source_label='RTSP Live-Frame')
         people = result.get('people', []) or []
         history_saved = 0
         for person in people:
@@ -7592,9 +9577,6 @@ def api_people_test_snapshot():
             'result_image': '',
             'processing_time': result.get('processing_time', 0)
         })
-    finally:
-        config_manager.config.setdefault('people', {})['enabled'] = previous_enabled
-
 
 
 
@@ -7636,9 +9618,7 @@ def _handle_people_image_analysis(source_name='people_upload'):
             saved_filename = f"{datetime.now().strftime('%H%M%S')}_{uuid.uuid4().hex[:8]}_{payload['filename']}"
             (target_dir / saved_filename).write_bytes(payload['data'])
 
-        original_people = json.loads(json.dumps(config_manager.config.get('people') or {}, ensure_ascii=False))
-        config_manager.config['people'] = effective_cfg
-        try:
+        with detector.override_people_config(effective_cfg), person_history_manager.override_people_config(effective_cfg):
             logger.info(f"[PeopleUpload] Analyse gestartet: source={source_name} force_enable={force_enable} save_history={save_to_history} image_history={effective_cfg.get('image_history_enabled')} file={payload['filename']}")
             result = detector.process_frame(payload['image'])
 
@@ -7658,8 +9638,6 @@ def _handle_people_image_analysis(source_name='people_upload'):
                             history_saved += 1
                             logger.info(f"[PeopleUpload] Person gespeichert: id={saved_person_event.get('id')} counted={saved_person_event.get('counted')} images={list((saved_person_event.get('images') or {}).keys())}")
             logger.info(f"[PeopleUpload] Fertig: people={len(result.get('people', []) or [])} history_saved={history_saved}")
-        finally:
-            config_manager.config['people'] = original_people
 
         people = result.get('people', []) or []
         _attach_person_crop_previews(people, payload['image'])
@@ -7706,8 +9684,20 @@ def api_people_presence():
 
 @app.route('/api/people/cleanup', methods=['POST'])
 def api_people_cleanup():
-    data = request.get_json(silent=True) or {}
-    return jsonify({'success': True, **person_history_manager.cleanup(data.get('retention_days'))})
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'JSON-Objekt erwartet'}), 400
+    days = data.get('retention_days')
+    if days is not None:
+        try:
+            days = int(days)
+            if not 0 <= days <= 3650:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            return jsonify({'success': False, 'error': 'Aufbewahrung muss zwischen 0 und 3650 Tagen liegen'}), 400
+    return jsonify({'success': True, **person_history_manager.cleanup(days)})
 
 @app.route('/api/people/test/simulate', methods=['POST'])
 def api_people_test_simulate():
@@ -7732,26 +9722,589 @@ def api_system_version():
     })
 
 
+def _health_summary(checks):
+    """Pure summary: disabled optional services are not broken services."""
+    failures = [row['name'] for row in checks if not row.get('ok')]
+    disabled = [row['name'] for row in checks if row.get('state') == 'disabled']
+    return {'healthy': not failures, 'problems': len(failures),
+            'disabled': len(disabled), 'problem_checks': failures,
+            'state': 'attention' if failures else 'healthy'}
+
+
 @app.route('/api/system/health')
 def api_system_health():
     checks = []
-    def add(name, ok, detail=''):
-        checks.append({'name': name, 'ok': bool(ok), 'detail': detail})
+    def add(name, ok, detail='', *, state=None):
+        checks.append({'name': name, 'ok': bool(ok), 'detail': detail,
+                       'state': state or ('ok' if ok else 'warning')})
+
+    rtsp_cfg = config_manager.get('rtsp') or {}
+    people_cfg = config_manager.get('people') or {}
+    rtsp_enabled = bool(rtsp_cfg.get('enabled'))
+    people_enabled = bool(people_cfg.get('enabled'))
+    status = stream_manager.get_status()
+
     add('models_directory', os.path.isdir('models'), 'models/')
     vehicle_model = _resolve_model_path(config_manager.get('models', 'vehicle_detector') or '')
     add('vehicle_model', bool(vehicle_model and Path(vehicle_model).is_file()), vehicle_model or '')
     plate_model = _resolve_model_path(config_manager.get('models', 'license_plate_detector') or '')
     add('plate_model', bool(plate_model and Path(plate_model).is_file()), plate_model or '')
-    add('history_writable', os.access(os.path.dirname(history_manager.HISTORY_FILE), os.W_OK), history_manager.HISTORY_FILE)
-    add('watchlist_writable', os.access(os.path.dirname(watchlist_manager.WATCHLIST_FILE), os.W_OK), watchlist_manager.WATCHLIST_FILE)
-    add('people_history_writable', os.access(os.path.dirname(person_history_manager.HISTORY_FILE), os.W_OK), person_history_manager.HISTORY_FILE)
-    person_model = _resolve_model_path(config_manager.get('people', 'custom_model_path') or '')
-    add('person_model_path', bool(config_manager.get('people', 'model_mode') == 'coco_person' or (person_model and Path(person_model).is_file())), person_model or 'COCO person class')
-    add('rtsp_configured', bool(config_manager.get('rtsp', 'url')), _public_config().get('rtsp', {}).get('url_masked', ''))
-    add('rtsp_autostart', True, 'aktiv' if config_manager.get('rtsp', 'autostart_enabled') else 'deaktiviert')
-    add('stream_connected', stream_manager.is_connected(), stream_manager.get_status().get('error') or '')
-    ok = all(c['ok'] for c in checks if c['name'] not in ('stream_connected',))
-    return jsonify({'ok': ok, 'checks': checks, 'status': stream_manager.get_status(), 'version': APP_VERSION, 'license': APP_LICENSE, 'source_url': APP_SOURCE_URL})
+    for name, path in (('history_writable', history_manager.HISTORY_FILE),
+                       ('watchlist_writable', watchlist_manager.WATCHLIST_FILE),
+                       ('people_history_writable', person_history_manager.HISTORY_FILE)):
+        add(name, os.access(os.path.dirname(path), os.W_OK), path)
+    protected = bool(globals().get('_read_only_storage'))
+    add('storage_integrity', not protected,
+        'Speicher-Schreibschutz aktiv' if protected else 'Keine blockierten Datenbanken oder JSON-Dateien')
+    for kind, manager in (('plates', history_manager), ('people', person_history_manager)):
+        store = getattr(manager, '_sqlite_store', None)
+        if store:
+            state = store.quick_status()
+            add(f'sqlite_{kind}', state['ok'],
+                f"{state.get('count')} Einträge; Migrationssicherung: "
+                f"{'OK' if state.get('legacy_snapshot_exists') else 'fehlt'}")
+
+    if not people_enabled:
+        add('person_model_path', True, 'Personenanalyse deaktiviert', state='disabled')
+    else:
+        mode = people_cfg.get('model_mode') or 'coco_person'
+        person_model = _resolve_model_path(people_cfg.get('custom_model_path') or '')
+        model_ok = mode == 'coco_person' or bool(person_model and Path(person_model).is_file())
+        add('person_model_path', model_ok, person_model or 'COCO-Personenklasse')
+
+    if not rtsp_enabled:
+        add('rtsp_configured', True, 'Kamera bewusst deaktiviert', state='disabled')
+        add('stream_connected', True, 'Kein Live-Stream angefordert', state='disabled')
+    else:
+        url = str(rtsp_cfg.get('url') or '').strip()
+        placeholder = ConfigManager.DEFAULT_CONFIG['rtsp']['url']
+        configured = bool(url and url != placeholder and url.startswith(('rtsp://','rtsps://')))
+        add('rtsp_configured', configured,
+            'Gültige RTSP-Adresse hinterlegt' if configured else 'RTSP-Adresse fehlt oder ist ein Platzhalter')
+        connected = bool(status.get('connected'))
+        add('stream_connected', connected, 'Verbunden' if connected else
+            str(status.get('error') or 'Kamera ist nicht verbunden')[:180])
+    auto_start = bool(rtsp_cfg.get('autostart_enabled', rtsp_cfg.get('auto_start', False)))
+    add('rtsp_autostart', True, 'aktiv' if auto_start else 'deaktiviert',
+        state='ok' if auto_start and rtsp_enabled else 'disabled')
+
+    # Read-only delivery health, without plate text, phone name or credentials.
+    ha_configured = bool(channels_for_settings(_ha_settings_snapshot()))
+    ha_paused = ha_configured and not _alert_delivery_active()
+    ha_enabled = ha_configured and not ha_paused
+    ha_delivery = {'enabled': ha_enabled, 'configured': ha_configured,
+                   'paused': ha_paused,
+                   'token_available': bool(os.environ.get('SUPERVISOR_TOKEN')),
+                   'queue': {'pending': 0, 'sending': 0, 'accepted': 0,
+                             'failed': 0, 'oldest_waiting_seconds': None,
+                             'expired_leases': 0, 'last_accepted_at': None,
+                             'due_now': 0, 'oldest_due_seconds': None,
+                             'next_retry_at': None}}
+    alerts_store = globals().get('watchlist_alert_center')
+    if alerts_store is None:
+        add('alarm_database', False, 'Alarmdatenbank nicht erreichbar')
+    else:
+        try:
+            ha_delivery['queue'] = alerts_store.delivery_status()
+            add('alarm_database', True, 'Lokale Alarmzentrale erreichbar')
+        except (sqlite3.Error, OSError):
+            add('alarm_database', False, 'Alarmdatenbank konnte nicht gelesen werden')
+    queue_state = ha_delivery['queue']
+    if not ha_enabled:
+        message = ('Globale Watchlist-Benachrichtigungen pausiert' if ha_paused else
+                   'HA-Meldungen bewusst deaktiviert')
+        add('ha_notifications', True, message, state='disabled')
+    else:
+        token_ok = ha_delivery['token_available']
+        database_ok = alerts_store is not None and any(
+            item['name'] == 'alarm_database' and item['ok'] for item in checks)
+        failed = int(queue_state.get('failed') or 0)
+        # A retry that is scheduled for later is not a stuck backlog.
+        waiting = queue_state.get('oldest_due_seconds', queue_state.get('oldest_waiting_seconds'))
+        overdue = waiting is not None and waiting >= 900
+        stuck = int(queue_state.get('expired_leases') or 0)
+        healthy = token_ok and database_ok and not failed and not overdue and not stuck
+        detail = ('Supervisor-Token fehlt' if not token_ok else
+                  'Alarmdatenbank nicht erreichbar' if not database_ok else
+                  f'{failed} fehlgeschlagene Zustellungen' if failed else
+                  f'{stuck} abgelaufene Zustellversuche' if stuck else
+                  f'Warteschlange seit {waiting // 60} Minuten offen' if overdue else
+                  'Benachrichtigungsdienst betriebsbereit')
+        add('ha_notifications', healthy, detail)
+
+    summary = _health_summary(checks)
+    # Only operational status, no passwords, plate values or image content.
+    camera = {'enabled': rtsp_enabled, 'connected': bool(status.get('connected')),
+              'fps': _safe_numeric(status.get('fps'), 0),
+              'processed_frames': int(_safe_numeric(status.get('frame_count'), 0)),
+              'detections': int(_safe_numeric(status.get('detection_count'), 0))}
+    return jsonify({'ok': summary['healthy'], 'summary': summary,
+                    'camera': camera, 'homeassistant_notifications': ha_delivery,
+                    'checks': checks, 'status': status,
+                    'version': APP_VERSION, 'license': APP_LICENSE, 'source_url': APP_SOURCE_URL})
+
+
+def _diagnostics_config():
+    """Remove secrets from troubleshooting views (settings API stays editable)."""
+    config = _json_clone(config_manager.config)
+    secret_keys = ('password', 'passwd', 'secret', 'token', 'authorization', 'apikey', 'api_key', 'credential')
+    def mask(value, parent=''):
+        if isinstance(value, dict):
+            return {k: ('[geschützt]' if any(secret in str(k).lower() for secret in secret_keys)
+                        or (parent == 'rtsp' and k == 'url') else mask(v, k))
+                    for k, v in value.items()}
+        if isinstance(value, list):
+            return [mask(item) for item in value]
+        return value
+    return mask(config)
+
+
+def _storage_audit():
+    """Quick storage health report without filenames, images or credentials."""
+    categories = {
+        'configuration': Path('data/config.json'),
+        'plates': Path('data/history/detections.json'),
+        'people': Path('data/people/history.json'),
+        'watchlist': Path('data/watchlist.json'),
+        'video_registry': VIDEO_JOB_STATE_FILE,
+    }
+    files = []
+    issues = []
+    sqlite_histories = {}
+    for label, path in categories.items():
+        active_store = (getattr(globals().get('history_manager'), '_sqlite_store', None) if label == 'plates' else
+                        getattr(globals().get('person_history_manager'), '_sqlite_store', None) if label == 'people' else None)
+        failed_sqlite_path = (path.parent / ('plates.sqlite3' if label == 'plates' else 'people.sqlite3')
+                              if label in ('plates', 'people') else None)
+        if failed_sqlite_path and failed_sqlite_path.is_file() and not active_store:
+            # Never make an old (but valid) JSON file look like today's source
+            # of truth when the authoritative SQLite database could not load.
+            info = {'category': label, 'backend': 'sqlite/Schreibschutz', 'exists': True,
+                    'valid': False, 'backup_valid': path.with_name(path.stem + '.pre-sqlite.json').is_file(),
+                    'size_mb': round(failed_sqlite_path.stat().st_size / 1048576, 2),
+                    'read_only': True, 'recovered_from_backup': False}
+            sqlite_histories[label] = {'backend': 'sqlite', 'ok': False, 'count': None,
+                                       'legacy_snapshot_exists': info['backup_valid']}
+            files.append(info)
+            issues.append(f'{label}: SQLite-Datenbank konnte nicht geladen werden. Originaldaten bleiben unangetastet; Schreibschutz aktiv.')
+            continue
+        if active_store:
+            sqlite_state = active_store.quick_status()
+            sqlite_histories[label] = sqlite_state
+            info = {'category': label, 'backend': 'sqlite', 'exists': active_store.path.is_file(),
+                    'valid': sqlite_state['ok'], 'backup_valid': sqlite_state['legacy_snapshot_exists'],
+                    'size_mb': sqlite_state.get('size_mb') or 0,
+                    'count': sqlite_state.get('count'), 'read_only': bool(globals().get('_read_only_storage')),
+                    'recovered_from_backup': False}
+            files.append(info)
+            if not sqlite_state['ok']:
+                issues.append(f'{label}: SQLite-Datenbankfehler; nicht auf die veraltete JSON-Datei zurückfallen!')
+            elif not sqlite_state['legacy_snapshot_exists']:
+                issues.append(f'{label}: Original-Migrationssicherung fehlt')
+            continue
+        readonly = str(path.resolve()) in globals().get('_read_only_storage', {})
+        info = {'category': label, 'backend': 'json/schutzmodus', 'exists': path.is_file(), 'valid': None,
+                'backup_valid': None, 'size_mb': 0, 'read_only': readonly,
+                'recovered_from_backup': str(path.resolve()) in globals().get('_storage_recovered_from_backup', set())} 
+        for filename, field in ((path, 'valid'), (path.with_name(path.name + '.bak'), 'backup_valid')):
+            if filename.is_file():
+                try:
+                    with filename.open('r', encoding='utf-8') as handle:
+                        payload = json.load(handle)
+                    if (label == 'configuration' and not isinstance(payload, dict)) or (
+                        label != 'configuration' and not isinstance(payload, list)):
+                        raise ValueError('unexpected JSON structure')
+                    if isinstance(payload, list) and any(not isinstance(row, dict) for row in payload):
+                        raise ValueError('non-object record in JSON list')
+                    info[field] = True
+                except (ValueError, UnicodeError, OSError) as exc:
+                    info[field] = False
+            if field == 'valid' and filename.is_file():
+                try:
+                    info['size_mb'] = round(filename.stat().st_size / (1024 * 1024), 2)
+                except OSError:
+                    pass
+        if info['read_only']:
+            issues.append(f'{label}: SCHREIBSCHUTZ! Beide JSON-Kopien unbrauchbar. Vor Änderungen extern wiederherstellen und Dienst neu starten.')
+        elif info['valid'] is False:
+            issues.append(f'{label}: Hauptdatei fehlerhaft; Sicherung pruefen')
+        files.append(info)
+    try:
+        disk = shutil.disk_usage('data')
+        free_mb = round(disk.free / (1024 * 1024), 1)
+        free_percent = round(disk.free * 100 / max(1, disk.total), 1)
+        if free_mb < 512 or free_percent < 5:
+            issues.append('Wenig freier Speicherplatz fuer neue Erkennungen')
+        storage = {'free_mb': free_mb, 'free_percent': free_percent,
+                   'total_mb': round(disk.total / (1024 * 1024), 1)}
+    except OSError:
+        storage = {'free_mb': None, 'free_percent': None, 'total_mb': None}
+        issues.append('Speicherplatz konnte nicht gelesen werden')
+    if not os.environ.get('PLATEVISION_AUTH_PASSWORD'):
+        issues.append('Keine integrierte HTTP-Authentifizierung aktiviert; Netzwerkzugriff begrenzen')
+    with video_jobs_lock:
+        completed = sum(j.get('status') == 'completed' for j in video_processing_jobs.values())
+        active = sum(j.get('status') in ('queued', 'processing', 'cancelling') for j in video_processing_jobs.values())
+    return {'success': True, 'version': APP_VERSION, 'disk': storage,
+            'read_only': bool(globals().get('_read_only_storage', {})),
+            'files': files, 'issues': issues, 'sqlite_histories': sqlite_histories,
+            'video_jobs': {'active': active, 'completed': completed},
+            'authentication_enabled': bool(os.environ.get('PLATEVISION_AUTH_PASSWORD'))}
+
+
+# Backups are explicit, read-only exports. No automatic restore of unknown ZIPs.
+# The ZIP includes persistent JSON metadata and stored plate/vehicle/person
+# images, but intentionally excludes uploaded videos, model weights and secrets
+# outside the application's data directory.
+_BACKUP_METADATA = (
+    'data/config.json', 'data/history/detections.json', 'data/people/history.json',
+    'data/watchlist.json', 'data/video_jobs.json',
+)
+_BACKUP_IMAGE_DIRS = ('data/plates_detected', 'data/vehicles_detected', 'data/people/images')
+_ALERT_BACKUP_DB = 'data/alerts/watchlist.sqlite3'
+_SQLITE_BACKUP_DATA = (
+    ('plates', 'data/history/detections.json', 'data/history/plates.sqlite3'),
+    ('people', 'data/people/history.json', 'data/people/people.sqlite3'),
+)
+
+_backup_generation_lock = threading.Lock()
+_backup_verify_lock = threading.Lock()
+
+
+def _backup_inventory(root=Path('.'), max_bytes=512 * 1024 * 1024, max_files=20000):
+    """Enumerate only known storage locations; reject oversized exports.
+
+    Symlinks within image directories are excluded to avoid reading data from
+    unrelated paths. The /app/data symlink itself is expected on HA installations.
+    """
+    root = Path(root)
+    paths = []
+    seen = set()
+    total_bytes = 0
+
+    def add(path):
+        nonlocal total_bytes
+        if path.is_symlink() or not path.is_file():
+            return
+        relative = path.relative_to(root).as_posix()
+        if relative in seen:
+            return
+        seen.add(relative)
+        size = path.stat().st_size
+        total_bytes += size
+        if len(paths) >= max_files or total_bytes > max_bytes:
+            raise ValueError('Datensicherung übersteigt die konfigurierbare Datei-/Größenbegrenzung.')
+        paths.append((relative, path, size))
+
+    active_sqlite_jsons = {old for _kind, old, db in _SQLITE_BACKUP_DATA if (root / db).is_file()}
+    for name in _BACKUP_METADATA:
+        if name in active_sqlite_jsons:
+            # The legacy JSON and .bak have become stale after migration.
+            # The writer generates current JSON from a consistent DB snapshot.
+            continue
+        path = root / name
+        add(path)
+        add(path.with_name(path.name + '.bak'))
+    for _kind, old, db in _SQLITE_BACKUP_DATA:
+        if old in active_sqlite_jsons:
+            add(root / db)  # Backup writer substitutes a WAL-safe SQLite snapshot.
+    add(root / 'data/alerts/watchlist.sqlite3')
+    for name in _BACKUP_IMAGE_DIRS:
+        folder = root / name
+        if folder.is_dir():
+            for path in sorted(folder.rglob('*')):
+                if path.is_file():
+                    # Check every component below the sanctioned storage root.
+                    parts = path.relative_to(folder).parts
+                    if any((folder.joinpath(*parts[:index])).is_symlink()
+                           for index in range(1, len(parts) + 1)):
+                        continue
+                    add(path)
+    return paths, total_bytes
+
+
+def _write_backup_archive(destination, root=Path('.'), max_bytes=512 * 1024 * 1024):
+    """Create a checksummed backup including WAL-safe SQLite + current JSON.
+
+    An SQLite file must never be copied raw while WAL transactions are active.
+    Instead SQLite's online backup API yields a transaction-consistent snapshot.
+    Both its .sqlite3 file and a legacy-compatible JSON export are included.
+    Different databases and image files are not part of one global transaction.
+    """
+    root = Path(root)
+    paths, _ = _backup_inventory(root, max_bytes=max_bytes)
+    with tempfile.TemporaryDirectory(prefix='platevision-backup-') as work:
+        work = Path(work)
+        substitutes = {}
+        for kind, legacy_rel, sqlite_rel in _SQLITE_BACKUP_DATA:
+            sqlite_path = root / sqlite_rel
+            if not sqlite_path.is_file():
+                continue
+            store = SQLiteHistoryStore(root / legacy_rel, kind=kind)
+            db_copy = work / f'{kind}.sqlite3'
+            store.backup_to(db_copy)
+            rows = SQLiteHistoryStore.read_snapshot(db_copy)
+            json_copy = work / f'{kind}.json'
+            with json_copy.open('w', encoding='utf-8') as output:
+                json.dump(rows, output, ensure_ascii=False, indent=2, allow_nan=False)
+                output.write('\n')
+            substitutes[legacy_rel] = json_copy
+            substitutes[sqlite_rel] = db_copy
+        # Watchlist notifications are WAL-backed too; a raw copy could lose
+        # recent alerts. This is intentionally a separate SQLite snapshot.
+        alert_db = root / 'data/alerts/watchlist.sqlite3'
+        if alert_db.is_file():
+            alert_copy = work / 'watchlist_alerts.sqlite3'
+            with sqlite3.connect(str(alert_db)) as origin, sqlite3.connect(str(alert_copy)) as dest:
+                origin.backup(dest)
+            substitutes['data/alerts/watchlist.sqlite3'] = alert_copy
+        # Substitute snapshotted DB files and add current JSON exports, even
+        # if the original pre-migration .json was deliberately left unchanged.
+        revised = []
+        seen = set()
+        for relative, path, size in paths:
+            replacement = substitutes.get(relative, path)
+            revised.append((relative, replacement, replacement.stat().st_size))
+            seen.add(relative)
+        for relative, file in substitutes.items():
+            if relative not in seen:
+                revised.append((relative, file, file.stat().st_size))
+        if len(revised) > 20000:
+            raise ValueError('Zu viele Dateien für eine Datensicherung')
+        if sum(size for _, _, size in revised) > max_bytes:
+            raise ValueError('Datensicherung überschreitet die Größenbegrenzung')
+        manifest = {'format': 'platevision-backup', 'schema': 1, 'app_version': APP_VERSION,
+                    'created_at': datetime.now().isoformat(), 'included': [],
+                    'storage_backend': 'sqlite-with-json-export' if substitutes else 'json',
+                    'excluded': ['models', 'uploaded videos', 'application secret file', 'logs'],
+                    'uncompressed_bytes': 0}
+        actual_bytes = 0
+        with zipfile.ZipFile(destination, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=5,
+                             allowZip64=True) as archive:
+            for relative, path, size in revised:
+                digest = hashlib.sha256()
+                copied = 0
+                with path.open('rb') as source:
+                    before = os.fstat(source.fileno())
+                    with archive.open(relative, 'w', force_zip64=True) as target:
+                        for block in iter(lambda: source.read(1024 * 1024), b''):
+                            copied += len(block)
+                            if actual_bytes + copied > max_bytes:
+                                raise ValueError('Datensicherung überschreitet die Größenbegrenzung')
+                            digest.update(block)
+                            target.write(block)
+                    after = os.fstat(source.fileno())
+                if (copied != size or before.st_size != after.st_size or
+                        before.st_mtime_ns != after.st_mtime_ns):
+                    raise OSError('Datei wurde während der Datensicherung geändert; bitte erneut versuchen')
+                actual_bytes += copied
+                manifest['included'].append({'path': relative, 'bytes': copied,
+                                             'sha256': digest.hexdigest()})
+            manifest['uncompressed_bytes'] = actual_bytes
+            archive.writestr('platevision-backup-manifest.json',
+                             json.dumps(manifest, ensure_ascii=False, indent=2))
+        return manifest
+
+
+@app.route('/api/system/backup/preview')
+def api_backup_preview():
+    try:
+        maximum_mb = _page_integer(os.environ.get('PLATEVISION_BACKUP_MAX_MB'), 512, 1, 2048)
+        paths, total_bytes = _backup_inventory(max_bytes=maximum_mb * 1024 * 1024)
+        return jsonify({'success': True, 'file_count': len(paths), 'size_mb': round(total_bytes / 1048576, 2),
+                        'max_mb': maximum_mb, 'includes_person_images': True,
+                        'warning': 'Die ZIP enthält Kennzeichen, Personenbilder und eventuell Kamera-Zugangsdaten. Sicher verwahren. Modelle/Videos werden nicht mitgesichert.'})
+    except (OSError, ValueError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 413
+
+
+@app.route('/api/system/backup')
+def api_system_backup():
+    if not _backup_generation_lock.acquire(blocking=False):
+        return jsonify({'success': False, 'error': 'Eine Datensicherung läuft bereits.'}), 429
+    archive = tempfile.SpooledTemporaryFile(max_size=16 * 1024 * 1024, mode='w+b')
+    try:
+        maximum_mb = _page_integer(os.environ.get('PLATEVISION_BACKUP_MAX_MB'), 512, 1, 2048)
+        manifest = _write_backup_archive(archive, max_bytes=maximum_mb * 1024 * 1024)
+        archive.seek(0)
+        name = f"platevision_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        response = send_file(archive, mimetype='application/zip', as_attachment=True,
+                             download_name=name, max_age=0)
+        response.headers['X-PlateVision-Backup-Files'] = str(len(manifest['included']))
+        response.headers['Cache-Control'] = 'no-store'
+        response.call_on_close(archive.close)
+        return response
+    except ValueError as exc:
+        archive.close()
+        return jsonify({'success': False, 'error': str(exc)}), 413
+    except (OSError, zipfile.BadZipFile) as exc:
+        archive.close()
+        logger.error('ZIP Datensicherung fehlgeschlagen: %s', exc)
+        return jsonify({'success': False, 'error': 'Die Datensicherung konnte nicht erstellt werden.'}), 503
+    finally:
+        _backup_generation_lock.release()
+
+
+def _verify_backup_archive(source, max_bytes=512 * 1024 * 1024, max_files=20000):
+    """Validate a PlateVision backup without extracting or trusting ZIP filenames.
+
+    The manifest is an authoritative allowlist. Limits apply both to declared
+    sizes and to the actual streamed bytes, guarding against ZIP bombs. Data
+    remains in the uploaded file handle and is never written to live storage.
+    """
+    manifest_name = 'platevision-backup-manifest.json'
+    allowed_files = (set(_BACKUP_METADATA) | {name + '.bak' for name in _BACKUP_METADATA} |
+                     {db for _kind, _old, db in _SQLITE_BACKUP_DATA} | {'data/alerts/watchlist.sqlite3'})
+
+    def allowed_path(name):
+        if not isinstance(name, str) or not name or '\\' in name or ':' in name:
+            return False
+        parts = name.split('/')
+        if any(part in ('', '.', '..') or any(ord(ch) < 32 for ch in part) for part in parts):
+            return False
+        return name in allowed_files or any(name.startswith(prefix + '/') for prefix in _BACKUP_IMAGE_DIRS)
+
+    with zipfile.ZipFile(source, 'r') as archive:
+        members = archive.infolist()
+        if not members or len(members) > max_files + 1:
+            raise ValueError('Archiveinträge außerhalb des Limits')
+        found = {}
+        estimated = 0
+        for member in members:
+            name = member.filename
+            if (name in found or name != manifest_name and not allowed_path(name)
+                    or member.is_dir() or member.flag_bits & 1 or
+                    (member.external_attr >> 16) & 0o170000 == 0o120000):
+                raise ValueError('Unsicherer, doppelter oder nicht erlaubter ZIP-Eintrag')
+            found[name] = member
+            if name == manifest_name:
+                if member.file_size > 8 * 1024 * 1024:
+                    raise ValueError('Manifest zu groß')
+            else:
+                estimated += member.file_size
+                if estimated > max_bytes:
+                    raise ValueError('Backup zu groß')
+        if manifest_name not in found:
+            raise ValueError('PlateVision-Manifest fehlt')
+        with archive.open(found[manifest_name]) as handle:
+            raw = handle.read(8 * 1024 * 1024 + 1)
+        if len(raw) > 8 * 1024 * 1024:
+            raise ValueError('Manifest zu groß')
+        try:
+            manifest = json.loads(raw.decode('utf-8'))
+        except (ValueError, UnicodeError) as exc:
+            raise ValueError('Manifest ist kein gültiges JSON') from exc
+        if not isinstance(manifest, dict) or manifest.get('format') != 'platevision-backup' or manifest.get('schema') != 1:
+            raise ValueError('Kein unterstütztes PlateVision-Backupformat')
+        included = manifest.get('included')
+        if not isinstance(included, list) or len(included) > max_files:
+            raise ValueError('Manifest-Einträge ungültig')
+        if len(included) != len(found) - 1:
+            raise ValueError('Manifest und Archiv haben unterschiedliche Dateilisten')
+        total = 0
+        checked = set()
+        for item in included:
+            if not isinstance(item, dict):
+                raise ValueError('Ungültiger Manifest-Eintrag')
+            name, size, expected_hash = item.get('path'), item.get('bytes'), item.get('sha256')
+            if (not allowed_path(name) or name not in found or name in checked or
+                    type(size) is not int or size < 0 or size > max_bytes or
+                    not isinstance(expected_hash, str) or not re.fullmatch(r'[a-fA-F0-9]{64}', expected_hash)):
+                raise ValueError('Manifest-Datei ungültig')
+            if found[name].file_size != size:
+                raise ValueError('Dateigröße weicht vom Manifest ab')
+            checked.add(name)
+            digest = hashlib.sha256()
+            copied = 0
+            with archive.open(found[name]) as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b''):
+                    copied += len(block)
+                    if total + copied > max_bytes or copied > size:
+                        raise ValueError('Entpackte Größe überschreitet Limit')
+                    digest.update(block)
+            if copied != size or not secrets.compare_digest(digest.hexdigest(), expected_hash.lower()):
+                raise ValueError('Dateiprüfsumme oder Länge falsch')
+            total += copied
+        if type(manifest.get('uncompressed_bytes')) is not int or total != manifest['uncompressed_bytes']:
+            raise ValueError('Manifest-Gesamtgröße stimmt nicht')
+        return {'success': True, 'format': 'platevision-backup', 'verified_files': len(checked),
+                'verified_bytes': total, 'source_version': str(manifest.get('app_version') or 'unbekannt')[:40],
+                'warning': 'Prüfung erfolgreich. Die Datei wurde nicht wiederhergestellt. Sicherung vertraulich aufbewahren.'}
+
+
+@app.route('/api/system/backup/verify', methods=['POST'])
+def api_system_backup_verify():
+    """Read-only ZIP check; intentionally no restore/extraction endpoint."""
+    if not _backup_verify_lock.acquire(blocking=False):
+        return jsonify({'success': False, 'error': 'Es läuft bereits eine ZIP-Prüfung.'}), 429
+    try:
+        uploaded = request.files.get('file')
+        if uploaded is None:
+            return jsonify({'success': False, 'error': 'Bitte eine PlateVision-ZIP-Sicherung auswählen.'}), 400
+        # Flask's 500 MB request cap still applies, including multipart overhead.
+        if request.content_length is not None and request.content_length > 490 * 1024 * 1024:
+            return jsonify({'success': False, 'error': 'Datei zu groß für die Onlineprüfung (max. 490 MB).'}), 413
+        try:
+            result = _verify_backup_archive(uploaded.stream)
+            return jsonify(result)
+        except (ValueError, RuntimeError, zipfile.BadZipFile, zipfile.LargeZipFile,
+                OSError, UnicodeError, EOFError) as exc:
+            logger.warning('Prüfung einer importierten Sicherung fehlgeschlagen: %s', type(exc).__name__)
+            return jsonify({'success': False,
+                            'error': 'Sicherung ungültig, beschädigt oder überschreitet die Limits. Es wurden keine Daten zurückgespielt.'}), 400
+    finally:
+        _backup_verify_lock.release()
+
+
+@app.route('/api/system/storage-audit')
+def api_storage_audit():
+    return jsonify(_storage_audit())
+
+
+@app.route('/api/system/support-report')
+def api_system_support_report():
+    """Download privacy-safe status metadata for troubleshooting and support."""
+    status = stream_manager.get_status()
+    with video_jobs_lock:
+        job_counts = dict(Counter(j.get('status', 'unknown') for j in video_processing_jobs.values()))
+    report = {
+        'generated_at': datetime.now().isoformat(),
+        'name': 'PlateVision', 'version': APP_VERSION,
+        'stream': {
+            'status': status.get('status'), 'connected': bool(status.get('connected')),
+            'fps': status.get('fps', 0), 'processed_frames': status.get('frame_count', 0),
+            # No camera host, RTSP URL, paths or error text in the support bundle.
+        },
+        'models': {
+            'loaded': detector.models_loaded,
+            'vehicle_model_available': bool(_model_path_exists(config_manager.get('models', 'vehicle_detector'))),
+            'plate_model_available': bool(_model_path_exists(config_manager.get('models', 'license_plate_detector'))),
+            'person_model_loaded': detector.human_model is not None,
+        },
+        'counts': {
+            'plate_history': len(history_manager.history),
+            'people_history': len(person_history_manager.history),
+            'watchlist_entries': len(watchlist_manager.items),
+            'watchlist_alerts': watchlist_alert_center.status().get('total', 0) if watchlist_alert_center else None,
+        },
+        'video_jobs': job_counts,
+        'configuration_flags': {
+            'people_enabled': bool(config_manager.get('people', 'enabled')),
+            'rtsp_configured': bool(config_manager.get('rtsp', 'url') and
+                                    config_manager.get('rtsp', 'url') != ConfigManager.DEFAULT_CONFIG['rtsp']['url']),
+            'rtsp_autostart': bool(config_manager.get('rtsp', 'autostart_enabled')),
+            'people_image_cleanup': bool(config_manager.get('people', 'image_history_auto_cleanup_enabled')),
+        },
+        'limits': {'video_parallel': _video_max_active_jobs(),
+                   'video_retention_hours': _video_retention_hours(),
+                   'image_upload_mb': _page_integer(os.environ.get('PLATEVISION_MAX_IMAGE_MB'), 25, 1, 128),
+                   'video_upload_mb': _video_max_upload_mb()},
+        'privacy_note': 'Keine Kennzeichen, Personenbilder, IP-Adressen oder RTSP-Zugangsdaten enthalten.'
+    }
+    filename = f"platevision_support_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    return Response(json.dumps(report, ensure_ascii=False, indent=2),
+                    mimetype='application/json',
+                    headers={'Content-Disposition': f'attachment; filename={filename}'})
 
 
 @app.route('/api/system/audit')
@@ -7772,7 +10325,104 @@ def api_system_audit():
         suggestions.append('Fuzzy-Suche aktivieren, damit ähnliche Kennzeichen gefunden werden.')
     if (config_manager.get('traffic', 'active_timeout_minutes') or 0) < 5:
         suggestions.append('Traffic-Timeout auf mindestens 10-30 Minuten setzen, damit Kommen/Gehen realistischer ausgewertet wird.')
-    return jsonify({'issues': issues, 'suggestions': suggestions, 'stats': history_manager.get_statistics(), 'config': _public_config()})
+    return jsonify({'issues': issues, 'suggestions': suggestions, 'stats': history_manager.get_statistics(), 'config': _diagnostics_config()})
+
+
+# ============================================================
+# BROWSER REQUEST PROTECTION & SERIALIZED SETTINGS WRITES
+# ============================================================
+
+_interactive_inference_semaphore = threading.BoundedSemaphore(2)
+_INTERACTIVE_INFERENCE_ENDPOINTS = {
+    'api_process_image', 'api_people_test_snapshot', 'api_people_analyze_image_upload',
+    'api_people_test_image_upload',
+}
+
+
+@app.before_request
+def _limit_interactive_inference_requests():
+    if request.method == 'POST' and request.endpoint in _INTERACTIVE_INFERENCE_ENDPOINTS:
+        if not _interactive_inference_semaphore.acquire(blocking=False):
+            return jsonify({'success': False, 'error': 'Bereits zwei Bildanalysen aktiv. Bitte erneut versuchen.'}), 429
+        g.inference_request_slot = True
+    return None
+
+
+@app.teardown_request
+def _release_inference_request_slot(error=None):
+    if getattr(g, 'inference_request_slot', False):
+        g.inference_request_slot = False
+        _interactive_inference_semaphore.release()
+
+
+@app.before_request
+def _protect_mutating_requests():
+    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return None
+    # Basic authentication credentials may be sent automatically by the browser;
+    # cross-site forms must not be allowed to delete history/change settings.
+    if request.headers.get('Sec-Fetch-Site', '').lower() == 'cross-site':
+        return jsonify({'success': False, 'error': 'Seitenfremde Schreibanfrage blockiert.'}), 403
+    origin = request.headers.get('Origin')
+    if origin and request.headers.get('Sec-Fetch-Site', '').lower() != 'same-origin':
+        from urllib.parse import urlsplit
+        try:
+            host = urlsplit(origin).netloc.lower()
+            # Only the already validated HA Ingress proxy may supply a
+            # forwarded host; all other clients must match the actual host.
+            forwarded = (request.headers.get('X-Forwarded-Host', '').split(',')[0].strip().lower()
+                         if _platevision_ingress_prefix() else '')
+            allowed = {request.host.lower(), forwarded} - {''}
+            if urlsplit(origin).scheme not in ('http', 'https') or host not in allowed:
+                return jsonify({'success': False, 'error': 'Fremde Herkunft ist nicht zugelassen.'}), 403
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Ungültiger Origin-Header.'}), 403
+
+    # Serialise whole read-modify-write config HTTP transactions, not just
+    # json.dump(). Otherwise simultaneous saves lose each other's edits.
+    path = request.path
+    lock_config = (path.startswith('/api/config') or
+                   path.startswith('/api/alerts/homeassistant') or path in (
+            '/api/test/settings', '/api/profile/apply', '/api/models/upload',
+            '/api/models/people/select', '/api/rtsp/analysis-area')
+            or path.startswith('/api/profile/apply/'))
+    if lock_config:
+        # Strict lock order: delivery lock THEN config lock. The background
+        # worker takes them in the same order while submitting to HA.
+        worker = globals().get('ha_delivery_worker')
+        delivery_lock = getattr(worker, 'delivery_lock', None)
+        if delivery_lock is not None:
+            delivery_lock.acquire()
+            g.platevision_delivery_lock = delivery_lock
+        config_manager.lock.acquire()
+        g.platevision_config_write_lock = True
+    return None
+
+
+@app.teardown_request
+def _release_config_request_lock(error=None):
+    if getattr(g, 'platevision_config_write_lock', False):
+        g.platevision_config_write_lock = False
+        config_manager.lock.release()
+    delivery_lock = getattr(g, 'platevision_delivery_lock', None)
+    if delivery_lock is not None:
+        g.platevision_delivery_lock = None
+        delivery_lock.release()
+
+
+@app.before_request
+def _prevent_mutations_in_storage_safe_mode():
+    """Allow diagnostics/backup verification but no data-changing calls in safe mode.
+
+    In particular, do not save an image or start a video job before the history
+    write fails. Stopping the live stream must still work in an emergency.
+    """
+    if not globals().get('_read_only_storage') or request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return None
+    if request.endpoint in ('api_stream_stop', 'api_system_backup_verify'):
+        return None
+    return jsonify({'success': False,
+                    'error': 'Sicherheits-Schreibschutz aktiv: Beschädigte Datendatei gefunden. Diagnose prüfen, Sicherung wiederherstellen und Dienst neu starten.'}), 503
 
 
 # ============================================================
@@ -7781,6 +10431,8 @@ def api_system_audit():
 
 @socketio.on('connect')
 def handle_connect():
+    if not _basic_auth_valid():
+        return False
     emit('connected', {'status': 'ok', 'stream_status': stream_manager.get_status()})
     logger.info("WebSocket Client verbunden")
 
@@ -7800,6 +10452,14 @@ def handle_frame_request():
 # ============================================================
 # FEHLERHANDLER
 # ============================================================
+
+@app.errorhandler(OSError)
+def storage_write_failure(exc):
+    logger.error('Datenspeicherung fehlgeschlagen: %s', exc)
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'error': 'Schreibfehler: Speicherung nicht abgeschlossen. Bitte Speicherplatz und Dateirechte prüfen.'}), 503
+    return render_template('500.html', page='error'), 503
+
 
 @app.errorhandler(404)
 def page_not_found(e):
@@ -7830,6 +10490,9 @@ def internal_error(e):
 
 def _maybe_autostart_stream():
     """Starts the RTSP stream after app boot when configured by the user."""
+    if globals().get('_read_only_storage'):
+        logger.error('RTSP-Autostart wegen beschädigter JSON-Daten gesperrt (Schreibschutz)')
+        return
     try:
         rtsp_cfg = config_manager.get('rtsp') or {}
         enabled = bool(rtsp_cfg.get('enabled')) and bool(rtsp_cfg.get('autostart_enabled', rtsp_cfg.get('auto_start', False)))
@@ -7897,12 +10560,23 @@ if __name__ == '__main__':
     ╚══════════════════════════════════════════════════════════╝
     """)
     
-    debug_enabled = config_manager.get('general', 'debug_mode') or False
-    if (not debug_enabled) or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-        _maybe_autostart_stream()
+    # The Add-on exposes a network port: never enable Werkzeug's interactive
+    # debugger, even when verbose application logging is configured.
+    if config_manager.get('general', 'debug_mode'):
+        logger.setLevel(logging.DEBUG)
+        logger.warning('Debug-Logging aktiviert; interaktiver Web-Debugger bleibt deaktiviert.')
+    # Persistent storage survives HA restarts; in-memory video jobs do not.
+    # Remove expired orphan uploads once at startup, then on job-list requests.
+    try:
+        restored = _restore_video_jobs()
+        logger.info('Video-Auftraege nach Neustart wiederhergestellt: %d', restored)
+        _cleanup_old_video_jobs()
+    except Exception as exc:
+        logger.warning('Video-Aufbewahrung beim Start fehlgeschlagen: %s', exc)
+    _maybe_autostart_stream()
 
-    socketio.run(app, host='0.0.0.0', port=5000, 
-                 debug=debug_enabled,
+    socketio.run(app, host='0.0.0.0', port=5000,
+                 debug=False, use_reloader=False,
                  allow_unsafe_werkzeug=True)
 
 

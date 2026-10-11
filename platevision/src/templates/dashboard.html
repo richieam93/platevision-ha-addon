@@ -7,8 +7,8 @@
 .dashboard-hero { background: radial-gradient(circle at top left, rgba(99,102,241,.26), transparent 32%), linear-gradient(135deg, rgba(30,41,59,.98), rgba(15,23,42,.98)); border:1px solid var(--card-border); border-radius:20px; padding:1.5rem; }
 .today-tile { background: rgba(15,23,42,.55); border:1px solid rgba(148,163,184,.16); border-radius:16px; padding:1rem; height:100%; }
 .today-tile .value { font-size:2rem; font-weight:800; line-height:1; }
-.latest-image { width:100%; min-height:230px; max-height:360px; object-fit:cover; border-radius:14px; background:#020617; border:1px solid rgba(148,163,184,.18); }
-.person-image { width:100%; max-height:360px; object-fit:cover; border-radius:14px; background:#020617; border:1px solid rgba(148,163,184,.18); }
+.latest-image { width:100%; height:320px; min-height:220px; max-height:360px; object-fit:contain; border-radius:14px; background:#020617; border:1px solid rgba(148,163,184,.18); }
+.person-image { width:100%; height:320px; max-height:340px; padding:1rem; object-fit:contain; border-radius:14px; background:#020617; border:1px solid rgba(148,163,184,.18); }
 .dashboard-meta { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:.75rem; }
 .dashboard-meta .item { background:rgba(15,23,42,.55); border:1px solid rgba(148,163,184,.14); border-radius:12px; padding:.75rem; }
 .dashboard-meta .label { color:var(--text-secondary); font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; }
@@ -18,6 +18,10 @@
 .status-dot.running { background:#10b981; }
 .status-dot.connecting { background:#f59e0b; }
 .small-table td { padding:.65rem .5rem; }
+.latest-image-frame { min-height:230px; position:relative; border-radius:14px; overflow:hidden; background:rgba(5,13,28,.2); }
+.latest-image-placeholder { position:absolute; inset:0; min-height:230px; display:grid; place-items:center; text-align:center; padding:1rem; color:var(--text-secondary); background:var(--pv-subtle); border:1px solid var(--card-border); border-radius:14px; }
+.latest-image-placeholder[hidden] { display:none !important; }
+.latest-image-frame .latest-image { display:block; }
 @media (max-width: 767px) { .dashboard-meta { grid-template-columns: 1fr; } }
 </style>
 {% endblock %}
@@ -27,14 +31,14 @@
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
         <div>
             <div class="mini-label mb-2">PlateVision Tagesübersicht</div>
-            <h2 class="mb-2">Letztes Auto, letzte Person und heutige Aktivität</h2>
+            <h2 class="mb-2">Fahrzeuge, Personen und Tagesaktivität</h2>
             <p class="text-secondary mb-0">Kompakte Übersicht ohne Modell-Details. Modelle und Erkennung stellst du in <strong>Test & Upload</strong> oder in den Einstellungen ein.</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
-            <a class="btn btn-primary" href="/live"><i class="fas fa-video me-2"></i>Live Stream</a>
-            <a class="btn btn-outline-info" href="/test"><i class="fas fa-flask me-2"></i>Test & Upload</a>
-            <a class="btn btn-outline-success" href="/people"><i class="fas fa-person-walking me-2"></i>Personen</a>
-            <a class="btn btn-outline-secondary" href="/history"><i class="fas fa-history me-2"></i>Historie</a>
+            <a class="btn btn-primary" href="{{ pv_prefix }}/live"><i class="fas fa-video me-2"></i>Live Stream</a>
+            <a class="btn btn-outline-info" href="{{ pv_prefix }}/test"><i class="fas fa-flask me-2"></i>Test & Upload</a>
+            <a class="btn btn-outline-success" href="{{ pv_prefix }}/people"><i class="fas fa-person-walking me-2"></i>Personen</a>
+            <a class="btn btn-outline-secondary" href="{{ pv_prefix }}/history"><i class="fas fa-history me-2"></i>Historie</a>
         </div>
     </div>
 </div>
@@ -55,9 +59,13 @@
                 <h5 class="mb-0"><i class="fas fa-car-side text-primary me-2"></i>Letztes Auto</h5>
                 <span class="status-pill"><span id="streamStatusDot" class="status-dot"></span><span id="streamStatusText">Stream...</span></span>
             </div>
+            <p class="pv-quality-hint small text-secondary mb-2" id="vehicleQualityHint">Zeigt die letzte gespeicherte Erkennung. Die Qualitätsauswahl kann unter Einstellungen aktiviert werden.</p>
             <div class="row g-3 align-items-stretch">
                 <div class="col-lg-7">
-                    <img id="latestVehicleImage" class="latest-image" src="/api/latest/vehicle/image" alt="Letztes Fahrzeug">
+                    <div class="latest-image-frame">
+                        <img id="latestVehicleImage" class="latest-image" src="{{ pv_prefix }}/api/latest/vehicle/image" alt="Letztes Fahrzeug" style="display:none;">
+                        <div id="latestVehiclePlaceholder" class="latest-image-placeholder">Noch kein Fahrzeugbild gespeichert</div>
+                    </div>
                 </div>
                 <div class="col-lg-5">
                     <div class="mb-3">
@@ -81,9 +89,10 @@
         <div class="soft-card p-3 h-100">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0"><i class="fas fa-person-walking text-info me-2"></i>Letzte Person</h5>
-                <a class="btn btn-sm btn-outline-info" href="/people">Personenanalyse</a>
+                <a class="btn btn-sm btn-outline-info" href="{{ pv_prefix }}/people">Personenanalyse</a>
             </div>
-            <img id="latestPersonImage" class="person-image mb-3" src="" alt="Letzte Person" style="display:none;">
+            <img id="latestPersonImage" class="person-image mb-2" src="" alt="Letzte Person mit mehr Umgebung" style="display:none;" loading="lazy">
+            <small class="text-secondary d-block mb-2">Personenbilder werden ohne Zuschneiden eingepasst. Für neue Crops lässt sich in Test & Upload mehr Bildumgebung einstellen.</small>
             <div id="latestPersonPlaceholder" class="text-center text-secondary py-5 border rounded" style="border-color:var(--card-border)!important;">Noch kein Personenbild gespeichert</div>
             <div class="dashboard-meta mt-3">
                 <div class="item"><div class="label">Richtung</div><div class="text" id="latestPersonDirection">-</div></div>
@@ -100,7 +109,7 @@
         <div class="soft-card p-3">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0"><i class="fas fa-clock text-primary me-2"></i>Letzte eindeutige Kennzeichen</h5>
-                <a class="btn btn-sm btn-outline-secondary" href="/history?unique=true">Alle anzeigen</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ pv_prefix }}/history?unique=true">Alle anzeigen</a>
             </div>
             <div class="table-responsive">
                 <table class="table align-middle small-table mb-0">
@@ -136,13 +145,18 @@
 let timelineChart;
 const qs = id => document.getElementById(id);
 const setText = (id, value) => { const el = qs(id); if (el) el.textContent = value ?? '-'; };
-const pct = v => Math.round(Number(v || 0) * 100) + '%';
+const pct = v => Number.isFinite(Number(v)) ? Math.round(Number(v || 0) * 100) + '%' : '-';
 const fmtTime = value => value ? new Date(value).toLocaleString('de-CH') : '-';
 const cacheBust = url => url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+let lastVehicleImageKey = null;
+let lastPersonImageKey = null;
+let dashboardInFlight = false;
+let dashboardLastError = '';
+
 function renderLatest(rows){
     const body = qs('latestRows');
     if (!body) return;
-    body.innerHTML = (rows||[]).length ? rows.slice(0,8).map(e => `<tr><td><span class="plate-badge">${e.plate_text || 'Unbekannt'}</span></td><td>${e.vehicle_type || 'Unbekannt'} · ${e.vehicle_color || 'Unbekannt'}</td><td>${e.plate_country_display || e.plate_country || 'Unbekannt'}</td><td>${fmtTime(e.timestamp)}</td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-secondary py-4">Noch keine Daten</td></tr>';
+    body.innerHTML = (rows||[]).length ? rows.slice(0,8).map(e => `<tr><td><span class="plate-badge">${pvEscapeHtml(e.plate_text || 'Unbekannt')}</span></td><td>${pvEscapeHtml(e.vehicle_type || 'Unbekannt')} · ${pvEscapeHtml(e.vehicle_color || 'Unbekannt')}</td><td>${pvEscapeHtml(e.plate_country_display || e.plate_country || 'Unbekannt')}</td><td>${pvEscapeHtml(fmtTime(e.timestamp))}</td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-secondary py-4">Noch keine Daten</td></tr>';
 }
 function renderStream(stream, config){
     const status = stream?.status || 'stopped';
@@ -150,6 +164,12 @@ function renderStream(stream, config){
     if (dot) dot.className = 'status-dot ' + status;
     const auto = (config?.rtsp?.auto_start || config?.rtsp?.autostart_enabled) ? ' · Autostart an' : '';
     setText('streamStatusText', (status === 'running' ? 'läuft' : status) + auto);
+}
+function setVehicleImageVisible(visible) {
+    const image = qs('latestVehicleImage');
+    const placeholder = qs('latestVehiclePlaceholder');
+    if (image) image.style.display = visible ? 'block' : 'none';
+    if (placeholder) placeholder.hidden = !!visible;
 }
 function renderVehicle(vehicle){
     setText('latestPlate', vehicle?.plate_text || '-');
@@ -160,7 +180,19 @@ function renderVehicle(vehicle){
     setText('latestVehicleSource', vehicle?.source || '-');
     setText('latestVehicleTime', fmtTime(vehicle?.timestamp));
     const img = qs('latestVehicleImage');
-    if (img) img.src = cacheBust(vehicle?.image_url || '/api/latest/vehicle/image');
+    const imageKey = `${vehicle?.id || ''}|${vehicle?.timestamp || ''}|${vehicle?.image_url || ''}`;
+    if (!vehicle) {
+        setVehicleImageVisible(false);
+        lastVehicleImageKey = null;
+        if (img) img.removeAttribute('src');
+        return;
+    }
+    if (img && imageKey !== lastVehicleImageKey) {
+        img.onload = () => setVehicleImageVisible(true);
+        img.onerror = () => setVehicleImageVisible(false);
+        img.src = cacheBust(pvSafeImageUrl(vehicle?.image_url) || '{{ pv_prefix }}/api/latest/vehicle/image');
+        lastVehicleImageKey = imageKey;
+    }
 }
 function renderPerson(person){
     setText('latestPersonDirection', person?.direction || '-');
@@ -169,8 +201,14 @@ function renderPerson(person){
     setText('latestPersonTime', fmtTime(person?.timestamp));
     const img = qs('latestPersonImage');
     const ph = qs('latestPersonPlaceholder');
-    if (person?.image_url && img) {
-        img.src = cacheBust(person.image_url);
+    if (img) img.onerror = () => { img.style.display='none'; if(ph) ph.style.display='block'; };
+    const imageUrl = pvSafeImageUrl(person?.image_url);
+    if (imageUrl && img) {
+        const imageKey = `${person?.id || ''}|${person?.timestamp || ''}|${imageUrl}`;
+        if (imageKey !== lastPersonImageKey) {
+            img.src = cacheBust(imageUrl);
+            lastPersonImageKey = imageKey;
+        }
         img.style.display = 'block';
         if (ph) ph.style.display = 'none';
     } else {
@@ -178,8 +216,14 @@ function renderPerson(person){
         if (ph) ph.style.display = 'block';
     }
 }
-function loadDashboard(){
-    fetch('/api/dashboard/overview').then(r=>r.json()).then(d=>{
+async function loadDashboard(){
+    if (dashboardInFlight || document.hidden) return;
+    dashboardInFlight = true;
+    try {
+        const response = await fetch('{{ pv_prefix }}/api/dashboard/overview', {cache:'no-store'});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const d = await response.json();
+        dashboardLastError = '';
         const today = d.today || {}; const traffic = today.traffic || {}; const people = today.people || {};
         const departures = today.departures ?? ((traffic.departures_detected || 0) + (traffic.departures_assumed || 0));
         setText('todayPlateEvents', today.raw_detections ?? today.plate_events ?? 0);
@@ -194,20 +238,43 @@ function loadDashboard(){
         setText('todayPeopleEvents', today.people_events ?? people.events ?? 0);
         renderStream(d.stream, d.config);
         renderVehicle(d.latest_vehicle);
+        const mode = d.vehicle_display || {};
+        const description = qs('vehicleQualityHint');
+        if (description) {
+            if (mode.best_only) description.textContent = d.latest_vehicle
+                ? `Bestes Bild derselben Erkennungsserie ab ${Math.round(Number(mode.min_confidence || .8)*100)} % OCR-Konfidenz${mode.prefer_sharpness ? ', mit Schärfebewertung' : ''}. Alle Ereignisse bleiben in Historie und Suche.`
+                : `Kein Bild dieser Erkennungsserie erreicht ${Math.round(Number(mode.min_confidence || .8)*100)} %. Alle Erkennungen sind weiterhin in Historie und Suche.`;
+            else description.textContent = 'Letzte Erkennung ohne Qualitätsfilter. In Einstellungen kannst du nur die besten Fahrzeugbilder anzeigen lassen.';
+        }
+        setText('latestVehiclePlaceholder', mode.best_only ? `Kein passendes Fahrzeugbild ab ${Math.round(Number(mode.min_confidence || .8)*100)} %` : 'Noch kein Fahrzeugbild gespeichert');
         renderPerson(d.latest_person);
         renderLatest(d.latest || []);
-    }).catch(err => showToast('Dashboard', 'Dashboard konnte nicht geladen werden: ' + err.message, 'danger'));
-    loadTimeline();
+    } catch (error) {
+        if (dashboardLastError !== error.message) {
+            showToast('Dashboard', 'Aktualisierung fehlgeschlagen: ' + error.message, 'warning');
+            dashboardLastError = error.message;
+        }
+    } finally {
+        dashboardInFlight = false;
+    }
 }
 function loadTimeline(){
     const bucket = qs('timelineBucket')?.value || 'hour';
-    fetch('/api/history/timeline?bucket=' + encodeURIComponent(bucket)).then(r=>r.json()).then(d=>{
+    fetch('{{ pv_prefix }}/api/history/timeline?bucket=' + encodeURIComponent(bucket)).then(r=>r.json()).then(d=>{
         const labels=(d.items||[]).map(x=>x.time), values=(d.items||[]).map(x=>x.count);
         const canvas = qs('timelineChart'); if (!canvas) return;
+        if (typeof Chart === 'undefined') return;
         if(timelineChart) timelineChart.destroy();
         timelineChart = new Chart(canvas, { type:'line', data:{labels, datasets:[{label:'Kennzeichen', data:values, tension:.35, fill:true}]}, options:{plugins:{legend:{display:false}}, scales:{x:{ticks:{color:'#94a3b8'}}, y:{ticks:{color:'#94a3b8'}, beginAtZero:true}}} });
     }).catch(()=>{});
 }
-document.addEventListener('DOMContentLoaded',()=>{ loadDashboard(); setInterval(loadDashboard, Number({{ config.dashboard.auto_refresh_seconds|default(10) }})*1000); });
+document.addEventListener('DOMContentLoaded',()=>{
+    const refreshSeconds = Math.max(5, Math.min(120, Number({{ config.dashboard.auto_refresh_seconds|default(10)|int }}) || 10));
+    loadDashboard();
+    loadTimeline();
+    setInterval(loadDashboard, refreshSeconds * 1000);
+    setInterval(() => { if (!document.hidden) loadTimeline(); }, 60000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) loadDashboard(); });
+});
 </script>
 {% endblock %}

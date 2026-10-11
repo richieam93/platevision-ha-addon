@@ -1,0 +1,360 @@
+{% extends 'base.html' %}
+{% block title %}Alarmzentrale - PlateVision{% endblock %}
+{% block page_title %}<i class="fas fa-bell me-2" aria-hidden="true"></i>Alarmzentrale{% endblock %}
+{% block header_actions %}<a class="btn btn-sm btn-outline-info" href="{{ pv_url_for('search_page') }}"><i class="fas fa-search me-1"></i>Suche</a>{% endblock %}
+{% block extra_css %}
+<style>
+.pv-alerts-hero { padding: 1.25rem 1.5rem; border-radius: 18px; border: 1px solid rgba(148,163,184,.23);
+  background: linear-gradient(115deg, rgba(99,102,241,.18),rgba(15,23,42,.25)); }
+.pv-alerts-toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.75rem; }
+.pv-alerts-counter { font-weight:700; font-size:1.55rem; font-variant-numeric:tabular-nums; }
+.pv-alert-items { display:grid; grid-template-columns: repeat(auto-fill,minmax(min(100%,355px),1fr)); gap:.85rem; }
+.pv-alert-card { padding:1.05rem; border:1px solid rgba(148,163,184,.22); border-radius:14px;
+  background:rgba(30,41,59,.55); overflow-wrap:anywhere; display:flex; flex-direction:column; gap:.8rem; }
+.pv-alert-card[data-unread="true"] { border-left:4px solid #22d3ee; }
+.pv-alert-card-top { display:flex; align-items:flex-start; justify-content:space-between; gap:.65rem; }
+.pv-alert-plate { font-weight:700; font-size:1.12rem; letter-spacing:.035em; }
+.pv-alert-subtitle { color:#a5b4c9; font-size:.82rem; margin-top:.2rem; }
+.pv-alert-meta { display:flex; flex-wrap:wrap; gap:.5rem; color:#b6c4d7; font-size:.82rem; }
+.pv-alert-chip { border:1px solid rgba(148,163,184,.25); border-radius:100px; padding:.2rem .5rem; }
+.pv-alert-actions { display:flex; flex-wrap:wrap; gap:.45rem; margin-top:auto; }
+.pv-delivery-log { display:grid; gap:.45rem; margin-top:.65rem; }
+.pv-delivery-entry { display:flex; justify-content:space-between; align-items:flex-start;
+  flex-wrap:wrap; gap:.5rem; padding:.65rem .8rem; border:1px solid rgba(148,163,184,.22);
+  border-radius:.65rem; font-size:.81rem; overflow-wrap:anywhere; }
+.pv-delivery-entry span { color:var(--text-secondary); }
+.pv-alert-actions .btn { font-size:.79rem; }
+.pv-alert-empty { padding:3rem 1rem; text-align:center; border:1px dashed rgba(148,163,184,.36); border-radius:15px; }
+.pv-alert-small { color:var(--text-secondary); font-size:.84rem; }
+@media(max-width: 560px) { .pv-alerts-hero { padding:1rem; } .pv-alerts-toolbar > * { max-width:100%; }
+  .pv-alert-actions .btn { flex:1 1 auto; } }
+[data-bs-theme="light"] .pv-alert-card { background:rgba(255,255,255,.93); border-color:#cbd5e1; }
+[data-bs-theme="light"] .pv-alert-subtitle,[data-bs-theme="light"] .pv-alert-meta { color:#475569; }
+</style>
+{% endblock %}
+{% block content %}
+<section class="pv-alerts-hero mb-3">
+  <div class="pv-alerts-toolbar">
+    <div>
+      <div class="mini-label">Watchlist &amp; Erkennungen</div>
+      <h2 class="h4 mb-1">Treffer sicher im Blick</h2>
+      <p class="pv-alert-small mb-0">Neue Meldungen erscheinen hier, nachdem eine Erkennung in der Historie gespeichert wurde.</p>
+    </div>
+    <div class="text-end"><div class="pv-alerts-counter" id="pvAlertUnread" aria-live="polite">-</div><div class="pv-alert-small">ungelesene Treffer</div></div>
+  </div>
+</section>
+<div class="pv-alerts-toolbar mb-3">
+  <div class="btn-group" role="group" aria-label="Alarmfilter">
+    <button id="pvAlertsAll" class="btn btn-primary btn-sm" type="button" aria-pressed="true">Alle</button>
+    <button id="pvAlertsUnreadOnly" class="btn btn-outline-primary btn-sm" type="button" aria-pressed="false">Nur ungelesene</button>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <button id="pvAlertsReload" class="btn btn-outline-info btn-sm" type="button"><i class="fas fa-rotate me-1"></i>Aktualisieren</button>
+    <button id="pvAlertsReadAll" class="btn btn-outline-success btn-sm" type="button"><i class="fas fa-check-double me-1"></i>Alle als gelesen</button>
+  </div>
+</div>
+<details class="soft-card p-3 mb-3" id="pvAlertSettings" aria-label="Alarm-Einstellungen">
+  <summary class="fw-semibold" style="cursor:pointer"><i class="fas fa-sliders me-2" aria-hidden="true"></i>Benachrichtigungen einstellen</summary>
+  <div class="row g-3 mt-1 align-items-end">
+    <div class="col-md-4"><label for="pvAlertsEnabled" class="form-label">Watchlist-Treffer melden</label>
+      <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="pvAlertsEnabled" checked>
+        <label class="form-check-label" for="pvAlertsEnabled">Aktiv</label></div></div>
+    <div class="col-md-3"><label for="pvAlertsMinimum" class="form-label">Mindestens OCR-Konfidenz (%)</label>
+      <input type="number" min="0" max="100" step="1" id="pvAlertsMinimum" class="form-control form-control-sm" value="65"></div>
+    <div class="col-md-3"><label for="pvAlertsCooldown" class="form-label">Sperrzeit (Sekunden)</label>
+      <input type="number" min="0" max="3600" step="1" id="pvAlertsCooldown" class="form-control form-control-sm" value="180"></div>
+    <div class="col-md-2"><button type="button" id="pvAlertsSaveSettings" class="btn btn-primary btn-sm w-100">Speichern</button></div>
+    <div class="col-12 pv-alert-small">Eine Meldung pro Durchfahrt. Nur lokal in PlateVision; keine externen Push-Nachrichten.
+      Das Benachrichtigen einzelner Watchlist-Eintraege kann in der Suche separat ausgeschaltet werden.</div>
+  </div>
+</details>
+<details class="soft-card p-3 mb-3" id="pvHASettings" aria-label="Home Assistant Benachrichtigungen">
+  <summary class="fw-semibold" style="cursor:pointer"><i class="fas fa-mobile-alt me-2" aria-hidden="true"></i>Home Assistant &amp; Smartphone-Benachrichtigungen</summary>
+  <p class="pv-alert-small mt-3 mb-2">Optional: Nur <strong>neue</strong> Watchlist-Treffer werden über die interne Home-Assistant-API gesendet. Die lokale Alarmzentrale bleibt unabhängig verfügbar.</p>
+  <div class="row g-3 mt-1 align-items-end">
+    <div class="col-md-6"><div class="form-check form-switch">
+      <input class="form-check-input" type="checkbox" id="pvHAPersistent">
+      <label for="pvHAPersistent" class="form-check-label">Dauerhafte Home-Assistant-Mitteilung</label>
+    </div><div class="pv-alert-small">Erscheint als Meldung in Home Assistant, ohne Smartphone-Push.</div></div>
+    <div class="col-md-6"><div class="form-check form-switch">
+      <input class="form-check-input" type="checkbox" id="pvHAMobile">
+      <label for="pvHAMobile" class="form-check-label">Smartphone-Push über Companion-App</label>
+    </div><div class="pv-alert-small">Benötigt den bereits eingerichteten Geräte-Dienst.</div></div>
+    <div class="col-md-8">
+      <label for="pvHAMobileService" class="form-label">Home-Assistant-Gerätedienst</label>
+      <input id="pvHAMobileService" type="text" maxlength="95" autocomplete="off" class="form-control form-control-sm" placeholder="notify.mobile_app_mein_handy">
+      <div class="pv-alert-small mt-1">Den Dienst findest du in Home Assistant unter Entwicklerwerkzeuge → Aktionen.</div>
+    </div>
+    <div class="col-md-4"><div class="form-check form-switch">
+      <input class="form-check-input" type="checkbox" id="pvHAIncludePlate">
+      <label for="pvHAIncludePlate" class="form-check-label">Kennzeichen und Watchlist-Notiz mitsenden</label>
+    </div></div>
+    <div class="col-12 d-flex flex-wrap gap-2">
+      <button type="button" id="pvHASave" class="btn btn-primary btn-sm"><i class="fas fa-save me-1"></i>HA-Einstellungen speichern</button>
+      <button type="button" id="pvHATest" class="btn btn-outline-info btn-sm"><i class="fas fa-paper-plane me-1"></i>Neutrale Testmeldung senden</button>
+      <button type="button" id="pvHARetry" class="btn btn-outline-warning btn-sm">Fehlgeschlagene erneut versuchen</button>
+    </div>
+    <div class="col-12"><div id="pvHAStatus" class="pv-alert-small" aria-live="polite">Home Assistant: Status wird geladen.</div></div>
+    <div class="col-12"><div id="pvHAFeedback" class="pv-alert-small" role="status" aria-live="polite"></div></div>
+  </div>
+  <details class="mt-3" id="pvHADeliveryDetails">
+    <summary class="fw-semibold" style="cursor:pointer">Zustellprotokoll (ohne Kennzeichen und Geraetenamen)</summary>
+    <div class="pv-alerts-toolbar mt-2">
+      <span class="pv-alert-small">Die letzten 20 Zustellauftraege. 'Angenommen' bedeutet nicht, dass eine Push-Nachricht angezeigt wurde.</span>
+      <button id="pvHALogRefresh" type="button" class="btn btn-outline-info btn-sm">Protokoll aktualisieren</button>
+    </div>
+    <div id="pvHADeliveryLog" class="pv-delivery-log" aria-live="polite">Noch nicht geladen.</div>
+  </details>
+  <div class="pv-alert-small mt-3">Datenschutz: Externe Nachrichten sind standardmäßig aus. Ohne den zusätzlichen Schalter enthalten sie <strong>keine Kennzeichen</strong>. Auf Smartphones können Nachrichten über die Push-Dienste des jeweiligen Betriebssystems laufen. Bei einem Neustart können ausstehende Meldungen erneut versucht werden; Home Assistant bestätigt die Annahme, nicht die Anzeige am Handy.</div>
+</details>
+<div class="pv-alert-small mb-3" id="pvAlertNote">Watchlist-Treffer werden lokal gespeichert. Die Bild- und Kennzeichenhistorie bleibt unverändert.</div>
+<div id="pvAlertsError" class="alert alert-warning" role="alert" hidden></div>
+<div id="pvAlertsItems" class="pv-alert-items" aria-live="polite"></div>
+<div id="pvAlertsEmpty" class="pv-alert-empty" hidden><i class="far fa-bell-slash fa-2x mb-2"></i><p class="mb-0">Keine Treffer für diesen Filter.</p></div>
+<div class="pv-alerts-toolbar mt-3">
+  <span id="pvAlertsPageInfo" class="pv-alert-small">-</span>
+  <div class="d-flex gap-2"><button id="pvAlertsPrev" class="btn btn-outline-secondary btn-sm" type="button">Zurück</button><button id="pvAlertsNext" class="btn btn-outline-secondary btn-sm" type="button">Weiter</button></div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+(() => {
+  'use strict';
+  const endpoint = window.pvUrl('/api/alerts');
+  const historyBase = {{ pv_url_for('history')|tojson }};
+  const $ = id => document.getElementById(id);
+  const model = {unread:false, offset:0, limit:24, total:0, busy:false};
+  const newElement = (tag, className, value) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (value !== undefined) node.textContent = String(value);
+    return node;
+  };
+  const translatedDate = ts => {
+    const n = Number(ts);
+    if (!Number.isFinite(n)) return '-';
+    return new Date(n * 1000).toLocaleString(document.documentElement.lang || 'de');
+  };
+  function showError(message) {
+    const el = $('pvAlertsError');
+    el.textContent = message;
+    el.hidden = !message;
+  }
+  async function requestJson(url, method='GET') {
+    const response = await fetch(url, {method, credentials:'same-origin',cache:'no-store'});
+    const payload = await response.json();
+    if (!response.ok || payload.success === false) throw new Error(payload.error || `HTTP ${response.status}`);
+    return payload;
+  }
+  function linkForPlate(plate) {
+    const separator = historyBase.includes('?') ? '&' : '?';
+    return historyBase + separator + 'search=' + encodeURIComponent(String(plate || ''));
+  }
+  function buildCard(item) {
+    const unread = !item.is_read;
+    const card = newElement('article', 'pv-alert-card');
+    card.dataset.unread = String(unread);
+    const top = newElement('div', 'pv-alert-card-top');
+    const left = newElement('div');
+    left.append(newElement('div', 'pv-alert-plate', item.plate_text || item.normalized || '-'));
+    left.append(newElement('div', 'pv-alert-subtitle', item.label || 'Watchlist-Treffer'));
+    top.append(left);
+    top.append(newElement('span', unread ? 'badge bg-info text-dark' : 'badge bg-secondary', unread ? 'Neu' : 'Gelesen'));
+    card.append(top);
+    const details = newElement('div', 'pv-alert-meta');
+    const chips = [translatedDate(item.last_seen_at), item.source || 'unbekannt',
+      Number.isFinite(Number(item.confidence)) ? `${Math.round(Number(item.confidence)*100)} %` : '-',
+      item.match_type === 'similar' ? 'Aehnliches Kennzeichen' : 'Exakt',
+      Number(item.occurrences) > 1 ? `${item.occurrences} Erkennungen` : '1 Erkennung'];
+    chips.forEach(value => details.append(newElement('span','pv-alert-chip',value)));
+    card.append(details);
+    const actions = newElement('div','pv-alert-actions');
+    const open = newElement('a','btn btn-outline-info btn-sm','In Historie ansehen');
+    open.href = linkForPlate(item.normalized || item.plate_text);
+    actions.append(open);
+    if (unread) {
+      const ack = newElement('button','btn btn-outline-success btn-sm','Als gelesen');
+      ack.type = 'button';
+      ack.addEventListener('click', () => mutate(`${endpoint}/${encodeURIComponent(item.id)}/read`,'POST'));
+      actions.append(ack);
+    }
+    const remove = newElement('button','btn btn-outline-danger btn-sm','Meldung entfernen');
+    remove.type = 'button';
+    remove.addEventListener('click', () => {
+      if (window.confirm('Nur diese Meldung entfernen? Die Erkennung bleibt in der Historie.')) {
+        mutate(`${endpoint}/${encodeURIComponent(item.id)}`,'DELETE');
+      }
+    });
+    actions.append(remove);
+    card.append(actions);
+    return card;
+  }
+  async function reload() {
+    if (model.busy) return;
+    model.busy = true;
+    try {
+      const suffix = `?limit=${model.limit}&offset=${model.offset}&unread=${model.unread ? 'true' : 'false'}`;
+      const result = await requestJson(endpoint + suffix);
+      model.total = result.total || 0;
+      if (model.offset && model.offset >= model.total) {
+        model.offset = Math.max(0, Math.floor(Math.max(0,model.total - 1) / model.limit) * model.limit);
+        model.busy = false;
+        return reload();
+      }
+      $('pvAlertUnread').textContent = Number(result.status?.unread || 0);
+      $('pvAlertsItems').replaceChildren(...(result.items || []).map(buildCard));
+      $('pvAlertsEmpty').hidden = !!(result.items || []).length;
+      $('pvAlertsPageInfo').textContent = model.total ? `${model.offset + 1}-${Math.min(model.offset+model.limit,model.total)} von ${model.total}` : '0 Treffer';
+      $('pvAlertsPrev').disabled = model.offset === 0;
+      $('pvAlertsNext').disabled = model.offset+model.limit >= model.total;
+      showError('');
+    } catch (error) {
+      showError('Alarme konnten nicht geladen werden: ' + error.message);
+    } finally {
+      model.busy = false;
+    }
+  }
+  async function mutate(url, method) {
+    try { await requestJson(url, method); await reload(); }
+    catch (error) { showError('Aktion fehlgeschlagen: ' + error.message); }
+  }
+  $('pvAlertsAll').addEventListener('click', () => select(false));
+  $('pvAlertsUnreadOnly').addEventListener('click', () => select(true));
+  function select(value) {
+    model.unread = value;
+    model.offset = 0;
+    $('pvAlertsAll').className = value ? 'btn btn-outline-primary btn-sm' : 'btn btn-primary btn-sm';
+    $('pvAlertsUnreadOnly').className = value ? 'btn btn-primary btn-sm' : 'btn btn-outline-primary btn-sm';
+    $('pvAlertsAll').setAttribute('aria-pressed', String(!value));
+    $('pvAlertsUnreadOnly').setAttribute('aria-pressed', String(value));
+    reload();
+  }
+  $('pvAlertsPrev').addEventListener('click', () => { model.offset=Math.max(0,model.offset-model.limit);reload(); });
+  $('pvAlertsNext').addEventListener('click', () => { model.offset+=model.limit;reload(); });
+  $('pvAlertsReload').addEventListener('click', reload);
+  $('pvAlertsReadAll').addEventListener('click', () => mutate(window.pvUrl('/api/alerts/read-all'),'POST'));
+  async function loadSettings() {
+    try {
+      const result = await requestJson(window.pvUrl('/api/alerts/settings'));
+      $('pvAlertsEnabled').checked = !!result.settings.enabled;
+      $('pvAlertsMinimum').value = Math.round(Number(result.settings.min_confidence) * 100);
+      $('pvAlertsCooldown').value = Number(result.settings.cooldown_seconds);
+    } catch (error) { showError('Einstellungen nicht verfuegbar: ' + error.message); }
+  }
+  $('pvAlertsSaveSettings').addEventListener('click', async () => {
+    const percent = Number($('pvAlertsMinimum').value);
+    const seconds = Number($('pvAlertsCooldown').value);
+    if (!Number.isInteger(percent) || percent < 0 || percent > 100 ||
+        !Number.isInteger(seconds) || seconds < 0 || seconds > 3600) {
+      showError('Bitte 0-100 % und 0-3600 Sekunden eingeben.');
+      return;
+    }
+    try {
+      const response = await fetch(window.pvUrl('/api/alerts/settings'), {
+        method:'POST',credentials:'same-origin',cache:'no-store',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({enabled:$('pvAlertsEnabled').checked,
+                             min_confidence:percent/100,cooldown_seconds:seconds})
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || `HTTP ${response.status}`);
+      showError('');
+      await loadSettings();
+    } catch (error) { showError('Einstellungen konnten nicht gespeichert werden: ' + error.message); }
+  });
+  // Home Assistant: strictly opt-in. The server never sends a token to JS.
+  const haApi = window.pvUrl('/api/alerts/homeassistant');
+  const haFeedback = message => { $('pvHAFeedback').textContent = String(message || ''); };
+  async function loadHADeliveryLog() {
+    const holder = $('pvHADeliveryLog');
+    try {
+      const response = await requestJson(haApi + '/deliveries?limit=20');
+      const stateName = {pending:'Wartend',sending:'In Zustellung',
+        accepted:'Von HA angenommen',failed:'Fehlgeschlagen'};
+      const items = (response.items || []).map(item => {
+        const node = newElement('div','pv-delivery-entry');
+        const left = newElement('div');
+        left.append(newElement('strong','',item.channel === 'mobile' ? 'Smartphone' : 'Home Assistant'));
+        left.append(newElement('div','',`${stateName[item.state] || 'Unbekannt'} · ${Number(item.attempts) || 0} Versuch(e)`));
+        const right = newElement('span','',translatedDate(item.accepted_at || item.created_at));
+        if (item.last_error) right.append(newElement('div','',String(item.last_error).slice(0,120)));
+        node.append(left,right);
+        return node;
+      });
+      holder.replaceChildren(...(items.length ? items : [newElement('div','pv-alert-small','Noch keine Zustellauftraege.') ]));
+    } catch (error) {
+      holder.replaceChildren(newElement('div','pv-alert-small','Protokoll nicht verfuegbar: ' + error.message));
+    }
+  }
+  $('pvHADeliveryDetails').addEventListener('toggle', () => {
+    if ($('pvHADeliveryDetails').open) loadHADeliveryLog();
+  });
+  $('pvHALogRefresh').addEventListener('click', loadHADeliveryLog);
+  async function loadHASettings() {
+    try {
+      const response = await requestJson(haApi);
+      const settings = response.settings || {};
+      $('pvHAPersistent').checked = settings.ha_persistent_enabled === true;
+      $('pvHAMobile').checked = settings.ha_mobile_enabled === true;
+      $('pvHAMobileService').value = settings.ha_mobile_service ? 'notify.' + settings.ha_mobile_service : '';
+      $('pvHAIncludePlate').checked = settings.ha_include_plate === true;
+      const count = response.delivery || {};
+      $('pvHAStatus').textContent = (response.paused ? 'Versand pausiert: Watchlist-Alarmierung deaktiviert · ' : '') +
+        (response.token_available ? 'HA-Token vorhanden (Verbindung noch nicht geprüft)' : 'HA-Token fehlt – Add-on-Berechtigung prüfen') +
+        ` · ${Number(count.pending || 0)} ausstehend · ${Number(count.accepted || 0)} von HA angenommen · ${Number(count.failed || 0)} fehlgeschlagen` +
+        (count.last_error ? ` · Letzter Fehler: ${String(count.last_error).slice(0,120)}` : '');
+    } catch (error) {
+      $('pvHAStatus').textContent = 'HA-Zustellstatus nicht verfügbar: ' + error.message;
+    }
+  }
+  async function postHA(url, payload) {
+    const response = await fetch(url, {
+      method:'POST',credentials:'same-origin',cache:'no-store',
+      headers: payload ? {'Content-Type':'application/json'} : {},
+      body:payload ? JSON.stringify(payload) : undefined
+    });
+    const result = await response.json();
+    if (!response.ok || result.success !== true) throw new Error(result.error || `HTTP ${response.status}`);
+    return result;
+  }
+  $('pvHASave').addEventListener('click', async () => {
+    const target = $('pvHAMobileService').value.trim().toLowerCase();
+    if ($('pvHAMobile').checked && !/^((notify\.)?mobile_app_[a-z0-9_]{1,75})$/.test(target)) {
+      haFeedback('Bitte einen gültigen Dienst wie notify.mobile_app_mein_handy angeben.');
+      return;
+    }
+    try {
+      await postHA(haApi, {
+        ha_persistent_enabled:$('pvHAPersistent').checked,
+        ha_mobile_enabled:$('pvHAMobile').checked,
+        ha_mobile_service:target,
+        ha_include_plate:$('pvHAIncludePlate').checked
+      });
+      haFeedback('HA-Einstellungen gespeichert. Es werden nur neue Treffer weitergeleitet.');
+      await loadHASettings();
+      if ($('pvHADeliveryDetails').open) await loadHADeliveryLog();
+    } catch (error) { haFeedback('Speichern fehlgeschlagen: ' + error.message); }
+  });
+  $('pvHATest').addEventListener('click', async () => {
+    try {
+      const result = await postHA(haApi + '/test');
+      haFeedback(result.message || 'Home Assistant hat die Testmeldung angenommen.');
+    } catch (error) { haFeedback('Verbindungstest: ' + error.message); }
+    await loadHASettings();
+    if ($('pvHADeliveryDetails').open) await loadHADeliveryLog();
+  });
+  $('pvHARetry').addEventListener('click', async () => {
+    try {
+      const result = await postHA(haApi + '/retry');
+      haFeedback(`${result.queued} fehlgeschlagene Zustellungen erneut eingereiht.`);
+    } catch (error) { haFeedback('Erneuter Versuch fehlgeschlagen: ' + error.message); }
+    await loadHASettings();
+    if ($('pvHADeliveryDetails').open) await loadHADeliveryLog();
+  });
+  loadHASettings();
+  loadSettings();
+  reload();
+  setInterval(() => { if (!document.hidden) reload(); }, 30000);
+})();
+</script>
+{% endblock %}

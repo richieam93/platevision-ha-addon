@@ -4,8 +4,8 @@
 
 {% block header_actions %}
 <div class="d-flex gap-2 flex-wrap">
-    <a class="btn btn-sm btn-outline-success" id="exportCsv" href="/api/statistics/export?format=csv"><i class="fas fa-file-csv me-1"></i>CSV</a>
-    <a class="btn btn-sm btn-outline-info" id="exportJson" href="/api/statistics/export?format=json"><i class="fas fa-file-code me-1"></i>JSON</a>
+    <a class="btn btn-sm btn-outline-success" id="exportCsv" href="{{ pv_prefix }}/api/statistics/export?format=csv"><i class="fas fa-file-csv me-1"></i>CSV</a>
+    <a class="btn btn-sm btn-outline-info" id="exportJson" href="{{ pv_prefix }}/api/statistics/export?format=json"><i class="fas fa-file-code me-1"></i>JSON</a>
     <button class="btn btn-sm btn-primary" onclick="loadTrafficStats()"><i class="fas fa-sync-alt me-1"></i>Aktualisieren</button>
 </div>
 {% endblock %}
@@ -94,7 +94,12 @@
 let trafficData = null;
 let dailyChart = null;
 const pct = v => Math.round(Number(v || 0) * 100) + '%';
-const fmtDate = s => s ? new Date(s).toLocaleString('de-DE') : '—';
+const fmtDate = value => {
+    const date = value ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('de-DE') : '-';
+};
+const safeStats = value => pvEscapeHtml(value ?? '');
+const statsNumber = value => Number.isFinite(Number(value)) ? Number(value) : 0;
 function trafficParams(){
     const params = new URLSearchParams();
     if(dateFrom.value) params.set('date_from', dateFrom.value);
@@ -109,25 +114,26 @@ function trafficParams(){
 function statusBadge(status){
     const labels = {present_recently:'noch da', arrived_detected:'gekommen', departed_detected:'gegangen', departed_assumed:'gegangen*'};
     const cls = status === 'present_recently' || status === 'arrived_detected' ? 'bg-success' : (status === 'departed_detected' ? 'bg-info' : 'bg-secondary');
-    return `<span class="badge ${cls}">${labels[status] || status || 'unbekannt'}</span>`;
+    return `<span class="badge ${cls}">${safeStats(labels[status] || status || 'unbekannt')}</span>`;
 }
 function loadTrafficStats(){
     const params = trafficParams();
-    exportCsv.href = '/api/statistics/export?format=csv&' + params.toString();
-    exportJson.href = '/api/statistics/export?format=json&' + params.toString();
-    fetch('/api/statistics/traffic?' + params.toString()).then(r=>r.json()).then(d=>{trafficData=d; renderTraffic();});
+    exportCsv.href = '{{ pv_prefix }}/api/statistics/export?format=csv&' + params.toString();
+    exportJson.href = '{{ pv_prefix }}/api/statistics/export?format=json&' + params.toString();
+    fetch('{{ pv_prefix }}/api/statistics/traffic?' + params.toString()).then(r=>r.json()).then(d=>{trafficData=d; renderTraffic();});
 }
 function renderTraffic(){
-    const s = trafficData.summary || {};
-    kpiVisits.textContent = s.total_visits || 0;
-    kpiUnique.textContent = s.unique_vehicles || 0;
-    kpiRepeats.textContent = s.repeat_vehicles || 0;
-    kpiPresent.textContent = s.currently_present || 0;
+    const data = trafficData || {};
+    const summary = data.summary || {};
+    kpiVisits.textContent = statsNumber(summary.total_visits);
+    kpiUnique.textContent = statsNumber(summary.unique_vehicles);
+    kpiRepeats.textContent = statsNumber(summary.repeat_vehicles);
+    kpiPresent.textContent = statsNumber(summary.currently_present);
     renderDailyChart();
-    dailyRows.innerHTML = (trafficData.daily||[]).length ? (trafficData.daily||[]).slice().reverse().map(r=>`<tr><td>${new Date(r.date).toLocaleDateString('de-DE')}</td><td><b>${r.visits}</b></td><td>${r.unique_vehicles}</td><td>${r.detections}</td><td>${r.repeat_vehicles}</td><td>${r.departures_detected + r.departures_assumed}</td><td>${r.present_recently}</td></tr>`).join('') : '<tr><td colspan="7" class="text-center text-secondary py-4">Keine Daten im Zeitraum</td></tr>';
-    sessionRows.innerHTML = (trafficData.sessions||[]).slice(0,80).map(s=>`<tr><td><button class="btn btn-link p-0" onclick="profile('${s.plate_text_normalized}')"><span class="plate-badge">${s.plate_text}</span></button></td><td>${fmtDate(s.start_time)}</td><td>${fmtDate(s.end_time)}</td><td>${s.duration_label}</td><td>${statusBadge(s.status)} ${s.departure_assumed?'<span class="text-secondary small">Timeout</span>':''}</td><td>${s.detections}</td></tr>`).join('') || '<tr><td colspan="6" class="text-center text-secondary py-4">Keine Sessions</td></tr>';
-    topPlates.innerHTML = (trafficData.top_plates||[]).slice(0,12).map(p=>`<button class="traffic-plate-card" onclick="profile('${p.normalized}')"><span class="plate-badge">${p.plate_text}</span><span class="text-secondary small">${p.visits} Besuche · ${p.detections} Erkennungen · ${p.days_seen} Tage</span><span>${statusBadge(p.last_status)}</span></button>`).join('') || '<div class="text-secondary">Keine Kennzeichen</div>';
-    presentRows.innerHTML = (trafficData.currently_present||[]).map(p=>`<div class="border rounded p-2" style="border-color:var(--card-border)!important"><span class="plate-badge">${p.plate_text}</span><div class="text-secondary small mt-1">Seit ${fmtDate(p.start_time)} · ${p.detections} Erkennungen</div></div>`).join('') || '<div class="text-secondary">Aktuell nichts als anwesend markiert.</div>';
+    dailyRows.innerHTML = (data.daily||[]).length ? (data.daily||[]).slice().reverse().map(r=>`<tr><td>${safeStats(fmtDate(r.date))}</td><td><b>${statsNumber(r.visits)}</b></td><td>${statsNumber(r.unique_vehicles)}</td><td>${statsNumber(r.detections)}</td><td>${statsNumber(r.repeat_vehicles)}</td><td>${statsNumber(r.departures_detected) + statsNumber(r.departures_assumed)}</td><td>${statsNumber(r.present_recently)}</td></tr>`).join('') : '<tr><td colspan="7" class="text-center text-secondary py-4">Keine Daten im Zeitraum</td></tr>';
+    sessionRows.innerHTML = (data.sessions||[]).slice(0,80).map(row=>`<tr><td><button class="btn btn-link p-0" data-plate-profile="${safeStats(row.plate_text_normalized)}"><span class="plate-badge">${safeStats(row.plate_text)}</span></button></td><td>${safeStats(fmtDate(row.start_time))}</td><td>${safeStats(fmtDate(row.end_time))}</td><td>${safeStats(row.duration_label)}</td><td>${statusBadge(row.status)} ${row.departure_assumed?'<span class="text-secondary small">Timeout</span>':''}</td><td>${statsNumber(row.detections)}</td></tr>`).join('') || '<tr><td colspan="6" class="text-center text-secondary py-4">Keine Sessions</td></tr>';
+    topPlates.innerHTML = (data.top_plates||[]).slice(0,12).map(row=>`<button class="traffic-plate-card" data-plate-profile="${safeStats(row.normalized)}"><span class="plate-badge">${safeStats(row.plate_text)}</span><span class="text-secondary small">${statsNumber(row.visits)} Besuche / ${statsNumber(row.detections)} Erkennungen / ${statsNumber(row.days_seen)} Tage</span><span>${statusBadge(row.last_status)}</span></button>`).join('') || '<div class="text-secondary">Keine Kennzeichen</div>';
+    presentRows.innerHTML = (data.currently_present||[]).map(row=>`<div class="border rounded p-2" style="border-color:var(--card-border)!important"><span class="plate-badge">${safeStats(row.plate_text)}</span><div class="text-secondary small mt-1">Seit ${safeStats(fmtDate(row.start_time))} / ${statsNumber(row.detections)} Erkennungen</div></div>`).join('') || '<div class="text-secondary">Aktuell nichts als anwesend markiert.</div>';
 }
 function renderDailyChart(){
     if(!trafficData) return;
@@ -139,11 +145,18 @@ function renderDailyChart(){
 }
 function profile(plate){ plateProfileInput.value = plate; loadPlateProfile(); }
 function loadPlateProfile(){
-    const plate = plateProfileInput.value.trim(); if(!plate){showToast('Statistik','Bitte Kennzeichen eingeben','warning'); return;}
-    fetch('/api/statistics/plate/' + encodeURIComponent(plate) + '?' + trafficParams().toString()).then(r=>r.json()).then(d=>{
-        plateProfileResult.innerHTML = `<div class="mb-2"><span class="plate-badge">${d.plate_text||plate}</span></div><div><b>${d.visits||0}</b> Besuche, <b>${d.detections||0}</b> Erkennungen, <b>${d.days_seen||0}</b> Tage</div><div>Erstes Mal: ${fmtDate(d.first_seen)}</div><div>Letztes Mal: ${fmtDate(d.last_seen)}</div><hr>${(d.sessions||[]).slice(0,6).map(s=>`<div class="d-flex justify-content-between border-bottom py-1" style="border-color:var(--card-border)!important"><span>${fmtDate(s.start_time)}</span><span>${statusBadge(s.status)}</span></div>`).join('')}`;
-    });
+    const plate = plateProfileInput.value.trim();
+    if (!plate) {showToast('Statistik','Bitte Kennzeichen eingeben','warning'); return;}
+    fetch('{{ pv_prefix }}/api/statistics/plate/' + encodeURIComponent(plate) + '?' + trafficParams().toString())
+        .then(response => {if (!response.ok) throw new Error('Profil nicht verfuegbar'); return response.json();})
+        .then(data => {
+            plateProfileResult.innerHTML = `<div class="mb-2"><span class="plate-badge">${safeStats(data.plate_text||plate)}</span></div><div><b>${statsNumber(data.visits)}</b> Besuche, <b>${statsNumber(data.detections)}</b> Erkennungen, <b>${statsNumber(data.days_seen)}</b> Tage</div><div>Erstes Mal: ${safeStats(fmtDate(data.first_seen))}</div><div>Letztes Mal: ${safeStats(fmtDate(data.last_seen))}</div><hr>${(data.sessions||[]).slice(0,6).map(item=>`<div class="d-flex justify-content-between border-bottom py-1" style="border-color:var(--card-border)!important"><span>${safeStats(fmtDate(item.start_time))}</span><span>${statusBadge(item.status)}</span></div>`).join('')}`;
+        }).catch(error => {plateProfileResult.textContent = String(error.message || error);});
 }
+document.addEventListener('click', event => {
+    const button = event.target.closest('[data-plate-profile]');
+    if (button) profile(button.dataset.plateProfile || '');
+});
 function initDefaultDates(){ const end=new Date(); const start=new Date(); start.setDate(end.getDate()-6); dateTo.value=end.toISOString().slice(0,10); dateFrom.value=start.toISOString().slice(0,10); }
 document.addEventListener('DOMContentLoaded',()=>{initDefaultDates(); loadTrafficStats(); setInterval(()=>{if(autoRefreshStats.checked) loadTrafficStats();}, 15000);});
 </script>

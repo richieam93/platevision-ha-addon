@@ -12,10 +12,10 @@
         <div>
             <div class="mini-label">Personenzählung</div>
             <h2 class="mb-2">Wie viele Personen sind durchgegangen?</h2>
-            <p class="text-secondary mb-0">Tageswerte, Stundenverteilung, Richtung, Ereignis-Historie, Live-Kalibrierung und YOLO-Personenerkennung als fester Projektbestandteil.</p>
+            <p class="text-secondary mb-0">Zählungen, Anwesenheit, Bilder und Ereignisse auf einen Blick. Die Kalibrierung ist in Test & Upload.</p>
         </div>
         <div class="d-flex flex-wrap gap-2">
-            <a href="/test#recognitionTestSettingsCard" class="btn btn-outline-info"><i class="fas fa-flask me-2"></i>Test & Upload Einstellungen</a>
+            <a href="{{ pv_prefix }}/test#recognitionTestSettingsCard" class="btn btn-outline-info"><i class="fas fa-flask me-2"></i>Test & Upload Einstellungen</a>
             <button class="btn btn-outline-success" onclick="runSnapshotTest()"><i class="fas fa-vial me-2"></i>Live analysieren</button>
             <button class="btn btn-outline-danger" onclick="cleanupPeopleHistory()"><i class="fas fa-broom me-2"></i>Cleanup</button>
             <button type="button" class="btn btn-outline-primary" onclick="downloadPeopleExport('csv')"><i class="fas fa-file-csv me-2"></i>CSV</button>
@@ -24,7 +24,7 @@
     </div>
 </div>
 
-<div class="alert alert-info mb-4">
+<div class="pv-info-strip mb-3">
     <i class="fas fa-circle-info me-2"></i>
     Personen werden mit der Zähllinie aus <strong>Test & Upload</strong> gezählt. Jeder erkannte Personen-Crop wird gespeichert, wenn die Personen-Historie aktiv ist. Dieselben Werte gelten für Foto-Upload und RTSP.
 </div>
@@ -47,7 +47,7 @@
         <div class="card h-100">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0"><i class="fas fa-images me-2"></i>Neueste Personenbilder</h5>
-                <div class="d-flex flex-wrap gap-2"><a class="btn btn-sm btn-primary" href="/people/gallery"><i class="fas fa-calendar-days me-1"></i>Komplette Galerie</a><button class="btn btn-sm btn-outline-info" onclick="loadPeopleImageHistory()"><i class="fas fa-rotate me-1"></i>Aktualisieren</button><button class="btn btn-sm btn-outline-danger" onclick="cleanupPeopleImages()"><i class="fas fa-broom me-1"></i>Bereinigen</button></div>
+                <div class="d-flex flex-wrap gap-2"><a class="btn btn-sm btn-primary" href="{{ pv_prefix }}/people/gallery"><i class="fas fa-calendar-days me-1"></i>Komplette Galerie</a><button class="btn btn-sm btn-outline-info" onclick="loadPeopleImageHistory()"><i class="fas fa-rotate me-1"></i>Aktualisieren</button><button class="btn btn-sm btn-outline-danger" onclick="cleanupPeopleImages()"><i class="fas fa-broom me-1"></i>Bereinigen</button></div>
             </div>
             <div class="card-body">
                 <p class="text-secondary small mb-3">Zeigt nur gespeicherte Personen-Crops. Einzelne Einträge können manuell gelöscht werden.</p>
@@ -79,66 +79,10 @@
     </div>
 </div>
 
-<div class="row g-4 mb-4">
-    <div class="col-lg-8">
-        <div class="card h-100">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="card-title mb-0"><i class="fas fa-map-location-dot me-2"></i>Aktive Linien-/Zonen-Vorschau</h5>
-                <button class="btn btn-sm btn-outline-info" onclick="refreshPeopleAnalysisPreview()"><i class="fas fa-rotate me-1"></i>Aktualisieren</button>
-            </div>
-            <div class="card-body">
-                <div class="people-preview-shell compact" id="peopleLinePreviewShell" title="Klicken oder ziehen, um die Personen-Zähllinie zu verschieben"><img id="peopleAnalysisPreview" src="/api/people/preview/image?from=people" alt="Personenanalyse Vorschau"></div>
-                <small class="text-secondary d-block mt-2">Zeigt RTSP-Livebild oder Fallback-Bild mit gespeicherter Zähllinie, Personen-Zone und Richtung.</small>
-            </div>
-        </div>
-    </div>
-    <div class="col-lg-4">
-        <div class="card h-100">
-            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-sliders me-2"></i>Aktive Einstellungen</h5></div>
-            <div class="card-body">
-                <div id="peopleActiveSettings"><p class="text-secondary mb-0">Lade Einstellungen...</p></div>
-                <hr class="my-3">
-                <div class="mini-label mb-2"><i class="fas fa-route me-1"></i>Zähllinie direkt einstellen</div>
-                <div class="form-check form-switch mb-2">
-                    <input class="form-check-input" type="checkbox" id="peopleQuickLineEnabled">
-                    <label class="form-check-label" for="peopleQuickLineEnabled">Zähllinie aktiv</label>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label small mb-1">Linienposition: <strong id="peopleQuickLineLabel">50%</strong></label>
-                    <input class="form-range" type="range" min="1" max="99" step="1" id="peopleQuickLineRange">
-                    <input class="form-control form-control-sm mt-1" type="number" min="1" max="99" step="1" id="peopleQuickLinePercent">
-                </div>
-                <div class="row g-2">
-                    <div class="col-12">
-                        <label class="form-label small mb-1">Achse</label>
-                        <select class="form-select form-select-sm" id="peopleQuickAxis">
-                            <option value="y">Horizontal / oben-unten</option>
-                            <option value="x">Vertikal / links-rechts</option>
-                        </select>
-                    </div>
-                    <div class="col-12">
-                        <label class="form-label small mb-1">Richtung zählen</label>
-                        <select class="form-select form-select-sm" id="peopleQuickDirection">
-                            <option value="both">beide Richtungen</option>
-                            <option value="down">runter</option>
-                            <option value="up">hoch</option>
-                            <option value="right">rechts</option>
-                            <option value="left">links</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-check form-switch mt-2">
-                    <input class="form-check-input" type="checkbox" id="peopleQuickRelativeToRoi">
-                    <label class="form-check-label" for="peopleQuickRelativeToRoi">Linie relativ zum Straßenbereich</label>
-                </div>
-                <div class="d-grid gap-2 mt-3">
-                    <button class="btn btn-info btn-sm" type="button" onclick="savePeopleLineSettings()"><i class="fas fa-save me-1"></i>Zähllinie speichern & RTSP anwenden</button>
-                    <button class="btn btn-outline-secondary btn-sm" type="button" onclick="refreshPeopleAnalysisPreview(true)"><i class="fas fa-rotate me-1"></i>Vorschau aktualisieren</button>
-                </div>
-                <small class="text-secondary d-block mt-2">Du kannst die Linie auch direkt im Vorschaubild anklicken oder ziehen.</small>
-            </div>
-        </div>
-    </div>
+<div class="pv-info-strip mb-4" id="peopleCalibrationMoved">
+    <div><i class="fas fa-ruler-combined text-info me-2"></i><strong>Personen-Zähllinie und Vorschau</strong>
+       <p class="mb-0 text-secondary small">Die Kalibrierung findest du jetzt bei <strong>Test & Upload</strong>. Hier bleiben Zählung, Bilder, Anwesenheit und Historie im Mittelpunkt.</p></div>
+    <a href="{{ pv_prefix }}/test#peopleCalibrationWorkspace" class="btn btn-outline-info btn-sm">Kalibrierung öffnen <i class="fas fa-arrow-right ms-1"></i></a>
 </div>
 
 <div class="card mb-4">
@@ -237,7 +181,7 @@
     </div>
     <div class="col-lg-5">
         <div class="card h-100">
-            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-vial me-2"></i>Live-Kalibrierung</h5></div>
+            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-vial me-2"></i>Live-Snapshot prüfen</h5></div>
             <div class="card-body">
                 <p class="text-secondary">Analysiere den aktuellen Live-Snapshot mit den gespeicherten Einstellungen. Für Bild-Uploads steht zusätzlich die Test-Seite bereit.</p>
                 <button class="btn btn-success w-100" onclick="runSnapshotTest()"><i class="fas fa-camera me-2"></i>Snapshot analysieren</button>
@@ -326,7 +270,7 @@ function resetPeopleFilters() {
 function downloadPeopleExport(format) {
     const params = queryParams();
     params.set('format', format);
-    window.location.href = '/api/people/export?' + params.toString();
+    window.location.href = '{{ pv_prefix }}/api/people/export?' + params.toString();
 }
 function pct(v) { return ((Number(v)||0) * 100).toFixed(1) + '%'; }
 function dirText(d) { return {down:'runter', up:'hoch', right:'rechts', left:'links', unknown:'unbekannt', both:'beide'}[d] || d || '-'; }
@@ -354,7 +298,7 @@ function historyThumb(row) {
     return src ? `<img class="people-history-thumb" src="${escapeHtml(src)}" alt="Person">` : '<div class="people-history-thumb placeholder"><i class="fas fa-user"></i></div>';
 }
 async function loadPeopleStats() {
-    const response = await fetch('/api/people/statistics?' + queryParams().toString());
+    const response = await fetch('{{ pv_prefix }}/api/people/statistics?' + queryParams().toString());
     const data = await response.json();
     const s = data.summary || {};
     document.getElementById('todayPersons').textContent = s.today_persons ?? 0;
@@ -381,7 +325,7 @@ async function loadPeopleHistory() {
     params.set('limit', peopleHistoryLimit);
     params.set('offset', peopleHistoryOffset);
     params.set('counted_only', 'false');
-    const response = await fetch('/api/people/history?' + params.toString());
+    const response = await fetch('{{ pv_prefix }}/api/people/history?' + params.toString());
     const data = await response.json();
     const rows = data.entries || [];
     selectedPeopleEvents.clear();
@@ -415,7 +359,7 @@ async function loadPeopleSessions() {
     params.set('limit', peopleSessionLimit);
     params.set('offset', peopleSessionOffset);
     params.set('counted_only', 'false');
-    const response = await fetch('/api/people/sessions?' + params.toString());
+    const response = await fetch('{{ pv_prefix }}/api/people/sessions?' + params.toString());
     const data = await response.json();
     const rows = data.sessions || [];
     document.getElementById('sessionMeta').textContent = `${data.total || 0} Sitzungen · Trennung nach ${data.session_gap_minutes || 5} Minuten Pause`;
@@ -458,13 +402,13 @@ function updateBulkDeleteButton() {
 async function bulkDeletePeopleEvents() {
     const ids = Array.from(selectedPeopleEvents);
     if (!ids.length || !confirm(`${ids.length} ausgewählte Personenereignisse inklusive Bilder löschen?`)) return;
-    const response = await fetch('/api/people/history/bulk-delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, delete_images:true})});
+    const response = await fetch('{{ pv_prefix }}/api/people/history/bulk-delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, delete_images:true})});
     const data = await response.json();
     if (!data.success) { alert(data.error || 'Löschen fehlgeschlagen'); return; }
     await refreshPeopleData(false);
 }
 async function openPeopleEvent(id) {
-    const response = await fetch(`/api/people/history/${encodeURIComponent(id)}`);
+    const response = await fetch(`{{ pv_prefix }}/api/people/history/${encodeURIComponent(id)}`);
     const data = await response.json();
     if (!data.success) { alert(data.error || 'Ereignis nicht gefunden'); return; }
     const row = data.event || {};
@@ -489,7 +433,7 @@ async function openPeopleEvent(id) {
 }
 async function savePeopleEventReview() {
     const id = document.getElementById('peopleEventId').value;
-    const response = await fetch(`/api/people/history/${encodeURIComponent(id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label:valueOf('peopleEventLabel'), note:valueOf('peopleEventNote'), review_status:valueOf('peopleEventReview')})});
+    const response = await fetch(`{{ pv_prefix }}/api/people/history/${encodeURIComponent(id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label:valueOf('peopleEventLabel'), note:valueOf('peopleEventNote'), review_status:valueOf('peopleEventReview')})});
     const data = await response.json();
     if (!data.success) { alert(data.error || 'Speichern fehlgeschlagen'); return; }
     peopleEventModalInstance?.hide();
@@ -502,10 +446,10 @@ async function deleteCurrentPeopleEvent() {
 }
 function clearPeopleHistory() {
     if (!confirm('Personen-Historie wirklich löschen?')) return;
-    fetch('/api/people/history/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({delete_images:true})}).then(r=>r.json()).then(() => refreshPeopleData(true));
+    fetch('{{ pv_prefix }}/api/people/history/clear', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({delete_images:true})}).then(r=>r.json()).then(() => refreshPeopleData(true));
 }
 function loadPeoplePresence() {
-    return fetch('/api/people/presence').then(r => r.json()).then(data => {
+    return fetch('{{ pv_prefix }}/api/people/presence').then(r => r.json()).then(data => {
         const panel = document.getElementById('presencePanel');
         const active = data.active || [];
         panel.innerHTML = `<div class="d-flex justify-content-between align-items-center mb-2"><span>Aktive Tracks im Timeout-Fenster</span><strong class="fs-3">${data.active_count || 0}</strong></div><small class="text-secondary">Timeout: ${data.timeout_minutes || 0} Minuten</small>` +
@@ -513,169 +457,10 @@ function loadPeoplePresence() {
     });
 }
 
-let peopleLinePreviewMeta = {width: 1280, height: 720, road_roi: null};
-let peopleLineDragging = false;
-function clampPercent(value) {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return 50;
-    return Math.max(1, Math.min(99, Math.round(n)));
-}
-function normalizePeopleDirection(value, axis) {
-    const v = String(value || 'both');
-    if (v === 'positive') return axis === 'x' ? 'right' : 'down';
-    if (v === 'negative') return axis === 'x' ? 'left' : 'up';
-    if (['both','down','up','right','left'].includes(v)) return v;
-    return 'both';
-}
-function peopleLineControls() {
-    const percent = clampPercent(document.getElementById('peopleQuickLinePercent')?.value ?? document.getElementById('peopleQuickLineRange')?.value ?? 50);
-    const axis = document.getElementById('peopleQuickAxis')?.value || 'y';
-    return {
-        enabled: !!document.getElementById('peopleQuickLineEnabled')?.checked,
-        percent,
-        axis,
-        direction: normalizePeopleDirection(document.getElementById('peopleQuickDirection')?.value || 'both', axis),
-        relativeToRoi: !!document.getElementById('peopleQuickRelativeToRoi')?.checked
-    };
-}
-function setPeopleLineControls(s) {
-    if (!s) return;
-    const axis = s.movement_axis || 'y';
-    const direction = normalizePeopleDirection(s.crossing_direction || 'both', axis);
-    const percent = clampPercent(s.virtual_line_position_percent ?? 50);
-    const enabledEl = document.getElementById('peopleQuickLineEnabled');
-    const rangeEl = document.getElementById('peopleQuickLineRange');
-    const percentEl = document.getElementById('peopleQuickLinePercent');
-    const axisEl = document.getElementById('peopleQuickAxis');
-    const dirEl = document.getElementById('peopleQuickDirection');
-    const relEl = document.getElementById('peopleQuickRelativeToRoi');
-    if (enabledEl) enabledEl.checked = s.line_crossing_enabled !== false;
-    if (rangeEl) rangeEl.value = percent;
-    if (percentEl) percentEl.value = percent;
-    if (axisEl) axisEl.value = axis;
-    if (dirEl) dirEl.value = direction;
-    if (relEl) relEl.checked = s.line_relative_to_roi !== false;
-    updatePeopleLineLabel();
-}
-function updatePeopleLineLabel() {
-    const v = peopleLineControls();
-    const label = document.getElementById('peopleQuickLineLabel');
-    if (label) label.textContent = `${v.axis.toUpperCase()} ${v.percent}%`;
-}
-function peoplePreviewQueryFromControls() {
-    const v = peopleLineControls();
-    const params = new URLSearchParams();
-    params.set('from', 'people');
-    params.set('line_enabled', v.enabled ? '1' : '0');
-    params.set('line_percent', String(v.percent));
-    params.set('movement_axis', v.axis);
-    params.set('crossing_direction', v.direction);
-    params.set('line_relative_to_roi', v.relativeToRoi ? '1' : '0');
-    params.set('ts', String(Date.now()));
-    return params.toString();
-}
-function refreshPeopleAnalysisPreview(useControls = true) {
-    const img = document.getElementById('peopleAnalysisPreview');
-    if (!img) return;
-    img.src = useControls ? ('/api/people/preview/image?' + peoplePreviewQueryFromControls()) : ('/api/people/preview/image?from=people&ts=' + Date.now());
-}
-function peopleLineInputChanged() {
-    const rangeEl = document.getElementById('peopleQuickLineRange');
-    const percentEl = document.getElementById('peopleQuickLinePercent');
-    const percent = clampPercent(percentEl?.value ?? rangeEl?.value ?? 50);
-    if (rangeEl) rangeEl.value = percent;
-    if (percentEl) percentEl.value = percent;
-    const axis = document.getElementById('peopleQuickAxis')?.value || 'y';
-    const dirEl = document.getElementById('peopleQuickDirection');
-    if (dirEl) dirEl.value = normalizePeopleDirection(dirEl.value, axis);
-    updatePeopleLineLabel();
-    refreshPeopleAnalysisPreview(true);
-}
-async function savePeopleLineSettings() {
-    const v = peopleLineControls();
-    const response = await fetch('/api/config/people', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            line_crossing_enabled: v.enabled,
-            virtual_line_position_percent: v.percent,
-            movement_axis: v.axis,
-            crossing_direction: v.direction,
-            line_relative_to_roi: v.relativeToRoi,
-            count_strategy: 'line_crossing',
-            tracker_enabled: true
-        })
-    });
-    const data = await response.json();
-    if (!data.success) {
-        alert(data.error || 'Zähllinie konnte nicht gespeichert werden.');
-        return;
-    }
-    if (typeof showToast === 'function') showToast('Zähllinie gespeichert', 'Die Personen-Zähllinie gilt jetzt für Test & Upload und RTSP.', 'success');
-    refreshPeopleAnalysisPreview(true);
-    loadPeopleActiveSettings();
-}
-function previewImagePointFromEvent(evt) {
-    const img = document.getElementById('peopleAnalysisPreview');
-    if (!img) return null;
-    const box = img.getBoundingClientRect();
-    const naturalW = img.naturalWidth || peopleLinePreviewMeta.width || 1280;
-    const naturalH = img.naturalHeight || peopleLinePreviewMeta.height || 720;
-    const imgRatio = naturalW / Math.max(1, naturalH);
-    const boxRatio = box.width / Math.max(1, box.height);
-    let drawW = box.width, drawH = box.height, left = box.left, top = box.top;
-    if (boxRatio > imgRatio) {
-        drawH = box.height; drawW = drawH * imgRatio; left = box.left + (box.width - drawW) / 2;
-    } else {
-        drawW = box.width; drawH = drawW / imgRatio; top = box.top + (box.height - drawH) / 2;
-    }
-    const x = Math.max(0, Math.min(drawW, evt.clientX - left));
-    const y = Math.max(0, Math.min(drawH, evt.clientY - top));
-    return {xPx: x / Math.max(1, drawW) * naturalW, yPx: y / Math.max(1, drawH) * naturalH};
-}
-function setPeopleLineFromPreviewEvent(evt) {
-    const point = previewImagePointFromEvent(evt);
-    if (!point) return;
-    const axis = document.getElementById('peopleQuickAxis')?.value || 'y';
-    const rel = !!document.getElementById('peopleQuickRelativeToRoi')?.checked;
-    const roi = peopleLinePreviewMeta.road_roi || {};
-    const w = peopleLinePreviewMeta.width || 1280;
-    const h = peopleLinePreviewMeta.height || 720;
-    let percent;
-    if (rel && roi.enabled) {
-        if (axis === 'x') percent = ((point.xPx - Number(roi.x || 0)) / Math.max(1, Number(roi.width || w))) * 100;
-        else percent = ((point.yPx - Number(roi.y || 0)) / Math.max(1, Number(roi.height || h))) * 100;
-    } else {
-        percent = axis === 'x' ? (point.xPx / Math.max(1, w) * 100) : (point.yPx / Math.max(1, h) * 100);
-    }
-    const p = clampPercent(percent);
-    const rangeEl = document.getElementById('peopleQuickLineRange');
-    const percentEl = document.getElementById('peopleQuickLinePercent');
-    if (rangeEl) rangeEl.value = p;
-    if (percentEl) percentEl.value = p;
-    peopleLineInputChanged();
-}
-function initPeopleLineEditorEvents() {
-    ['peopleQuickLineEnabled','peopleQuickLineRange','peopleQuickLinePercent','peopleQuickAxis','peopleQuickDirection','peopleQuickRelativeToRoi'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener('input', peopleLineInputChanged);
-        if (el) el.addEventListener('change', peopleLineInputChanged);
-    });
-    const shell = document.getElementById('peopleLinePreviewShell');
-    if (shell) {
-        if (shell) shell.style.cursor = 'crosshair';
-        shell.addEventListener('pointerdown', evt => { peopleLineDragging = true; shell.setPointerCapture?.(evt.pointerId); setPeopleLineFromPreviewEvent(evt); });
-        shell.addEventListener('pointermove', evt => { if (peopleLineDragging) setPeopleLineFromPreviewEvent(evt); });
-        shell.addEventListener('pointerup', () => { peopleLineDragging = false; });
-        shell.addEventListener('pointercancel', () => { peopleLineDragging = false; });
-    }
-}
 function onOff(value) { return value ? '<span class="text-success">Ein</span>' : '<span class="text-secondary">Aus</span>'; }
 function loadPeopleActiveSettings() {
-    fetch('/api/people/settings-state').then(r => r.json()).then(data => {
+    fetch('{{ pv_prefix }}/api/people/settings-state').then(r => r.json()).then(data => {
         const s = data.summary || {};
-        peopleLinePreviewMeta = data.preview || peopleLinePreviewMeta;
-        setPeopleLineControls(s);
         const box = document.getElementById('peopleActiveSettings');
         if (!box) return;
         box.innerHTML = `
@@ -691,11 +476,11 @@ function loadPeopleActiveSettings() {
             <div id="peopleConfiguredRetention" data-days="${s.image_history_retention_days ?? 10}" class="people-summary-row"><span>Bild-History</span><strong>${onOff(s.image_history_enabled)} · ${s.image_history_retention_days ?? 10} Tage · Cleanup ${onOff(s.image_history_auto_cleanup_enabled)}</strong></div>
             <div class="people-summary-row"><span>Alle Detections</span><strong>${onOff(s.save_all_detections)}</strong></div>
             <div class="people-summary-row"><span>Aufbewahrung</span><strong>${s.retention_days ?? '-'} Tage</strong></div>
-            <a href="/test#recognitionTestSettingsCard" class="btn btn-sm btn-outline-info w-100 mt-3"><i class="fas fa-flask me-1"></i>Test & Upload öffnen</a>`;
+            <a href="{{ pv_prefix }}/test#recognitionTestSettingsCard" class="btn btn-sm btn-outline-info w-100 mt-3"><i class="fas fa-flask me-1"></i>Test & Upload öffnen</a>`;
     });
 }
 function loadPeopleModels() {
-    fetch('/api/models/people/options').then(r => r.json()).then(data => {
+    fetch('{{ pv_prefix }}/api/models/people/options').then(r => r.json()).then(data => {
         const current = data.current || {};
         const models = data.models || [];
         document.getElementById('peopleModelPanel').innerHTML = `
@@ -709,7 +494,7 @@ function loadPeopleModels() {
 }
 function cleanupPeopleHistory() {
     if (!confirm('Personen-Historie nach Aufbewahrungszeit bereinigen?')) return;
-    fetch('/api/people/cleanup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})})
+    fetch('{{ pv_prefix }}/api/people/cleanup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})})
         .then(r=>r.json()).then(data => { alert(`${data.removed || 0} Einträge entfernt, ${data.remaining || 0} bleiben.`); refreshPeopleData(false); });
 }
 
@@ -721,7 +506,7 @@ function personCropSrc(row) {
     if (row.crop_image_base64) return `data:image/jpeg;base64,${row.crop_image_base64}`;
     const urls = row.image_urls || row.images || {};
     if (urls.crop && String(urls.crop).startsWith('/')) return urls.crop;
-    if (urls.crop) return `/api/people/images/${urls.crop}`;
+    if (urls.crop) return `{{ pv_prefix }}/api/people/images/${urls.crop}`;
     return '';
 }
 function peopleCropGalleryFromRows(rows) {
@@ -741,7 +526,7 @@ function loadPeopleImageHistory() {
     params.set('limit', peopleImageLimit);
     params.set('offset', peopleImageOffset);
     params.set('counted_only', 'false');
-    return fetch('/api/people/images/history?' + params.toString()).then(r => r.json()).then(data => {
+    return fetch('{{ pv_prefix }}/api/people/images/history?' + params.toString()).then(r => r.json()).then(data => {
         const gallery = document.getElementById('peopleImageGallery');
         const entries = data.entries || [];
         if (!entries.length) {
@@ -753,7 +538,7 @@ function loadPeopleImageHistory() {
         }
         gallery.innerHTML = entries.map(row => {
             const urls = row.image_urls || {};
-            const main = urls.crop || urls.annotated || urls.full_frame || '';
+            const main = pvSafeImageUrl(urls.crop) || pvSafeImageUrl(urls.annotated) || pvSafeImageUrl(urls.full_frame) || '';
             const links = main ? `<a href="${escapeHtml(main)}" target="_blank">Bild öffnen</a>` : '<span class="text-secondary">Kein Bild</span>';
             return `<div class="people-image-card">
                 ${main ? `<img src="${escapeHtml(main)}" alt="Erkannte Person">` : '<div class="people-image-placeholder">Kein Personen-Crop</div>'}
@@ -774,7 +559,7 @@ function changePeopleImagePage(delta) {
 }
 async function deletePeopleEvent(id) {
     if (!id || !confirm('Diesen Personen-History-Eintrag inklusive Bildern löschen?')) return;
-    const response = await fetch(`/api/people/history/${encodeURIComponent(id)}/delete`, {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({delete_images:true})});
+    const response = await fetch(`{{ pv_prefix }}/api/people/history/${encodeURIComponent(id)}/delete`, {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({delete_images:true})});
     const data = await response.json();
     if (!data.success) { alert(data.error || 'Eintrag nicht gefunden'); return; }
     await refreshPeopleData(false);
@@ -783,11 +568,11 @@ function cleanupPeopleImages() {
     const configured = document.getElementById('peopleConfiguredRetention')?.dataset.days || '10';
     const days = prompt('Personenbilder älter als wie viele Tage löschen? Die Zähl-Historie bleibt erhalten.', configured);
     if (days === null) return;
-    fetch('/api/people/images/cleanup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({retention_days: Number(days) || 10})})
+    fetch('{{ pv_prefix }}/api/people/images/cleanup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({retention_days: Number(days) || 10})})
         .then(r=>r.json()).then(data => { alert(`${data.deleted_images || 0} Bilder entfernt. ${data.cleared_image_events || 0} Einträge behalten, aber ohne Bilder.`); refreshPeopleData(false); });
 }
 function loadRepeatGuardPanel() {
-    fetch('/api/people/settings-state').then(r=>r.json()).then(data => {
+    fetch('{{ pv_prefix }}/api/people/settings-state').then(r=>r.json()).then(data => {
         const s = data.summary || {};
         const el = document.getElementById('peopleRepeatGuardPanel');
         if (!el) return;
@@ -801,7 +586,7 @@ function loadRepeatGuardPanel() {
 function runSnapshotTest() {
     const box = document.getElementById('snapshotResult');
     box.innerHTML = '<div class="alert alert-info"><i class="fas fa-spinner fa-spin me-2"></i>Analysiere Snapshot...</div>';
-    fetch('/api/people/test/snapshot', {method:'POST'}).then(r=>r.json()).then(data => {
+    fetch('{{ pv_prefix }}/api/people/test/snapshot', {method:'POST'}).then(r=>r.json()).then(data => {
         if (!data.success) { box.innerHTML = `<div class="alert alert-warning">${data.error || 'Analyse nicht möglich'}</div>`; return; }
         box.innerHTML = `<div class="alert alert-success">${data.people?.length || 0} Personen erkannt, ${data.people_counted || 0} gezählt. Angezeigt werden nur Personen-Crops.</div>` +
             peopleCropGalleryFromRows(data.people || []);
@@ -809,13 +594,11 @@ function runSnapshotTest() {
     }).catch(() => box.innerHTML = '<div class="alert alert-danger">Test fehlgeschlagen.</div>');
 }
 document.addEventListener('DOMContentLoaded', function() {
-    initPeopleLineEditorEvents();
     refreshPeopleData(true);
     loadPeopleModels();
     loadPeopleActiveSettings();
     loadRepeatGuardPanel();
     document.getElementById('peopleQuery')?.addEventListener('keydown', event => { if (event.key === 'Enter') refreshPeopleData(true); });
-    setTimeout(() => refreshPeopleAnalysisPreview(true), 250);
     const requestedEvent = new URLSearchParams(window.location.search).get('event');
     if (requestedEvent) setTimeout(() => openPeopleEvent(requestedEvent), 450);
 });

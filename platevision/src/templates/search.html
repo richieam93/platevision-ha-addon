@@ -3,12 +3,40 @@
 {% block page_title %}Suche & Analyse{% endblock %}
 
 {% block content %}
+<style>
+/* Search cards must not let untrusted long labels expand the mobile viewport. */
+#watchlist > .d-flex { flex-wrap: wrap; min-width: 0; }
+#watchlist > .d-flex > div { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+#watchlist .plate-badge { display: inline-block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+#batchResult, #searchStatus, #presetDescription { overflow-wrap: anywhere; }
+#reviewSummary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .6rem; }
+#reviewSummary button { text-align: left; min-width: 0; overflow-wrap: anywhere; border: 1px solid var(--card-border); border-radius: .8rem; background: var(--pv-surface); color: var(--text-primary); padding: .75rem; }
+#reviewSummary button:hover, #reviewSummary button:focus-visible { border-color: var(--primary-color); }
+#reviewSummary strong { display: block; font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+#reviewSummary span { display: block; font-size: .78rem; color: var(--text-secondary); }
+.review-label { display: inline-block; font-size: .72rem; border: 1px solid var(--card-border); color: var(--text-secondary); border-radius: 999px; padding: .12rem .52rem; }
+.review-label.confirmed { color: var(--success-color); border-color: var(--success-color); }
+.review-label.needs_review { color: var(--warning-color); border-color: var(--warning-color); }
+.review-label.ignored { color: var(--danger-color); border-color: var(--danger-color); }
+.review-note-preview { max-width: 230px; overflow-wrap: anywhere; }
+#reviewDialog { width: min(96vw, 520px); max-height: 90vh; padding: 1.4rem; border: 1px solid var(--card-border); border-radius: 1rem; background: var(--card-bg); color: var(--text-primary); box-shadow: var(--pv-shadow); }
+#reviewDialog::backdrop { background: rgba(2, 8, 25, .78); }
+#reviewDialog textarea { max-height: 35vh; }
+@media(max-width: 600px) { #reviewSummary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>
 <div class="layout-upgrade-banner mb-3"><i class="fas fa-wand-magic-sparkles me-2"></i>Suchergebnisse können direkt in der Statistik weiter analysiert werden.</div>
 <div class="row g-4">
   <div class="col-xl-3">
     <div class="soft-card p-3 sticky-top" style="top:90px;z-index:1">
       <h5><i class="fas fa-filter text-primary me-2"></i>Filter</h5>
       <label class="form-label mt-3">Kennzeichen / Text</label><input class="form-control" id="q" list="suggestions" placeholder="OW 12345, Regex, Teiltext"><datalist id="suggestions"></datalist>
+      <label class="form-label mt-2" for="matchMode">Suchmodus</label>
+      <select class="form-select" id="matchMode" onchange="currentOffset=0;runSearch()">
+        <option value="contains" selected>Enthält / ähnlich</option>
+        <option value="starts_with">Beginnt mit (schneller)</option>
+        <option value="exact">Exaktes Kennzeichen (schnell)</option>
+      </select>
+      <div class="small text-secondary mt-1">Exakt und „Beginnt mit“ nutzen den Datenbankindex und ignorieren die Fuzzy-Einstellung.</div>
       <div class="row g-2 mt-2"><div class="col"><label class="form-label">Von</label><input type="date" class="form-control" id="dateFrom"></div><div class="col"><label class="form-label">Bis</label><input type="date" class="form-control" id="dateTo"></div></div>
       <label class="form-label mt-3">Min. Konfidenz <span id="minConfidenceLabel">0%</span></label><input type="range" class="form-range" min="0" max="100" value="0" id="minConfidence" oninput="minConfidenceLabel.textContent=this.value+'%'">
       <select class="form-select mt-2" id="source"><option value="">Alle Quellen</option></select>
@@ -19,14 +47,42 @@
       <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="unique" checked><label class="form-check-label" for="unique">Nur eindeutige</label></div>
       <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="validOnly"><label class="form-check-label" for="validOnly">Nur gültige Formate</label></div>
       <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="watchOnly"><label class="form-check-label" for="watchOnly">Nur Watchlist</label></div>
+      <label class="form-label mt-3" for="reviewStatusFilter">Prüfstatus</label>
+      <select class="form-select" id="reviewStatusFilter">
+        <option value="all">Alle Prüfstatus</option>
+        <option value="unreviewed">Noch ungeprüft</option>
+        <option value="confirmed">Bestätigt</option>
+        <option value="needs_review">Erneut prüfen</option>
+        <option value="ignored">Ignoriert</option>
+      </select>
+      <div class="small text-secondary mt-1">Für die Prüfung einzelner Erkennungen „Nur eindeutige“ deaktivieren.</div>
       <div class="d-grid gap-2 mt-3"><button class="btn btn-primary" onclick="currentOffset=0;runSearch()"><i class="fas fa-search me-2"></i>Suchen</button><button class="btn btn-outline-secondary" onclick="resetFilters()">Zurücksetzen</button></div>
+      <hr>
+      <h6>Gespeicherte Filter</h6>
+      <div class="small text-secondary mb-2" id="presetDescription">Filter bleiben nur in diesem Browser gespeichert (maximal 12).</div>
+      <label class="visually-hidden" for="presetName">Profilname</label>
+      <input class="form-control form-control-sm mb-2" id="presetName" maxlength="50" placeholder="Name für diese Suche">
+      <button class="btn btn-sm btn-outline-primary w-100 mb-2" type="button" onclick="savePreset()">Aktuelle Filter speichern</button>
+      <label class="visually-hidden" for="presetSelect">Gespeicherte Filter</label>
+      <select class="form-select form-select-sm mb-2" id="presetSelect"><option value="">Gespeicherte Suche wählen</option></select>
+      <div class="d-flex gap-2"><button class="btn btn-sm btn-outline-info flex-fill" type="button" onclick="applyPreset()">Anwenden</button><button class="btn btn-sm btn-outline-danger flex-fill" type="button" onclick="deletePreset()">Löschen</button></div>
       <hr><div class="d-grid gap-2"><button class="btn btn-outline-success" onclick="exportResults('csv')">CSV exportieren</button><button class="btn btn-outline-info" onclick="exportResults('json')">JSON exportieren</button></div>
     </div>
   </div>
   <div class="col-xl-9">
-    <div class="row g-3 mb-4"><div class="col-md-4"><div class="stat-card"><div class="stat-card-label">Treffer</div><div class="stat-card-value" id="resultTotal">0</div></div></div><div class="col-md-4"><div class="stat-card"><div class="stat-card-label">Ø Konfidenz</div><div class="stat-card-value" id="avgResultConfidence">0%</div></div></div><div class="col-md-4"><div class="stat-card"><div class="stat-card-label">Gültig</div><div class="stat-card-value" id="validResultCount">0</div></div></div></div>
+    <div class="row g-3 mb-4"><div class="col-md-4"><div class="stat-card"><div class="stat-card-label">Treffer</div><div class="stat-card-value" id="resultTotal">0</div></div></div><div class="col-md-4"><div class="stat-card"><div class="stat-card-label">Ø Konfidenz (Seite)</div><div class="stat-card-value" id="avgResultConfidence">0%</div></div></div><div class="col-md-4"><div class="stat-card"><div class="stat-card-label">Gültig (Seite)</div><div class="stat-card-value" id="validResultCount">0</div></div></div></div>
+    <div class="soft-card p-3 mb-4">
+      <h5 class="mb-3"><i class="fas fa-clipboard-check text-primary me-2"></i>Qualitätsprüfung</h5>
+      <div id="reviewSummary" aria-label="Anzahl der Erkennungen pro Prüfstatus" aria-live="polite">
+        <button type="button" data-review="unreviewed" onclick="showReviewGroup('unreviewed')"><strong id="reviewCountUnreviewed">–</strong><span>Ungeprüft</span></button>
+        <button type="button" data-review="confirmed" onclick="showReviewGroup('confirmed')"><strong id="reviewCountConfirmed">–</strong><span>Bestätigt</span></button>
+        <button type="button" data-review="needs_review" onclick="showReviewGroup('needs_review')"><strong id="reviewCountNeedsReview">–</strong><span>Prüfen</span></button>
+        <button type="button" data-review="ignored" onclick="showReviewGroup('ignored')"><strong id="reviewCountIgnored">–</strong><span>Ignoriert</span></button>
+      </div>
+    </div>
     <div class="soft-card p-3 mb-4">
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3"><h5 class="mb-0"><i class="fas fa-table text-primary me-2"></i>Ergebnisse</h5><div class="d-flex gap-2"><select class="form-select form-select-sm" id="sort" onchange="runSearch()"><option value="timestamp">Zeit</option><option value="confidence">Konfidenz</option><option value="plate">Kennzeichen</option></select><select class="form-select form-select-sm" id="limit" onchange="runSearch()"><option>25</option><option selected>50</option><option>100</option><option>250</option></select></div></div>
+      <div id="searchStatus" class="small text-secondary mb-2" role="status" aria-live="polite">Bereit</div>
       <div class="table-responsive"><table class="table align-middle"><thead><tr><th>Bild</th><th>Kennzeichen</th><th>Details</th><th>Konf.</th><th></th></tr></thead><tbody id="resultsBody"><tr><td colspan="5" class="text-center text-secondary py-4">Keine Daten</td></tr></tbody></table></div>
       <div class="d-flex justify-content-between"><button class="btn btn-outline-secondary btn-sm" onclick="previousPage()"><i class="fas fa-chevron-left"></i></button><span id="pageInfo" class="text-secondary small">Seite 1</span><button class="btn btn-outline-secondary btn-sm" onclick="nextPage()"><i class="fas fa-chevron-right"></i></button></div>
     </div>
@@ -36,25 +92,393 @@
     </div>
   </div>
 </div>
+<dialog id="reviewDialog" aria-labelledby="reviewTitle">
+  <form id="reviewForm" onsubmit="event.preventDefault();saveReview()">
+    <h5 id="reviewTitle">Erkennung prüfen</h5>
+    <div class="text-secondary small mb-3" id="reviewPlateLabel"></div>
+    <label class="form-label" for="reviewStatusInput">Prüfstatus</label>
+    <select id="reviewStatusInput" class="form-select mb-3" required>
+      <option value="unreviewed">Noch ungeprüft</option>
+      <option value="confirmed">Bestätigt</option>
+      <option value="needs_review">Erneut prüfen</option>
+      <option value="ignored">Ignoriert / Fehlalarm</option>
+    </select>
+    <label class="form-label" for="reviewNoteInput">Notiz (optional, maximal 1200 Zeichen)</label>
+    <textarea id="reviewNoteInput" class="form-control" maxlength="1200" rows="4" placeholder="Zum Beispiel: Kontrolle an der Einfahrt bestätigt"></textarea>
+    <div id="reviewFormStatus" class="small text-secondary mt-2" role="status" aria-live="polite"></div>
+    <div class="d-flex gap-2 justify-content-end mt-4">
+      <button type="button" class="btn btn-outline-secondary" onclick="closeReview()">Abbrechen</button>
+      <button type="submit" id="saveReviewButton" class="btn btn-primary">Prüfung speichern</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-let currentOffset=0,currentTotal=0,currentLimit=50,currentEntries=[]; const pct=v=>Math.round(Number(v||0)*100)+'%';
-function getFilters(){ currentLimit=Number(limit.value||50); return {q:q.value,date_from:dateFrom.value,date_to:dateTo.value,min_confidence:Number(minConfidence.value||0)/100,source:source.value,vehicle_type:vehicleType.value,vehicle_color:vehicleColor.value,fuzzy:fuzzy.checked,regex:regex.checked,unique:unique.checked,valid_only:validOnly.checked,watchlist_only:watchOnly.checked,sort:sort.value,order:'desc',limit:currentLimit,offset:currentOffset}; }
-function qs(format){const f=getFilters(); if(format) f.format=format; return new URLSearchParams(Object.entries(f).filter(([k,v])=>v!==''&&v!==false)).toString();}
-function runSearch(){fetch('/api/history/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(getFilters())}).then(r=>r.json()).then(d=>{currentTotal=d.total||0;currentEntries=d.entries||[];renderResults();});}
-function renderResults(){resultTotal.textContent=currentTotal; const avg=currentEntries.length?currentEntries.reduce((a,e)=>a+Number(e.confidence||0),0)/currentEntries.length:0; avgResultConfidence.textContent=pct(avg); validResultCount.textContent=currentEntries.filter(e=>e.is_valid_plate!==false).length; pageInfo.textContent=`${currentOffset+1}-${Math.min(currentOffset+currentLimit,currentTotal)} von ${currentTotal}`; resultsBody.innerHTML=currentEntries.length?currentEntries.map(e=>`<tr><td>${e.plate_image?`<img src="data:image/jpeg;base64,${e.plate_image}" style="width:110px;height:54px;object-fit:cover;border-radius:8px">`:'<span class="text-secondary">—</span>'}</td><td><span class="plate-badge">${e.plate_text||'Unbekannt'}</span><div class="text-secondary small mt-1">${e.plate_format||''}</div>${e.watchlist_match?'<span class="badge bg-warning text-dark">Watchlist</span>':''}</td><td>${e.vehicle_type||'Unbekannt'} · ${e.vehicle_color||'Unbekannt'}<div class="text-secondary small">${e.source||''} · ${e.timestamp?new Date(e.timestamp).toLocaleString('de-DE'):''}</div></td><td>${pct(e.confidence)}</td><td><button class="btn btn-sm btn-outline-warning" onclick="quickWatch('${(e.plate_text||'').replace(/'/g,'')}')"><i class="fas fa-star"></i></button></td></tr>`).join(''):'<tr><td colspan="5" class="text-center text-secondary py-4">Keine Treffer</td></tr>';}
-function previousPage(){currentOffset=Math.max(0,currentOffset-currentLimit);runSearch();} function nextPage(){if(currentOffset+currentLimit<currentTotal){currentOffset+=currentLimit;runSearch();}}
-function resetFilters(){document.querySelectorAll('input').forEach(i=>{if(i.type==='checkbox')i.checked=false;else i.value='';}); fuzzy.checked=true; unique.checked=true; minConfidence.value=0; minConfidenceLabel.textContent='0%'; currentOffset=0; runSearch();}
-function exportResults(format){window.location.href='/api/history/export?'+qs(format);} function fillSelect(el,vals){(vals||[]).forEach(x=>{let o=document.createElement('option');o.value=x.value;o.textContent=`${x.value} (${x.count})`;el.appendChild(o);});}
-function loadFacets(){fetch('/api/history/facets').then(r=>r.json()).then(f=>{fillSelect(source,f.sources);fillSelect(vehicleType,f.vehicle_types);fillSelect(vehicleColor,f.vehicle_colors);});}
-function loadSuggestions(){fetch('/api/history/autocomplete?q='+encodeURIComponent(q.value||'')).then(r=>r.json()).then(d=>{suggestions.innerHTML=(d.items||[]).map(i=>`<option value="${i.plate_text}">${i.count} Treffer</option>`).join('');});}
-function batchAnalyze(){fetch('/api/plate/batch-analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plates:batchInput.value})}).then(r=>r.json()).then(d=>{batchResult.innerHTML=(d.rows||[]).map(r=>`<div class="border rounded p-2 mb-2" style="border-color:var(--card-border)!important"><b>${r.input}</b> → <span class="plate-badge">${r.best.pretty||r.best.corrected}</span><div>Format: ${r.best.format} · Score: ${Math.round((r.best.score||0)*100)}%</div></div>`).join('')||'Keine Eingaben';});}
-function loadWatchlist(){fetch('/api/watchlist').then(r=>r.json()).then(d=>{watchlist.innerHTML=(d.items||[]).length?(d.items||[]).map(i=>`<div class="border rounded p-2 d-flex justify-content-between" style="border-color:var(--card-border)!important"><div><span class="plate-badge">${i.plate_text}</span><div class="text-secondary small">${i.label||i.category||''}</div></div><button class="btn btn-sm btn-outline-danger" onclick="deleteWatch('${i.id}')"><i class="fas fa-trash"></i></button></div>`).join(''):'<div class="text-secondary">Keine Einträge</div>';});}
-function addWatchlistFromInput(){addWatch(watchPlate.value,watchLabel.value);} function quickWatch(plate){watchPlate.value=plate;addWatch(plate,'Schnell hinzugefügt');}
-function addWatch(plate,label){fetch('/api/watchlist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plate_text:plate,label:label,category:'known'})}).then(r=>r.json()).then(d=>{if(d.success){showToast('Watchlist','Gespeichert','success');loadWatchlist();}else showToast('Fehler',d.error||'Nicht gespeichert','danger');});}
-function deleteWatch(id){fetch('/api/watchlist/'+encodeURIComponent(id),{method:'DELETE'}).then(()=>loadWatchlist());}
-document.addEventListener('DOMContentLoaded',()=>{loadFacets();loadWatchlist();runSearch();q.addEventListener('input',()=>{clearTimeout(window.suggestTimer);window.suggestTimer=setTimeout(loadSuggestions,250);});q.addEventListener('keydown',e=>{if(e.key==='Enter'){currentOffset=0;runSearch();}});});
+// Safe PlateVision search UI. Dynamic API values only enter via textContent.
+let currentOffset = 0;
+let currentTotal = 0;
+let currentLimit = 50;
+let currentEntries = [];
+let activeSearch = 0;
+let reviewEditing = null;
+const presetKey = 'platevision.search.presets.v1';
+const reviewText = {unreviewed: 'Ungeprüft', confirmed: 'Bestätigt', needs_review: 'Erneut prüfen', ignored: 'Ignoriert'};
+const el = id => document.getElementById(id);
+const num = value => { const v = Number(value); return Number.isFinite(v) ? v : 0; };
+const pct = value => `${Math.round(Math.max(0, Math.min(1, num(value))) * 100)}%`;
+const mk = (tag, cls = '', value = '') => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (value !== undefined && value !== null) node.textContent = String(value);
+    return node;
+};
+async function requestJson(url, options = {}) {
+    const response = await fetch(url, options);
+    const payload = await response.json();
+    if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    return payload;
+}
+function messageError(context, error) {
+    const description = String(error?.message || error || 'Unbekannter Fehler');
+    if (typeof showToast === 'function') showToast(context, description, 'danger');
+    el('searchStatus').textContent = `${context}: ${description}`;
+}
+function getFilters() {
+    currentLimit = Math.max(1, Math.min(250, Number(el('limit').value || 50)));
+    return {
+        q: el('q').value, match_mode: el('matchMode').value, date_from: el('dateFrom').value, date_to: el('dateTo').value,
+        min_confidence: Number(el('minConfidence').value || 0) / 100,
+        source: el('source').value, vehicle_type: el('vehicleType').value,
+        vehicle_color: el('vehicleColor').value, review_status: el('reviewStatusFilter').value,
+        fuzzy: el('fuzzy').checked,
+        regex: el('regex').checked, unique: el('unique').checked,
+        valid_only: el('validOnly').checked, watchlist_only: el('watchOnly').checked,
+        sort: el('sort').value, order: 'desc', limit: currentLimit, offset: currentOffset,
+        include_images: false
+    };
+}
+function qs(format) {
+    const filters = getFilters();
+    if (format) filters.format = format;
+    return new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== '' && value !== false)).toString();
+}
+async function runSearch() {
+    const searchId = ++activeSearch;
+    const status = el('searchStatus');
+    status.textContent = 'Suche laeuft ...';
+    status.setAttribute('aria-busy', 'true');
+    try {
+        const data = await requestJson('{{ pv_prefix }}/api/history/search', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(getFilters())
+        });
+        if (searchId !== activeSearch) return;
+        currentTotal = Math.max(0, num(data.total));
+        currentEntries = Array.isArray(data.entries) ? data.entries : [];
+        renderResults();
+        status.textContent = `${currentTotal} Treffer`;
+    } catch (error) {
+        if (searchId !== activeSearch) return;
+        currentTotal = 0;
+        currentEntries = [];
+        renderResults();
+        messageError('Suche', error);
+    } finally {
+        if (searchId === activeSearch) status.setAttribute('aria-busy', 'false');
+    }
+}
+function renderResults() {
+    el('resultTotal').textContent = String(currentTotal);
+    const average = currentEntries.length ? currentEntries.reduce((sum, item) => sum + num(item.confidence), 0) / currentEntries.length : 0;
+    el('avgResultConfidence').textContent = pct(average);
+    el('validResultCount').textContent = String(currentEntries.filter(item => item.is_valid_plate !== false).length);
+    const first = currentTotal ? currentOffset + 1 : 0;
+    el('pageInfo').textContent = `${first}-${Math.min(currentOffset + currentEntries.length, currentTotal)} von ${currentTotal}`;
+    const tbody = el('resultsBody');
+    tbody.replaceChildren();
+    if (!currentEntries.length) {
+        const row = mk('tr');
+        const cell = mk('td', 'text-center text-secondary py-4', 'Keine Treffer');
+        cell.colSpan = 5;
+        row.append(cell);
+        tbody.append(row);
+        return;
+    }
+    const fragment = document.createDocumentFragment();
+    for (const entry of currentEntries) {
+        const row = mk('tr');
+        const photo = mk('td');
+        if (entry.has_plate_image === true && /^[a-zA-Z0-9_-]{1,128}$/.test(String(entry.id || ''))) {
+            const image = mk('img');
+            image.alt = 'Kennzeichenbild';
+            image.loading = 'lazy';
+            image.style.cssText = 'width:110px;height:54px;object-fit:cover;border-radius:8px';
+            image.src = `{{ pv_prefix }}/api/history/${encodeURIComponent(entry.id)}/image/plate`;
+            image.onerror = () => image.replaceWith(mk('span', 'text-secondary', '-'));
+            photo.append(image);
+        } else {
+            photo.append(mk('span', 'text-secondary', '-'));
+        }
+        const plateCell = mk('td');
+        plateCell.append(mk('span', 'plate-badge', entry.plate_text || 'Unbekannt'));
+        plateCell.append(mk('div', 'text-secondary small mt-1', entry.plate_format || ''));
+        if (entry.watchlist_match) plateCell.append(mk('span', 'badge bg-warning text-dark', 'Watchlist'));
+        const reviewStatus = reviewText[entry.review_status] ? entry.review_status : 'unreviewed';
+        plateCell.append(mk('div', `review-label mt-2 ${reviewStatus}`, reviewText[reviewStatus]));
+        if (entry.review_note) plateCell.append(mk('div', 'review-note-preview small text-secondary mt-1', entry.review_note));
+        const detailCell = mk('td');
+        detailCell.append(mk('span', '', `${entry.vehicle_type || 'Unbekannt'} / ${entry.vehicle_color || 'Unbekannt'}`));
+        const date = entry.timestamp ? new Date(entry.timestamp) : null;
+        const formattedDate = date && !Number.isNaN(date.getTime()) ? date.toLocaleString('de-DE') : '';
+        detailCell.append(mk('div', 'text-secondary small', `${entry.source || ''} / ${formattedDate}`));
+        const confidenceCell = mk('td', '', pct(entry.confidence));
+        const actionCell = mk('td');
+        const quickButton = mk('button', 'btn btn-sm btn-outline-warning', 'Zur Watchlist');
+        quickButton.type = 'button';
+        quickButton.setAttribute('aria-label', 'Kennzeichen zur Watchlist hinzufuegen');
+        quickButton.addEventListener('click', () => quickWatch(entry.plate_text || ''));
+        const reviewButton = mk('button', 'btn btn-sm btn-outline-primary', 'Prüfen');
+        reviewButton.type = 'button';
+        reviewButton.setAttribute('aria-label', `Erkennung ${entry.plate_text || ''} prüfen`);
+        reviewButton.addEventListener('click', () => openReview(entry));
+        const actionStack = mk('div', 'd-flex flex-wrap gap-2');
+        actionStack.append(reviewButton, quickButton);
+        actionCell.append(actionStack);
+        row.append(photo, plateCell, detailCell, confidenceCell, actionCell);
+        fragment.append(row);
+    }
+    tbody.append(fragment);
+}
+function previousPage() { currentOffset = Math.max(0, currentOffset - currentLimit); runSearch(); }
+function nextPage() { if (currentOffset + currentLimit < currentTotal) { currentOffset += currentLimit; runSearch(); } }
+function resetFilters() {
+    for (const id of ['q', 'dateFrom', 'dateTo']) el(id).value = '';
+    for (const id of ['source', 'vehicleType', 'vehicleColor']) el(id).value = '';
+    for (const id of ['regex', 'validOnly', 'watchOnly']) el(id).checked = false;
+    el('matchMode').value = 'contains';
+    el('reviewStatusFilter').value = 'all';
+    el('fuzzy').checked = true;
+    el('unique').checked = true;
+    el('minConfidence').value = '0';
+    el('minConfidenceLabel').textContent = '0%';
+    currentOffset = 0;
+    runSearch();
+}
+function exportResults(format) { window.location.href = `{{ pv_prefix }}/api/history/export?${qs(format)}`; }
+
+async function refreshReviewSummary() {
+    try {
+        const counts = await requestJson('{{ pv_prefix }}/api/history/review-summary');
+        for (const [key, id] of Object.entries({unreviewed:'reviewCountUnreviewed',confirmed:'reviewCountConfirmed',needs_review:'reviewCountNeedsReview',ignored:'reviewCountIgnored'})) {
+            el(id).textContent = String(Math.max(0, num(counts[key])));
+        }
+    } catch (error) { messageError('Prüfstatistik', error); }
+}
+function showReviewGroup(status) {
+    el('reviewStatusFilter').value = status;
+    el('unique').checked = false;
+    currentOffset = 0;
+    runSearch();
+}
+function openReview(entry) {
+    reviewEditing = {id: String(entry.id), updated: String(entry.review_updated_at || '')};
+    el('reviewPlateLabel').textContent = `Kennzeichen: ${entry.plate_text || '-'} | ${entry.timestamp || ''}`;
+    el('reviewStatusInput').value = reviewText[entry.review_status] ? entry.review_status : 'unreviewed';
+    el('reviewNoteInput').value = String(entry.review_note || '');
+    el('reviewFormStatus').textContent = '';
+    el('saveReviewButton').disabled = false;
+    el('reviewDialog').showModal();
+    el('reviewStatusInput').focus();
+}
+function closeReview() {
+    el('reviewDialog').close();
+    reviewEditing = null;
+}
+async function saveReview() {
+    if (!reviewEditing || el('saveReviewButton').disabled) return;
+    el('saveReviewButton').disabled = true;
+    el('reviewFormStatus').textContent = 'Wird gespeichert ...';
+    try {
+        await requestJson('{{ pv_prefix }}/api/history/' + encodeURIComponent(reviewEditing.id) + '/review', {
+            method: 'PATCH', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({review_status: el('reviewStatusInput').value,
+                review_note: el('reviewNoteInput').value, expected_updated_at: reviewEditing.updated})
+        });
+        closeReview();
+        await Promise.all([runSearch(), refreshReviewSummary()]);
+        if (typeof showToast === 'function') showToast('Prüfstatus', 'Gespeichert', 'success');
+    } catch (error) {
+        el('reviewFormStatus').textContent = String(error?.message || error);
+        if (String(error?.message || '').includes('zwischenzeitlich')) {
+            // Never overwrite another tab's successful review.
+            await runSearch();
+        }
+    } finally { el('saveReviewButton').disabled = false; }
+}
+
+function readPresets() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(presetKey) || '[]');
+        return Array.isArray(parsed) ? parsed.filter(row => row && typeof row.name === 'string' && row.name.length <= 50 && row.filters && typeof row.filters === 'object').slice(0, 12) : [];
+    } catch (error) { return []; }
+}
+function writePresets(rows) {
+    try { localStorage.setItem(presetKey, JSON.stringify(rows)); }
+    catch (error) { throw new Error('Lokaler Browser-Speicher ist nicht verfügbar.'); }
+}
+function renderPresets() {
+    const select = el('presetSelect');
+    const selected = select.value;
+    select.replaceChildren(new Option('Gespeicherte Suche wählen', ''));
+    for (const item of readPresets()) select.add(new Option(item.name, item.name));
+    select.value = selected;
+}
+function savePreset() {
+    try {
+        const name = el('presetName').value.trim();
+        if (!name || name.length > 50) throw new Error('Bitte einen Namen mit maximal 50 Zeichen eingeben.');
+        const rows = readPresets();
+        const index = rows.findIndex(row => row.name === name);
+        if (index === -1 && rows.length >= 12) throw new Error('Maximal 12 Suchprofile erlaubt. Vorher eines löschen.');
+        if (index !== -1 && !window.confirm(`Suchprofil „${name}“ überschreiben?`)) return;
+        const filters = getFilters();
+        if (index === -1) rows.push({name, filters});
+        else rows[index] = {name, filters};
+        writePresets(rows);
+        renderPresets();
+        el('presetSelect').value = name;
+        el('presetDescription').textContent = 'Suchprofil lokal gespeichert.';
+    } catch (error) { messageError('Suchprofile', error); }
+}
+function applyPreset() {
+    const preset = readPresets().find(row => row.name === el('presetSelect').value);
+    if (!preset) return;
+    const f = preset.filters;
+    const textFields = {q:'q',match_mode:'matchMode',date_from:'dateFrom',date_to:'dateTo',source:'source',vehicle_type:'vehicleType',vehicle_color:'vehicleColor',review_status:'reviewStatusFilter',sort:'sort',limit:'limit'};
+    const checkboxFields = {fuzzy:'fuzzy',regex:'regex',unique:'unique',valid_only:'validOnly',watchlist_only:'watchOnly'};
+    for (const [field, id] of Object.entries(textFields)) {
+        if (typeof f[field] === 'string' || typeof f[field] === 'number') el(id).value = String(f[field]).slice(0, 256);
+    }
+    for (const [field, id] of Object.entries(checkboxFields)) if (typeof f[field] === 'boolean') el(id).checked = f[field];
+    const conf = Number(f.min_confidence);
+    el('minConfidence').value = String(Math.round(Math.max(0, Math.min(1, Number.isFinite(conf) ? conf : 0)) * 100));
+    el('minConfidenceLabel').textContent = el('minConfidence').value + '%';
+    // Prevent a stale, injected or obsolete preset from creating an invalid filter.
+    if (!['all','unreviewed','confirmed','needs_review','ignored'].includes(el('reviewStatusFilter').value)) el('reviewStatusFilter').value = 'all';
+    currentOffset = 0;
+    runSearch();
+}
+function deletePreset() {
+    const selected = el('presetSelect').value;
+    if (!selected || !window.confirm(`Suchprofil „${selected}“ löschen?`)) return;
+    try {
+        writePresets(readPresets().filter(row => row.name !== selected));
+        renderPresets();
+        el('presetDescription').textContent = 'Suchprofil gelöscht.';
+    } catch (error) { messageError('Suchprofile', error); }
+}
+function fillSelect(element, values) {
+    for (const item of (Array.isArray(values) ? values : [])) {
+        const option = mk('option', '', `${item.value} (${item.count})`);
+        option.value = String(item.value || '');
+        element.append(option);
+    }
+}
+async function loadFacets() {
+    try {
+        const data = await requestJson('{{ pv_prefix }}/api/history/facets');
+        fillSelect(el('source'), data.sources);
+        fillSelect(el('vehicleType'), data.vehicle_types);
+        fillSelect(el('vehicleColor'), data.vehicle_colors);
+    } catch (error) { messageError('Filter', error); }
+}
+async function loadSuggestions() {
+    try {
+        const data = await requestJson('{{ pv_prefix }}/api/history/autocomplete?q=' + encodeURIComponent(el('q').value || ''));
+        const fragment = document.createDocumentFragment();
+        for (const item of (data.items || []).slice(0, 25)) {
+            const option = mk('option', '', `${item.count} Treffer`);
+            option.value = String(item.plate_text || '');
+            fragment.append(option);
+        }
+        el('suggestions').replaceChildren(fragment);
+    } catch (error) { /* Suggestions are optional, do not block search. */ }
+}
+async function batchAnalyze() {
+    try {
+        const data = await requestJson('{{ pv_prefix }}/api/plate/batch-analyze', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({plates: el('batchInput').value})
+        });
+        const result = el('batchResult');
+        result.replaceChildren();
+        for (const item of (data.rows || []).slice(0, 100)) {
+            const best = item.best || {};
+            const card = mk('div', 'border rounded p-2 mb-2');
+            card.append(mk('b', '', item.input || ''));
+            card.append(mk('span', '', ' -> '));
+            card.append(mk('span', 'plate-badge', best.pretty || best.corrected || ''));
+            card.append(mk('div', '', `Format: ${best.format || '-'} / Score: ${pct(best.score)}`));
+            result.append(card);
+        }
+        if (!result.children.length) result.textContent = 'Keine Eingaben';
+    } catch (error) { messageError('Batch-Analyse', error); }
+}
+async function loadWatchlist() {
+    try {
+        const data = await requestJson('{{ pv_prefix }}/api/watchlist');
+        const container = el('watchlist');
+        container.replaceChildren();
+        for (const item of (data.items || [])) {
+            const card = mk('div', 'border rounded p-2 d-flex justify-content-between align-items-center gap-2');
+            const caption = mk('div');
+            caption.append(mk('span', 'plate-badge', item.plate_text || '-'));
+            caption.append(mk('div', 'text-secondary small', item.label || item.category || ''));
+            const remove = mk('button', 'btn btn-sm btn-outline-danger', 'Entfernen');
+            remove.type = 'button';
+            remove.addEventListener('click', () => deleteWatch(item.id));
+            card.append(caption, remove);
+            container.append(card);
+        }
+        if (!container.children.length) container.append(mk('div', 'text-secondary', 'Keine Eintraege'));
+    } catch (error) { messageError('Watchlist', error); }
+}
+function addWatchlistFromInput() { addWatch(el('watchPlate').value, el('watchLabel').value); }
+function quickWatch(plate) { el('watchPlate').value = plate; addWatch(plate, 'Schnell hinzugefuegt'); }
+async function addWatch(plate, label) {
+    try {
+        await requestJson('{{ pv_prefix }}/api/watchlist', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({plate_text: plate, label, category: 'known'})
+        });
+        if (typeof showToast === 'function') showToast('Watchlist', 'Gespeichert', 'success');
+        await loadWatchlist();
+    } catch (error) { messageError('Watchlist', error); }
+}
+async function deleteWatch(id) {
+    try {
+        await requestJson('{{ pv_prefix }}/api/watchlist/' + encodeURIComponent(String(id)), {method: 'DELETE'});
+        await loadWatchlist();
+    } catch (error) { messageError('Watchlist', error); }
+}
+document.addEventListener('DOMContentLoaded', () => {
+    loadFacets();
+    loadWatchlist();
+    renderPresets();
+    refreshReviewSummary();
+    runSearch();
+    el('q').addEventListener('input', () => {
+        clearTimeout(window.suggestTimer);
+        window.suggestTimer = setTimeout(loadSuggestions, 250);
+    });
+    el('q').addEventListener('keydown', event => {
+        if (event.key === 'Enter') { currentOffset = 0; runSearch(); }
+    });
+    el('limit').addEventListener('change', () => {currentOffset = 0;});
+});
 </script>
 {% endblock %}

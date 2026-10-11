@@ -7,14 +7,14 @@
 {% endblock %}
 
 {% block header_actions %}
-<div class="d-flex gap-2">
+<div class="d-flex flex-wrap gap-2">
     <div class="form-check form-switch d-flex align-items-center me-3">
         <input class="form-check-input" type="checkbox" id="uniqueFilter" 
                {{ 'checked' if unique_only else '' }}
                onchange="toggleUniqueFilter()">
         <label class="form-check-label ms-2" for="uniqueFilter">Nur einzigartige</label>
     </div>
-    <a class="btn btn-sm btn-outline-success" href="/statistics">
+    <a class="btn btn-sm btn-outline-success" href="{{ pv_prefix }}/statistics">
         <i class="fas fa-road me-1"></i>Statistik
     </a>
     <button class="btn btn-sm btn-outline-primary" onclick="exportHistory()">
@@ -238,7 +238,7 @@
 <!-- Search & Filter -->
 <div class="card mb-4">
     <div class="card-body">
-        <form method="GET" action="{{ url_for('history') }}" class="row g-3 align-items-end">
+        <form method="GET" action="{{ pv_url_for('history') }}" class="row g-3 align-items-end">
             <!-- Suche -->
             <div class="col-md-4">
                 <label class="form-label">Kennzeichen suchen</label>
@@ -308,7 +308,7 @@
             <span class="filter-tag bg-primary">
                 <i class="fas fa-search"></i>
                 "{{ search }}"
-                <a href="{{ url_for('history', source=source_filter, vehicle_type=vehicle_type_filter, sort=sort_order, unique='true' if unique_only else 'false') }}" 
+                <a href="{{ pv_url_for('history', source=source_filter, vehicle_type=vehicle_type_filter, sort=sort_order, unique='true' if unique_only else 'false') }}" 
                    class="remove-filter" title="Filter entfernen">×</a>
             </span>
             {% endif %}
@@ -320,7 +320,7 @@
                 {% elif source_filter == 'image_upload' %}Bild Upload
                 {% elif source_filter == 'video_upload' %}Video Upload
                 {% else %}{{ source_filter }}{% endif %}
-                <a href="{{ url_for('history', search=search, vehicle_type=vehicle_type_filter, sort=sort_order, unique='true' if unique_only else 'false') }}" 
+                <a href="{{ pv_url_for('history', search=search, vehicle_type=vehicle_type_filter, sort=sort_order, unique='true' if unique_only else 'false') }}" 
                    class="remove-filter" title="Filter entfernen">×</a>
             </span>
             {% endif %}
@@ -329,12 +329,12 @@
             <span class="filter-tag bg-info">
                 <i class="fas fa-car"></i>
                 {{ vehicle_type_filter }}
-                <a href="{{ url_for('history', search=search, source=source_filter, sort=sort_order, unique='true' if unique_only else 'false') }}" 
+                <a href="{{ pv_url_for('history', search=search, source=source_filter, sort=sort_order, unique='true' if unique_only else 'false') }}" 
                    class="remove-filter" title="Filter entfernen">×</a>
             </span>
             {% endif %}
             
-            <a href="{{ url_for('history') }}" class="btn btn-sm btn-outline-secondary ms-auto">
+            <a href="{{ pv_url_for('history') }}" class="btn btn-sm btn-outline-secondary ms-auto">
                 <i class="fas fa-times me-1"></i>Alle zurücksetzen
             </a>
         </div>
@@ -403,7 +403,7 @@
 <div class="alert alert-info d-flex align-items-center mb-4">
     <i class="fas fa-info-circle me-2"></i>
     <span>Suchergebnisse für "<strong>{{ search }}</strong>": {{ total_filtered if total_filtered is defined else entries|length }} Treffer</span>
-    <a href="{{ url_for('history', source=source_filter, vehicle_type=vehicle_type_filter, sort=sort_order) }}" class="btn btn-sm btn-outline-info ms-auto">
+    <a href="{{ pv_url_for('history', source=source_filter, vehicle_type=vehicle_type_filter, sort=sort_order) }}" class="btn btn-sm btn-outline-info ms-auto">
         <i class="fas fa-times me-1"></i>Suche zurücksetzen
     </a>
 </div>
@@ -627,14 +627,14 @@
             </p>
             <div class="d-flex gap-2 justify-content-center flex-wrap">
                 {% if search or source_filter or vehicle_type_filter %}
-                <a href="{{ url_for('history') }}" class="btn btn-outline-primary">
+                <a href="{{ pv_url_for('history') }}" class="btn btn-outline-primary">
                     <i class="fas fa-times me-1"></i>Filter zurücksetzen
                 </a>
                 {% endif %}
-                <a href="{{ url_for('live_view') }}" class="btn btn-primary">
+                <a href="{{ pv_url_for('live_view') }}" class="btn btn-primary">
                     <i class="fas fa-video me-1"></i>Live Stream
                 </a>
-                <a href="{{ url_for('test_page') }}" class="btn btn-outline-primary">
+                <a href="{{ pv_url_for('test_page') }}" class="btn btn-outline-primary">
                     <i class="fas fa-upload me-1"></i>Bild hochladen
                 </a>
             </div>
@@ -719,7 +719,7 @@
     // ============================================
     document.addEventListener('DOMContentLoaded', function() {
         // Load statistics
-        fetch('/api/history/statistics')
+        fetch('{{ pv_prefix }}/api/history/statistics')
             .then(response => response.json())
             .then(data => {
                 document.getElementById('statUnique').textContent = data.unique_plates || 0;
@@ -807,7 +807,7 @@
         
         const formatDate = (ts) => {
             if (!ts) return 'Unbekannt';
-            return ts.replace('T', ' ').substring(0, 19);
+            return String(ts).replace('T', ' ').substring(0, 19);
         };
         
         const getConfidenceClass = (conf) => {
@@ -817,6 +817,12 @@
             return 'confidence-low';
         };
         
+        // Plain text from history/imports must never become executable markup.
+        const safe = value => pvEscapeHtml(value ?? '');
+        const asImage = value => typeof value === 'string' && /^[a-zA-Z0-9+/=]+$/.test(value) ? value : '';
+        const vehicleImage = asImage(entry.vehicle_image);
+        const plateImage = asImage(entry.plate_image);
+        const fullFrame = asImage(entry.full_frame);
         const body = document.getElementById('detailsModalBody');
         body.innerHTML = `
             <div class="row g-4">
@@ -825,24 +831,24 @@
                     <div class="image-comparison">
                         <div>
                             <h6 class="mb-2"><i class="fas fa-car me-2"></i>Fahrzeug</h6>
-                            ${entry.vehicle_image 
-                                ? `<img src="data:image/jpeg;base64,${entry.vehicle_image}" class="img-fluid rounded" style="max-height: 300px; cursor: pointer;" onclick="showImage('${entry.vehicle_image}', 'Fahrzeug')">`
+                            ${vehicleImage 
+                                ? `<img src="data:image/jpeg;base64,${vehicleImage}" class="img-fluid rounded" style="max-height: 300px; cursor: pointer;" onclick="showImage('${vehicleImage}', 'Fahrzeug')">`
                                 : '<div class="bg-dark rounded p-5 text-center"><i class="fas fa-car fa-3x text-secondary opacity-50"></i><p class="mt-2 mb-0 text-secondary">Kein Bild</p></div>'
                             }
                         </div>
                         <div>
                             <h6 class="mb-2"><i class="fas fa-id-card me-2"></i>Kennzeichen</h6>
-                            ${entry.plate_image 
-                                ? `<img src="data:image/jpeg;base64,${entry.plate_image}" class="img-fluid rounded" style="max-height: 300px; cursor: pointer;" onclick="showImage('${entry.plate_image}', 'Kennzeichen')">`
+                            ${plateImage 
+                                ? `<img src="data:image/jpeg;base64,${plateImage}" class="img-fluid rounded" style="max-height: 300px; cursor: pointer;" onclick="showImage('${plateImage}', 'Kennzeichen')">`
                                 : '<div class="bg-dark rounded p-5 text-center"><i class="fas fa-id-card fa-3x text-secondary opacity-50"></i><p class="mt-2 mb-0 text-secondary">Kein Bild</p></div>'
                             }
                         </div>
                     </div>
                     
-                    ${entry.full_frame ? `
+                    ${fullFrame ? `
                     <div class="mt-3">
                         <h6 class="mb-2"><i class="fas fa-image me-2"></i>Vollbild</h6>
-                        <img src="data:image/jpeg;base64,${entry.full_frame}" class="img-fluid rounded" style="cursor: pointer;" onclick="showImage('${entry.full_frame}', 'Vollbild')">
+                        <img src="data:image/jpeg;base64,${fullFrame}" class="img-fluid rounded" style="cursor: pointer;" onclick="showImage('${fullFrame}', 'Vollbild')">
                     </div>
                     ` : ''}
                 </div>
@@ -850,13 +856,13 @@
                 <!-- Info Column -->
                 <div class="col-lg-5">
                     <div class="plate-badge mb-4" style="font-size: 1.5rem; padding: 0.75rem 1.5rem;">
-                        ${entry.plate_text || 'Unbekannt'}
+                        ${safe(entry.plate_text || 'Unbekannt')}
                     </div>
                     
                     <table class="table table-sm">
                         <tr>
                             <td class="text-secondary" style="width: 40%;"><i class="fas fa-fingerprint me-2"></i>ID</td>
-                            <td><code style="font-size: 0.7rem;">${entry.id}</code></td>
+                            <td><code style="font-size: 0.7rem;">${safe(entry.id)}</code></td>
                         </tr>
                         <tr>
                             <td class="text-secondary"><i class="fas fa-percentage me-2"></i>OCR Konfidenz</td>
@@ -870,10 +876,9 @@
                         <tr>
                             <td class="text-secondary"><i class="fas fa-car me-2"></i>Fahrzeugtyp</td>
                             <td>
-                                ${entry.vehicle_type || 'Unbekannt'}
+                                ${safe(entry.vehicle_type || 'Unbekannt')}
                                 ${entry.vehicle_type && entry.vehicle_type !== 'Unbekannt' ? `
-                                    <a href="#" onclick="filterByVehicleType('${entry.vehicle_type}'); bootstrap.Modal.getInstance(document.getElementById('detailsModal')).hide();" 
-                                       class="ms-2 text-primary" title="Nach diesem Typ filtern">
+                                    <a href="#" class="ms-2 text-primary pv-filter-vehicle-type" title="Nach diesem Typ filtern">
                                         <i class="fas fa-filter fa-sm"></i>
                                     </a>
                                 ` : ''}
@@ -881,7 +886,7 @@
                         </tr>
                         <tr>
                             <td class="text-secondary"><i class="fas fa-palette me-2"></i>Fahrzeugfarbe</td>
-                            <td>${entry.vehicle_color || 'Unbekannt'}</td>
+                            <td>${safe(entry.vehicle_color || 'Unbekannt')}</td>
                         </tr>
                         <tr>
                             <td class="text-secondary"><i class="fas fa-chart-line me-2"></i>Fahrzeug Konfidenz</td>
@@ -889,38 +894,38 @@
                         </tr>
                         <tr>
                             <td class="text-secondary"><i class="fas fa-clock me-2"></i>Zeitpunkt</td>
-                            <td>${formatDate(entry.timestamp)}</td>
+                            <td>${safe(formatDate(entry.timestamp))}</td>
                         </tr>
                         <tr>
                             <td class="text-secondary"><i class="fas fa-broadcast-tower me-2"></i>Quelle</td>
                             <td>
                                 <span class="source-badge ${(entry.source === 'rtsp' || entry.source === 'rtsp_stream') ? 'rtsp' : (entry.source === 'image_upload' ? 'image' : 'video')}">
-                                    ${(entry.source === 'rtsp' || entry.source === 'rtsp_stream') ? 'RTSP Stream' : (entry.source === 'image_upload' ? 'Bild Upload' : (entry.source === 'video_upload' ? 'Video Upload' : (entry.source || 'Unbekannt')))}
+                                    ${safe((entry.source === 'rtsp' || entry.source === 'rtsp_stream') ? 'RTSP Stream' : (entry.source === 'image_upload' ? 'Bild Upload' : (entry.source === 'video_upload' ? 'Video Upload' : (entry.source || 'Unbekannt'))))}
                                 </span>
                             </td>
                         </tr>
                         ${entry.filename ? `
                         <tr>
                             <td class="text-secondary"><i class="fas fa-file me-2"></i>Datei</td>
-                            <td class="text-truncate" style="max-width: 200px;" title="${entry.filename}">${entry.filename}</td>
+                            <td class="text-truncate" style="max-width: 200px;" title="${safe(entry.filename)}">${safe(entry.filename)}</td>
                         </tr>
                         ` : ''}
                         ${entry.plate_size ? `
                         <tr>
                             <td class="text-secondary"><i class="fas fa-expand me-2"></i>Kennzeichengröße</td>
-                            <td>${entry.plate_size}</td>
+                            <td>${safe(entry.plate_size)}</td>
                         </tr>
                         ` : ''}
                         ${entry.original_plate_size ? `
                         <tr>
                             <td class="text-secondary"><i class="fas fa-compress me-2"></i>Originalgröße</td>
-                            <td>${entry.original_plate_size}</td>
+                            <td>${safe(entry.original_plate_size)}</td>
                         </tr>
                         ` : ''}
                         ${entry.frame_number !== undefined ? `
                         <tr>
                             <td class="text-secondary"><i class="fas fa-film me-2"></i>Frame</td>
-                            <td>${entry.frame_number}</td>
+                            <td>${safe(entry.frame_number)}</td>
                         </tr>
                         ` : ''}
                         ${entry.timestamp_video !== undefined ? `
@@ -932,13 +937,13 @@
                     </table>
                     
                     <div class="d-flex gap-2 mt-4 flex-wrap">
-                        <button class="btn btn-outline-primary" onclick="copyPlate('${entry.plate_text}')">
+                        <button type="button" class="btn btn-outline-primary pv-copy-plate">
                             <i class="fas fa-copy me-1"></i>Kopieren
                         </button>
-                        <button class="btn btn-outline-info" onclick="searchSimilar('${entry.plate_text}')">
+                        <button type="button" class="btn btn-outline-info pv-search-similar">
                             <i class="fas fa-search me-1"></i>Suchen
                         </button>
-                        <button class="btn btn-outline-danger" onclick="deleteEntry('${entry.id}'); bootstrap.Modal.getInstance(document.getElementById('detailsModal')).hide();">
+                        <button type="button" class="btn btn-outline-danger pv-delete-history-entry">
                             <i class="fas fa-trash me-1"></i>Löschen
                         </button>
                     </div>
@@ -946,6 +951,17 @@
             </div>
         `;
         
+        body.querySelector('.pv-filter-vehicle-type')?.addEventListener('click', event => {
+            event.preventDefault();
+            filterByVehicleType(entry.vehicle_type);
+            bootstrap.Modal.getInstance(document.getElementById('detailsModal'))?.hide();
+        });
+        body.querySelector('.pv-copy-plate')?.addEventListener('click', () => copyPlate(entry.plate_text));
+        body.querySelector('.pv-search-similar')?.addEventListener('click', () => searchSimilar(entry.plate_text));
+        body.querySelector('.pv-delete-history-entry')?.addEventListener('click', () => {
+            deleteEntry(entry.id);
+            bootstrap.Modal.getInstance(document.getElementById('detailsModal'))?.hide();
+        });
         new bootstrap.Modal(document.getElementById('detailsModal')).show();
     }
     
@@ -986,7 +1002,7 @@
     function deleteEntry(id) {
         if (!confirm('Diesen Eintrag wirklich löschen?')) return;
         
-        fetch(`/api/history/${id}`, { method: 'DELETE' })
+        fetch(`{{ pv_prefix }}/api/history/${id}`, { method: 'DELETE' })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
@@ -1020,7 +1036,7 @@
     }
     
     function clearHistory() {
-        fetch('/api/history/clear', { method: 'POST' })
+        fetch('{{ pv_prefix }}/api/history/clear', { method: 'POST' })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
@@ -1042,51 +1058,23 @@
     // ============================================
     
     function exportHistory() {
-        showToast('Export', 'Lade Historie...', 'info');
-        
-        (() => {
-            const exportUrl = new URL('/api/history', window.location.origin);
-            exportUrl.searchParams.set('limit', '10000');
-            exportUrl.searchParams.set('unique', document.getElementById('uniqueFilter')?.checked ? 'true' : 'false');
-            if (document.getElementById('sourceFilter')?.value) exportUrl.searchParams.set('source', document.getElementById('sourceFilter').value);
-            if (document.getElementById('vehicleFilter')?.value) exportUrl.searchParams.set('vehicle_type', document.getElementById('vehicleFilter').value);
-            return fetch(exportUrl.toString());
-        })()
-            .then(response => response.json())
-            .then(data => {
-                // Prepare export data (remove base64 images to reduce size)
-                const exportData = {
-                    exported_at: new Date().toISOString(),
-                    total_entries: data.entries ? data.entries.length : 0,
-                    entries: (data.entries || []).map(e => ({
-                        id: e.id,
-                        plate_text: e.plate_text,
-                        confidence: e.confidence,
-                        vehicle_type: e.vehicle_type,
-                        vehicle_color: e.vehicle_color,
-                        timestamp: e.timestamp,
-                        source: e.source,
-                        filename: e.filename
-                    }))
-                };
-                
-                const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'platevision_history_' + new Date().toISOString().split('T')[0] + '.json';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                showToast('Export', `${exportData.total_entries} Einträge exportiert`, 'success');
-            })
-            .catch((err) => {
-                console.error('Export error:', err);
-                showToast('Fehler', 'Export fehlgeschlagen', 'danger');
-            });
+        // Export the complete filtered result on the server; the interactive
+        // /api/history route intentionally limits pages to 1,000 records.
+        const exportUrl = new URL('{{ pv_prefix }}/api/history/export', window.location.origin);
+        exportUrl.searchParams.set('format', 'json');
+        exportUrl.searchParams.set('include_images', 'false');
+        exportUrl.searchParams.set('unique', document.getElementById('uniqueFilter')?.checked ? 'true' : 'false');
+        const searchText = document.querySelector('input[name="search"]')?.value || '';
+        if (searchText.trim()) exportUrl.searchParams.set('q', searchText.trim());
+        const source = document.getElementById('sourceFilter')?.value;
+        const type = document.getElementById('vehicleFilter')?.value;
+        if (source) exportUrl.searchParams.set('source', source);
+        if (type) exportUrl.searchParams.set('vehicle_type', type);
+        showToast('Export', 'Vollständigen Export aller gefilterten Treffer gestartet.', 'info');
+        window.location.href = exportUrl.toString();
     }
-    
+
+    // ============================================
     // ============================================
     // WEBSOCKET EVENTS
     // ============================================

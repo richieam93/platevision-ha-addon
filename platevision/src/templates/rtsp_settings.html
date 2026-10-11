@@ -211,7 +211,7 @@
                         </div>
                     </div>
                     
-                    <div class="d-flex gap-2">
+                    <div class="d-flex flex-wrap gap-2">
                         <button type="submit" class="btn btn-primary">
                             <i class="fas fa-save me-2"></i>Einstellungen speichern
                         </button>
@@ -507,7 +507,7 @@
                     <button id="btnStopStream" class="btn btn-danger" onclick="stopStream()" style="display: none;">
                         <i class="fas fa-stop me-2"></i>Stream stoppen
                     </button>
-                    <a href="{{ url_for('live_view') }}" class="btn btn-outline-primary">
+                    <a href="{{ pv_url_for('live_view') }}" class="btn btn-outline-primary">
                         <i class="fas fa-video me-2"></i>Live Ansicht öffnen
                     </a>
                 </div>
@@ -691,8 +691,8 @@ document.addEventListener('DOMContentLoaded', function() {
 async function loadConfiguration() {
     try {
         const [configResponse, geometryResponse] = await Promise.all([
-            fetch('/api/config'),
-            fetch('/api/stream/geometry').catch(() => null)
+            fetch('{{ pv_prefix }}/api/config'),
+            fetch('{{ pv_prefix }}/api/stream/geometry').catch(() => null)
         ]);
         const config = await configResponse.json();
         const geometry = geometryResponse ? await geometryResponse.json() : null;
@@ -986,7 +986,7 @@ function startStatusUpdates() {
 }
 
 function updateStreamStatus() {
-    fetch('/api/stream/status')
+    fetch('{{ pv_prefix }}/api/stream/status')
         .then(response => response.json())
         .then(status => {
             updateStreamStatusUI(status);
@@ -1103,7 +1103,7 @@ function loadPreviewImage() {
         if (canvas) canvas.style.pointerEvents = 'auto';
     }
 
-    img.src = '/api/stream/snapshot?' + Date.now();
+    img.src = '{{ pv_prefix }}/api/stream/snapshot?' + Date.now();
 
     // Manche Browser melden bei schnell gecachten JPEGs das load-Event unzuverlässig.
     // Dieser Fallback aktiviert den Editor trotzdem, sobald das Bild wirklich verfügbar ist.
@@ -1795,7 +1795,7 @@ function saveRtspSettings() {
         hw_acceleration: document.getElementById('hwAcceleration').checked
     };
     
-    fetch('/api/config/rtsp', {
+    fetch('{{ pv_prefix }}/api/config/rtsp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
@@ -1840,7 +1840,7 @@ function saveAreaSettings() {
     };
     const data = { analysis_area: analysisArea };
     
-    fetch('/api/rtsp/analysis-area', {
+    fetch('{{ pv_prefix }}/api/rtsp/analysis-area', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
@@ -1864,7 +1864,7 @@ function saveAreaSettings() {
 // ============================================
 
 function startStream() {
-    fetch('/api/stream/start', { method: 'POST' })
+    fetch('{{ pv_prefix }}/api/stream/start', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
@@ -1885,7 +1885,7 @@ function startStream() {
 }
 
 function stopStream() {
-    fetch('/api/stream/stop', { method: 'POST' })
+    fetch('{{ pv_prefix }}/api/stream/stop', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             showToast('Stream', 'Stream gestoppt', 'warning');
@@ -1918,7 +1918,7 @@ function testConnection() {
     saveRtspSettings();
     
     setTimeout(() => {
-        fetch('/api/stream/status')
+        fetch('{{ pv_prefix }}/api/stream/status')
             .then(response => response.json())
             .then(status => {
                 if (status.connected) {

@@ -21,16 +21,16 @@
                     <a class="btn btn-outline-primary" href="{{ source_url }}" target="_blank" rel="noopener noreferrer">
                         <i class="fab fa-github me-2"></i>Quellcode
                     </a>
-                    <a class="btn btn-outline-secondary" href="{{ url_for('legal_document', name='LICENSE') }}" target="_blank" rel="noopener noreferrer">
+                    <a class="btn btn-outline-secondary" href="{{ pv_url_for('legal_document', name='LICENSE') }}" target="_blank" rel="noopener noreferrer">
                         <i class="fas fa-scale-balanced me-2"></i>AGPL-3.0 lesen
                     </a>
-                    <a class="btn btn-outline-secondary" href="{{ url_for('legal_document', name='THIRD_PARTY_NOTICES.md') }}" target="_blank" rel="noopener noreferrer">
+                    <a class="btn btn-outline-secondary" href="{{ pv_url_for('legal_document', name='THIRD_PARTY_NOTICES.md') }}" target="_blank" rel="noopener noreferrer">
                         <i class="fas fa-box-open me-2"></i>Drittanbieter
                     </a>
-                    <a class="btn btn-outline-secondary" href="{{ url_for('legal_document', name='fast-plate-ocr-MIT.txt') }}" target="_blank" rel="noopener noreferrer">
+                    <a class="btn btn-outline-secondary" href="{{ pv_url_for('legal_document', name='fast-plate-ocr-MIT.txt') }}" target="_blank" rel="noopener noreferrer">
                         <i class="fas fa-file-contract me-2"></i>fast-plate-ocr MIT
                     </a>
-                    <a class="btn btn-outline-secondary" href="/api/system/licenses" target="_blank" rel="noopener noreferrer">
+                    <a class="btn btn-outline-secondary" href="{{ pv_prefix }}/api/system/licenses" target="_blank" rel="noopener noreferrer">
                         <i class="fas fa-code me-2"></i>Lizenz-API
                     </a>
                 </div>

@@ -1,0 +1,59 @@
+/* PlateVision 0.13.1 – consistent, progressive-disclosure workspaces.
+   Does not remove feature controls or change existing API endpoints. */
+.pv-workspace-intro,.pv-info-strip,.pv-section-heading{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem}
+.pv-workspace-intro{padding:1.3rem 1.45rem;border:1px solid var(--card-border);border-radius:16px;background:linear-gradient(110deg,rgba(103,96,214,.12),var(--card-bg))}
+.pv-workspace-intro h2{font-size:clamp(1.4rem,2vw,1.9rem);font-weight:720;letter-spacing:-.035em}
+.pv-workspace-intro>div{max-width:730px}
+.pv-workspace-links{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+.pv-workspace-chip{display:inline-flex;align-items:center;gap:.55rem;padding:.52rem .75rem;font-size:.82rem;font-weight:640;text-decoration:none;border:1px solid var(--card-border);border-radius:9px;background:var(--pv-subtle);color:var(--text-primary)}
+.pv-workspace-chip:hover{border-color:var(--primary-color);background:var(--pv-elevated);color:var(--text-primary)}
+.pv-info-strip{padding:.95rem 1.15rem;border:1px solid rgba(87,213,218,.23);border-radius:13px;background:rgba(35,163,178,.07)}
+.pv-info-strip p{max-width:850px}
+.pv-section-heading h3{font-size:1.2rem;font-weight:720;letter-spacing:-.025em}
+.pv-expand-workspace{border:1px solid var(--card-border);border-radius:16px;background:var(--card-bg);overflow:hidden}
+.pv-expand-workspace>summary{display:flex;justify-content:space-between;gap:1rem;align-items:center;cursor:pointer;list-style:none;padding:1rem 1.2rem}
+.pv-expand-workspace>summary::-webkit-details-marker{display:none}
+.pv-expand-workspace>summary:focus-visible{outline-offset:-3px}
+.pv-expand-workspace[open]>summary{border-bottom:1px solid var(--card-border)}
+.pv-expand-inner{padding:1rem}
+.pv-expand-inner>.card{margin:0!important}
+.pv-detail-toggle{color:var(--text-secondary);font-size:.78rem;white-space:nowrap}
+.pv-quality-settings{padding:1rem;border:1px solid rgba(98,210,203,.28);border-radius:12px;background:rgba(39,177,175,.045)}
+/* All person thumbnails and previews should show their entire existing crop.
+   Wider crops are generated at capture time, not by stretching a tiny JPEG. */
+.people-image-card img,.people-history-thumb{object-fit:contain!important;background:#071324;padding:.3rem}
+.people-image-card img{aspect-ratio:4/3;max-height:240px}
+#peopleImageGallery{align-content:start}
+#peopleCalibrationWorkspace{scroll-margin-top:16px}
+#peopleCalibrationWorkspace .people-preview-shell{max-height:530px}
+#peopleCalibrationWorkspace .card{box-shadow:none}
+#recognitionSettingsDetails{scroll-margin-top:16px}
+/* Reduce visual clutter without hiding data in unrelated registers. */
+.pro-hero,.dashboard-hero{padding:1.25rem 1.4rem!important;margin-bottom:1.25rem!important}
+.pro-hero h2,.dashboard-hero h2{font-size:clamp(1.3rem,1.8vw,1.8rem);letter-spacing:-.035em}
+.pro-hero .btn,.dashboard-hero .btn{white-space:normal}
+.card-header{padding:.85rem 1.1rem}
+.card-header h5{font-size:.96rem}
+.card-body{padding:1rem}
+.card .stat-card{box-shadow:none}
+.settings-nav{gap:.2rem}
+.settings-nav .nav-link{padding:.55rem .7rem!important;line-height:1.35}
+.settings-pro-section{border-color:rgba(142,160,208,.2)}
+/* Compact responsive forms, particularly on small HA ingress frames. */
+@media(max-width:1200px){.pv-workspace-intro{align-items:flex-start}.pv-workspace-links{width:100%}}
+@media(max-width:768px){
+ .pv-workspace-intro{padding:1rem}
+ .pv-workspace-chip{flex:1 1 auto;justify-content:center}
+ .pv-expand-workspace>summary{align-items:flex-start}
+ .pv-detail-toggle{max-width:90px;white-space:normal;text-align:right}
+ .pv-info-strip{align-items:flex-start}
+ #peopleCalibrationWorkspace .people-preview-shell{max-height:330px}
+ .pro-hero,.dashboard-hero{padding:1.05rem!important}
+ .settings-nav{display:flex!important;flex-direction:row!important;flex-wrap:nowrap;overflow-x:auto;padding-bottom:.5rem}
+ .settings-nav .nav-link{flex:0 0 auto;white-space:nowrap}
+}
+/* Respect the light theme: avoid forcing dark surfaces onto inputs/cards. */
+html[data-pv-theme="light"] .pv-workspace-intro,html[data-pv-theme="light"] .pv-expand-workspace{background:#fff;border-color:#dce4f0}
+html[data-pv-theme="light"] .pv-workspace-chip{color:#344663;background:#f4f7fc;border-color:#dce4f0}
+html[data-pv-theme="light"] .pv-info-strip{background:#ebf8fa;color:#24344b}
+html[data-pv-theme="light"] .pv-quality-settings{background:#f2fafc;color:#23354b}

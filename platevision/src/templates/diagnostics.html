@@ -2,13 +2,244 @@
 {% block title %}Diagnose - PlateVision{% endblock %}
 {% block page_title %}Diagnose & Audit{% endblock %}
 {% block content %}
-<div class="layout-upgrade-banner mb-3"><i class="fas fa-wand-magic-sparkles me-2"></i>Diagnose prüft jetzt auch sinnvolle Traffic-Timeouts.</div>
-<div class="pro-hero mb-4"><h2>Systemdiagnose</h2><p class="text-secondary mb-0">Prüft Modelle, Speicher, Stream, Konfiguration und gibt Empfehlungen.</p></div>
-<div class="row g-4"><div class="col-lg-6"><div class="soft-card p-3"><h5><i class="fas fa-heartbeat text-success me-2"></i>Health Checks</h5><div id="healthRows" class="d-grid gap-2 mt-3"></div></div></div><div class="col-lg-6"><div class="soft-card p-3"><h5><i class="fas fa-lightbulb text-warning me-2"></i>Empfehlungen</h5><div id="auditRows" class="mt-3 text-secondary">Lade...</div></div></div></div>
+<div class="layout-upgrade-banner mb-3"><i class="fas fa-stethoscope me-2"></i>Systemmonitor mit Kamera-Status, verständlichen Warnungen und Speicherschutz.</div>
+<div class="pro-hero mb-4">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+    <div><h2>Systemdiagnose</h2><p class="text-secondary mb-0">Prüft Modelle, Speicher, Stream, Konfiguration und gibt Empfehlungen.</p></div>
+    <a class="btn btn-outline-primary" href="{{ pv_prefix }}/api/system/support-report" download><i class="fas fa-file-download me-2"></i>Datenschutzfreundlichen Diagnosebericht speichern</a>
+  </div>
+</div>
+<div class="soft-card p-3 mb-3" role="region" aria-label="Systemmonitor">
+  <div class="d-flex flex-wrap justify-content-between gap-3 align-items-center">
+    <div><h5 class="mb-1"><i class="fas fa-heart-pulse text-info me-2"></i>Systemmonitor</h5><p class="text-secondary small mb-0">Deaktivierte Kamera oder Personenerkennung gelten nicht als Fehler.</p></div>
+    <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadDiag()"><i class="fas fa-arrows-rotate me-1"></i>Aktualisieren</button>
+  </div>
+  <div id="healthSummary" class="mt-3" role="status" aria-live="polite">Systemzustand wird geprüft ...</div>
+  <div id="cameraMonitor" class="row g-2 mt-1" role="group" aria-label="Kamerastatus"></div>
+  <details class="mt-3" id="haDeliveryHealthDetails">
+    <summary class="fw-semibold" style="cursor:pointer"><i class="fas fa-bell me-2"></i>Home-Assistant-Benachrichtigungen</summary>
+    <div id="haDeliveryMonitor" class="row g-2 mt-1" role="group" aria-label="Benachrichtigungsstatus"></div>
+    <a class="btn btn-outline-info btn-sm mt-2" href="{{ pv_url_for('watchlist_alerts_page') }}">Alarmzentrale und Zustellprotokoll öffnen</a>
+  </details>
+</div>
+<div class="row g-3">
+  <div class="col-lg-6"><div class="soft-card p-3 h-100">
+    <details id="healthTechnicalDetails"><summary class="fw-semibold" style="cursor:pointer"><i class="fas fa-list-check me-2"></i>Technische Einzelprüfungen anzeigen</summary>
+    <div id="healthRows" class="d-grid gap-2 mt-3"></div></details>
+  </div></div>
+  <div class="col-lg-6"><div class="soft-card p-3 h-100"><h5><i class="fas fa-lightbulb text-warning me-2"></i>Empfehlungen</h5><div id="auditRows" class="mt-3 text-secondary">Lade...</div></div></div>
+</div>
+<div class="soft-card p-3 mt-4">
+  <div class="d-flex flex-wrap gap-3 align-items-start justify-content-between">
+    <div><h5 class="mb-1"><i class="fas fa-hard-drive text-info me-2"></i>Speicher & Datenintegritaet</h5><p class="text-secondary small mb-0">Ueberprueft freie Kapazitaet, SQLite-Historien, Migrationssicherungen und JSON-Konfigurationen, ohne Kennzeichen oder Passwoerter anzuzeigen.</p></div>
+    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadStorageAudit()">Erneut pruefen</button>
+  </div>
+  <div class="row g-3 mt-1"><div class="col-sm-4"><div class="stat-card"><div class="stat-card-label">Freier Speicher</div><div class="stat-card-value" id="storageFree">-</div></div></div><div class="col-sm-4"><div class="stat-card"><div class="stat-card-label">Schutz des Webzugriffs</div><div class="stat-card-value fs-5" id="storageAuth">-</div></div></div><div class="col-sm-4"><div class="stat-card"><div class="stat-card-label">Video-Jobs</div><div class="stat-card-value fs-5" id="storageJobs">-</div></div></div></div>
+  <div id="storageAlerts" class="mt-3" role="status" aria-live="polite"></div>
+  <div class="soft-card p-3 mt-3" role="region" aria-label="SQLite-Migrationsstatus">
+    <h6 class="mb-1"><i class="fas fa-database me-2"></i>SQLite-Migrationsstatus</h6>
+    <p class="small text-secondary mb-2">Die Datenbanken enthalten jetzt die aktuellen Kennzeichen- und Personenereignisse. Die alten JSON-Dateien bleiben als unveränderte Migrationssicherung bestehen.</p>
+    <div id="sqliteStatus" class="small" aria-live="polite">Lade Datenbankstatus ...</div>
+  </div>
+  <div class="table-responsive mt-3"><table class="table table-sm align-middle"><thead><tr><th>Datenbereich</th><th>Hauptdatei</th><th>Sicherung</th><th>Groesse</th></tr></thead><tbody id="storageFiles"><tr><td colspan="4" class="text-secondary">Pruefung laeuft ...</td></tr></tbody></table></div>
+  <div class="border-top mt-3 pt-3 d-flex align-items-start justify-content-between flex-wrap gap-3" style="border-color:var(--card-border)!important">
+    <div class="flex-grow-1"><h6 class="mb-1"><i class="fas fa-box-archive me-2"></i>Datensicherung herunterladen</h6>
+      <p class="small text-secondary mb-1" id="backupPreview" aria-live="polite">Sicherungsumfang wird berechnet ...</p>
+      <p class="small text-warning mb-0">Vertraulich: Die Sicherung enthält Kennzeichen, Personenbilder und möglicherweise RTSP-Passwörter. KI-Modelle und hochgeladene Videos sind nicht enthalten. Zusätzlich ein Home-Assistant-Backup erstellen.</p>
+    </div>
+    <a class="btn btn-outline-info btn-sm" href="{{ pv_prefix }}/api/system/backup" download><i class="fas fa-file-zipper me-2"></i>ZIP-Datensicherung</a>
+  </div>
+  <div class="border-top mt-3 pt-3" style="border-color:var(--card-border)!important">
+    <h6 class="mb-1"><i class="fas fa-shield-halved me-2"></i>ZIP-Sicherung prüfen (ohne Wiederherstellung)</h6>
+    <p class="small text-secondary">Prüft Dateiliste, ZIP-Integrität und SHA-256-Prüfsummen. Das Archiv wird nur gelesen, nicht importiert. Für die Onlineprüfung sind bis zu 490 MB möglich.</p>
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <label class="visually-hidden" for="backupVerifyFile">ZIP-Sicherungsdatei</label>
+      <input type="file" class="form-control form-control-sm" id="backupVerifyFile" accept=".zip,application/zip" style="max-width:340px">
+      <button type="button" class="btn btn-outline-primary btn-sm" id="backupVerifyButton" onclick="verifyBackup()">Sicherung überprüfen</button>
+    </div>
+    <div id="backupVerifyResult" class="small mt-2 text-secondary" role="status" aria-live="polite">Keine Sicherung ausgewählt.</div>
+  </div>
+  <p class="text-secondary small mt-3 mb-0">Wichtig: Eine gültige JSON-Datei bedeutet nicht, dass alle Bilder lesbar sind. Bei aktiviertem Schreibschutz keine Daten manuell überschreiben – zuerst Original und Sicherung extern sichern.</p>
+</div>
 {% endblock %}
 {% block extra_js %}
 <script>
-function loadDiag(){fetch('/api/system/health').then(r=>r.json()).then(d=>{healthRows.innerHTML=(d.checks||[]).map(c=>`<div class="border rounded p-3 d-flex justify-content-between" style="border-color:var(--card-border)!important"><div><b>${c.name}</b><div class="text-secondary small">${c.detail||''}</div></div><span class="badge ${c.ok?'bg-success':'bg-warning text-dark'} align-self-start">${c.ok?'OK':'Prüfen'}</span></div>`).join('');});fetch('/api/system/audit').then(r=>r.json()).then(d=>{auditRows.innerHTML=[...(d.issues||[]).map(i=>`<div class="alert alert-${i.level==='warning'?'warning':'info'}"><b>${i.title}</b><br>${i.detail}</div>`),...(d.suggestions||[]).map(s=>`<div class="border rounded p-2 mb-2" style="border-color:var(--card-border)!important"><i class="fas fa-check text-success me-2"></i>${s}</div>`)].join('')||'<div class="text-success">Keine offenen Empfehlungen.</div>';});}
+const pvHealthLabels = {
+  models_directory: 'Modellverzeichnis', vehicle_model: 'Fahrzeugmodell',
+  plate_model: 'Kennzeichenmodell', person_model_path: 'Personenmodell',
+  history_writable: 'Kennzeichenspeicher', watchlist_writable: 'Watchlist-Speicher',
+  people_history_writable: 'Personenspeicher', storage_integrity: 'Datenintegrität',
+  sqlite_plates: 'SQLite Kennzeichen', sqlite_people: 'SQLite Personen',
+  rtsp_configured: 'RTSP-Einstellungen', rtsp_autostart: 'Kamera-Autostart',
+  stream_connected: 'Kamera-Verbindung', alarm_database: 'Alarmdatenbank',
+  ha_notifications: 'Home-Assistant-Benachrichtigungen'
+};
+function pvMakeMonitorTile(label, value) {
+  const col = document.createElement('div'); col.className = 'col-6 col-md-3';
+  const item = document.createElement('div'); item.className = 'stat-card h-100';
+  const name = document.createElement('div'); name.className = 'stat-card-label'; name.textContent = label;
+  const number = document.createElement('div'); number.className = 'stat-card-value fs-5'; number.textContent = value;
+  item.append(name, number); col.appendChild(item); return col;
+}
+async function loadDiag() {
+  const summaryEl = document.getElementById('healthSummary');
+  const cameraEl = document.getElementById('cameraMonitor');
+  const checksEl = document.getElementById('healthRows');
+  try {
+    const response = await fetch('{{ pv_prefix }}/api/system/health', {cache:'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    const summary = data.summary || {};
+    summaryEl.className = 'alert ' + (data.ok ? 'alert-success' : 'alert-warning') + ' py-2 mb-2';
+    summaryEl.textContent = data.ok
+      ? `Systemprüfung erfolgreich · ${Number(summary.disabled||0)} bewusst deaktivierte Bereiche`
+      : `${Number(summary.problems||0)} Prüfungen benötigen Aufmerksamkeit · Details unten aufklappen`;
+    cameraEl.replaceChildren();
+    const camera = data.camera || {};
+    cameraEl.append(
+      pvMakeMonitorTile('RTSP-Kamera', !camera.enabled ? 'Deaktiviert' : (camera.connected ? 'Verbunden' : 'Offline')),
+      pvMakeMonitorTile('Bildrate', Number(camera.fps||0).toFixed(1) + ' FPS'),
+      pvMakeMonitorTile('Verarbeitete Frames', Number(camera.processed_frames||0).toLocaleString('de-DE')),
+      pvMakeMonitorTile('Erkennungen (Stream)', Number(camera.detections||0).toLocaleString('de-DE'))
+    );
+    const haEl = document.getElementById('haDeliveryMonitor');
+    haEl.replaceChildren();
+    const ha = data.homeassistant_notifications || {};
+    const outbox = ha.queue || {};
+    const elapsed = outbox.oldest_waiting_seconds;
+    haEl.append(
+      pvMakeMonitorTile('HA-Versand', ha.paused ? 'Pausiert' : (!ha.enabled ? 'Aus' : (ha.token_available ? 'Aktiv' : 'Token fehlt'))),
+      pvMakeMonitorTile('Wartend', Number(outbox.pending||0) + Number(outbox.sending||0)),
+      pvMakeMonitorTile('Fehlgeschlagen', Number(outbox.failed||0)),
+      pvMakeMonitorTile('Ältester Auftrag', elapsed == null ? 'Keiner' : `${Math.floor(Number(elapsed)/60)} min`),
+      pvMakeMonitorTile('Jetzt fällig', Number(outbox.due_now||0)),
+      pvMakeMonitorTile('Nächster Versuch', outbox.next_retry_at == null ? 'Keiner' :
+        `${Math.max(0, Math.ceil((Number(outbox.next_retry_at)*1000 - Date.now())/60000))} min`)
+    );
+    checksEl.replaceChildren();
+    for (const check of data.checks || []) {
+      const item = document.createElement('div');
+      item.className = 'border rounded p-2 d-flex justify-content-between align-items-start gap-2';
+      item.style.borderColor = 'var(--card-border)';
+      const textBlock = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = pvHealthLabels[check.name] || String(check.name);
+      const description = document.createElement('div'); description.className = 'text-secondary small';
+      description.textContent = check.detail || '';
+      textBlock.append(title, description);
+      const badge = document.createElement('span');
+      const disabled = check.state === 'disabled';
+      badge.className = 'badge ' + (disabled ? 'bg-secondary' : check.ok ? 'bg-success' : 'bg-warning text-dark');
+      badge.textContent = disabled ? 'Deaktiviert' : check.ok ? 'OK' : 'Prüfen';
+      item.append(textBlock, badge); checksEl.appendChild(item);
+    }
+  } catch (error) {
+    summaryEl.className = 'alert alert-danger py-2 mb-2';
+    summaryEl.textContent = 'Systemprüfung nicht erreichbar: ' + String(error.message || error);
+  }
+  try {
+    const response = await fetch('{{ pv_prefix }}/api/system/audit', {cache:'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const d = await response.json();
+    auditRows.innerHTML = [...(d.issues||[]).map(i => `<div class="alert alert-${i.level==='warning'?'warning':'info'}"><b>${pvEscapeHtml(i.title)}</b><br>${pvEscapeHtml(i.detail)}</div>`),
+      ...(d.suggestions||[]).map(s => `<div class="border rounded p-2 mb-2" style="border-color:var(--card-border)!important"><i class="fas fa-check text-success me-2"></i>${pvEscapeHtml(s)}</div>`)].join('') || '<div class="text-success">Keine offenen Empfehlungen.</div>';
+  } catch (error) {
+    document.getElementById('auditRows').textContent = 'Empfehlungen nicht erreichbar: ' + String(error.message || error);
+  }
+}
+
 document.addEventListener('DOMContentLoaded',loadDiag);
+
+async function loadStorageAudit() {
+  try {
+    const response = await fetch('{{ pv_prefix }}/api/system/storage-audit', {cache:'no-store'});
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    const disk = data.disk || {};
+    document.getElementById('storageFree').textContent = disk.free_mb == null ? '-' : `${disk.free_mb} MB`;
+    document.getElementById('storageAuth').textContent = data.authentication_enabled ? 'Aktiv' : 'Nicht aktiv';
+    const jobs = data.video_jobs || {};
+    document.getElementById('storageJobs').textContent = `${Number(jobs.active||0)} aktiv / ${Number(jobs.completed||0)} fertig`;
+    const alerts = document.getElementById('storageAlerts');
+    alerts.replaceChildren();
+    if (data.read_only) {
+      const blocked = document.createElement('div');
+      blocked.className = 'alert alert-danger py-3 mb-2';
+      blocked.textContent = 'ACHTUNG: Speicher-Schreibschutz aktiv! Mindestens eine Datendatei und ihre Sicherung sind beschädigt. Neue Änderungen sind gesperrt, damit vorhandene Dateien erhalten bleiben. Bitte Home-Assistant-Backup prüfen.';
+      alerts.appendChild(blocked);
+    }
+    for (const issue of (data.issues || [])) {
+      const item = document.createElement('div');
+      item.className = 'alert alert-warning py-2 mb-2';
+      item.textContent = String(issue);
+      alerts.appendChild(item);
+    }
+    if (!alerts.childElementCount) {
+      const fine = document.createElement('div');
+      fine.className = 'text-success small';
+      fine.textContent = 'Keine Probleme in der Schnellpruefung gefunden.';
+      alerts.appendChild(fine);
+    }
+    const sqlite = document.getElementById('sqliteStatus');
+    const dbs = data.sqlite_histories || {};
+    sqlite.replaceChildren();
+    for (const [key, label] of [['plates','Kennzeichen'], ['people','Personen']]) {
+      const state = dbs[key];
+      const item = document.createElement('div');
+      item.className = 'py-1 ' + (state && state.ok ? 'text-success' : 'text-warning');
+      item.textContent = state ? `${label}: ${state.ok ? 'SQLite OK' : 'SQLite prüfen'} · ${state.count ?? '?'} Einträge · SQL-Abfrageindex v${state.query_schema ?? '?'} · Migrationssicherung ${state.legacy_snapshot_exists ? 'vorhanden' : 'fehlt'}` : `${label}: SQLite nicht aktiv (JSON/Schutzmodus)`;
+      sqlite.appendChild(item);
+    }
+    const tbody = document.getElementById('storageFiles');
+    tbody.replaceChildren();
+    const state = v => v === true ? 'OK' : v === false ? 'Defekt' : 'Nicht vorhanden';
+    for (const f of (data.files || [])) {
+      const tr = document.createElement('tr');
+      for (const value of [f.category, state(f.valid), state(f.backup_valid), `${Number(f.size_mb||0)} MB`]) {
+        const td = document.createElement('td');
+        td.textContent = String(value || '-');
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+  } catch (error) {
+    document.getElementById('storageAlerts').textContent = 'Speicherpruefung fehlgeschlagen: ' + String(error.message || error);
+  }
+}
+
+async function loadBackupPreview() {
+  const el = document.getElementById('backupPreview');
+  try {
+    const response = await fetch('{{ pv_prefix }}/api/system/backup/preview', {cache:'no-store'});
+    const result = await response.json();
+    if (!response.ok || !result.success) throw new Error(result.error || 'Sicherung nicht verfügbar');
+    el.textContent = `${result.file_count} Dateien · ca. ${result.size_mb} MB unkomprimiert · Limit ${result.max_mb} MB`;
+  } catch(error) {
+    el.textContent = `Sicherungsprüfung: ${String(error.message || error)}`;
+  }
+}
+async function verifyBackup() {
+  const file = document.getElementById('backupVerifyFile').files[0];
+  const result = document.getElementById('backupVerifyResult');
+  const button = document.getElementById('backupVerifyButton');
+  if (!file) { result.textContent = 'Bitte eine ZIP-Sicherung auswählen.'; return; }
+  if (file.size > 490 * 1024 * 1024) { result.textContent = 'Das ZIP überschreitet das Online-Prüflimit von 490 MB.'; return; }
+  const form = new FormData();
+  form.append('file', file);
+  button.disabled = true;
+  result.className = 'small mt-2 text-secondary';
+  result.textContent = 'ZIP wird geprüft ...';
+  try {
+    const response = await fetch('{{ pv_prefix }}/api/system/backup/verify', {method:'POST', body:form, cache:'no-store'});
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+    result.className = 'small mt-2 text-success';
+    result.textContent = `Prüfung bestanden: ${Number(data.verified_files||0)} Dateien, ${Number(data.verified_bytes||0)} Bytes. Ursprungsversion ${String(data.source_version||'?')}. Keine Daten wurden wiederhergestellt.`;
+  } catch(error) {
+    result.className = 'small mt-2 text-danger';
+    result.textContent = 'Prüfung fehlgeschlagen: ' + String(error.message || error);
+  } finally { button.disabled = false; }
+}
+document.addEventListener("DOMContentLoaded", () => {loadStorageAudit(); loadBackupPreview();});
 </script>
 {% endblock %}

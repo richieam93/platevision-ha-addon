@@ -275,6 +275,11 @@
         background: rgba(239, 68, 68, 0.2);
         color: var(--danger-color);
     }
+    .job-status.cancelling, .job-status.cancelled {
+        background: rgba(245, 158, 11, 0.15);
+        color: var(--warning-color, #e5a600);
+    }
+    .job-status.queued { background: var(--dark-bg); color: var(--text-secondary); }
     
     /* Job Card */
     .job-card {
@@ -322,207 +327,28 @@
         color: var(--text-secondary);
         font-size: .78rem;
     }
+
+
+    .test-settings-grid {grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
+    @media (max-width:1000px){.test-settings-grid{grid-template-columns:1fr}}
+    .pv-sub-settings{min-width:0;border:1px solid var(--card-border);border-radius:12px;padding:0;background:var(--card-bg)}
+    .pv-sub-settings>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.9rem 1rem;list-style:none;font-weight:650}
+    .pv-sub-settings>summary::-webkit-details-marker{display:none}
+    .pv-sub-settings>summary::after{content:'⌄';opacity:.7;font-size:1.15rem}
+    .pv-sub-settings[open]>summary::after{content:'⌃'}
+    .pv-sub-settings>summary h6{margin:0!important}
+    .pv-sub-settings .pv-sub-inner{padding:0 1rem 1rem}
+    .pv-expand-workspace .test-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    @media(max-width:1100px){.pv-expand-workspace .test-settings-grid{grid-template-columns:1fr}}
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="layout-upgrade-banner mb-3"><i class="fas fa-wand-magic-sparkles me-2"></i>Test-Erkennungen fließen in Historie und Statistik ein, wenn sie gespeichert werden.</div>
-<div class="card mb-4" id="recognitionTestSettingsCard">
-    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div>
-            <h5 class="card-title mb-0"><i class="fas fa-sliders me-2"></i>Erkennungs-Einstellungen für Test & RTSP</h5>
-            <small class="text-secondary">Diese Werte gelten für Foto-Upload, Video-Upload und nach dem Speichern auch für den RTSP-Stream.</small>
-        </div>
-        <div class="d-flex flex-wrap gap-2">
-            <button class="btn btn-warning btn-sm" type="button" onclick="applyDefaultRecognitionSettings(false)"><i class="fas fa-wand-magic-sparkles me-1"></i>Default-Einstellungen</button>
-            <button class="btn btn-outline-warning btn-sm" type="button" onclick="applyDefaultRecognitionSettings(true)"><i class="fas fa-save me-1"></i>Default speichern & RTSP</button>
-            <button class="btn btn-primary btn-sm" type="button" onclick="saveTestRecognitionSettings(true)"><i class="fas fa-save me-1"></i>Speichern & RTSP anwenden</button>
-            <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadTestRecognitionSettings()"><i class="fas fa-rotate me-1"></i>Laden</button>
-        </div>
-    </div>
-    <div class="card-body">
-        <div id="testSettingsStatus" class="alert alert-secondary py-2 small mb-3">Lade aktuelle Einstellungen...</div>
-        <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
-            <span class="text-secondary small me-1">Schnellprofil:</span>
-            <button class="btn btn-outline-info btn-sm" type="button" onclick="applyRecognitionProfile('fast', false)">Schnell / CPU-schonend</button>
-            <button class="btn btn-outline-primary btn-sm" type="button" onclick="applyRecognitionProfile('balanced', false)">Ausgewogen</button>
-            <button class="btn btn-outline-success btn-sm" type="button" onclick="applyRecognitionProfile('strict', false)">Streng / sauber</button>
-            <button class="btn btn-outline-warning btn-sm" type="button" onclick="applyRecognitionProfile('night', false)">Nacht / schwierige Bilder</button>
-        </div>
-        <div class="test-settings-grid">
-            <div class="test-settings-section">
-                <h6><i class="fas fa-id-card text-success me-2"></i>YOLO Nummernschild-Detector</h6>
-                <label class="form-label">Kennzeichen YOLO .pt/.onnx/.engine Modell</label>
-                <select class="form-select mb-2" id="testPlateModel"></select>
-                <div class="row g-2">
-                    <div class="col-4"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testPlateConf"></div>
-                    <div class="col-4"><label class="form-label">IoU</label><input class="form-control" type="number" min="0.05" max="0.95" step="0.01" id="testPlateIou"></div>
-                    <div class="col-4"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testPlateImgsz"></div>
-                    <div class="col-6"><label class="form-label">Crop Padding %</label><input class="form-control" type="number" min="0" max="40" step="0.5" id="testPlatePadding"></div>
-                    <div class="col-6"><label class="form-label">Max Det.</label><input class="form-control" type="number" min="1" max="50" step="1" id="testPlateMaxDet"></div>
-                </div>
-                <div class="row g-2 mt-2">
-                    <div class="col-6"><label class="form-label">Min. Breite</label><input class="form-control" type="number" min="1" max="300" step="1" id="testMinPlateWidth"></div>
-                    <div class="col-6"><label class="form-label">Min. Höhe</label><input class="form-control" type="number" min="1" max="200" step="1" id="testMinPlateHeight"></div>
-                    <div class="col-6"><label class="form-label">Aspect min</label><input class="form-control" type="number" min="0.5" max="10" step="0.1" id="testPlateAspectMin"></div>
-                    <div class="col-6"><label class="form-label">Aspect max</label><input class="form-control" type="number" min="1" max="20" step="0.1" id="testPlateAspectMax"></div>
-                    <div class="col-12"><label class="form-label">Scan-Strategie</label><select class="form-select" id="testPlateScanStrategy"><option value="full_frame_first">Ganzes Bild zuerst + Fahrzeug-Zoom</option><option value="full_frame_only">Nur ganzes Bild</option><option value="vehicle_zoom_first">Fahrzeug-Zoom zuerst</option></select></div>
-                    <div class="col-6"><label class="form-label">Zoom-Faktor</label><input class="form-control" type="number" min="1" max="6" step="0.1" id="testZoomFactor"></div>
-                    <div class="col-6"><label class="form-label">Zoom-Padding px</label><input class="form-control" type="number" min="0" max="500" step="5" id="testZoomPadding"></div>
-                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testZoomEnabled"><label class="form-check-label" for="testZoomEnabled">Fahrzeug-Zoom für kleine Kennzeichen verwenden</label></div></div>
-                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testScanFullFrameWhenVehicleFound"><label class="form-check-label" for="testScanFullFrameWhenVehicleFound">Ganzes Bild zusätzlich scannen, auch wenn Fahrzeug-Zoom aktiv ist</label></div></div>
-                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDeduplicatePlates"><label class="form-check-label" for="testDeduplicatePlates">Doppelte Kennzeichen im selben Bild überspringen</label></div></div>
-                </div>
-                <div class="form-help-small mt-2">Default-Werte wie im funktionierenden Demo-Modus: conf 0.25, IoU 0.45, imgsz 960, Padding 8%.</div>
-            </div>
-
-            <div class="test-settings-section">
-                <h6><i class="fas fa-car-side text-primary me-2"></i>YOLO Fahrzeug-Erkennung</h6>
-                <label class="form-label">Fahrzeug YOLO Modell</label>
-                <select class="form-select mb-2" id="testVehicleModel"></select>
-                <div class="row g-2">
-                    <div class="col-4"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testVehicleConf"></div>
-                    <div class="col-4"><label class="form-label">IoU</label><input class="form-control" type="number" min="0.05" max="0.95" step="0.01" id="testVehicleIou"></div>
-                    <div class="col-4"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testVehicleImgsz"></div>
-                    <div class="col-6"><label class="form-label">Min. Breite</label><input class="form-control" type="number" min="1" max="1000" step="1" id="testMinVehicleWidth"></div>
-                    <div class="col-6"><label class="form-label">Min. Höhe</label><input class="form-control" type="number" min="1" max="1000" step="1" id="testMinVehicleHeight"></div>
-                    <div class="col-12"><label class="form-label">Max. Fahrzeug-/Kennzeichen-Erkennungen pro Frame</label><input class="form-control" type="number" min="1" max="50" step="1" id="testMaxDetections"></div>
-                </div>
-                <div class="mt-2 small text-secondary">Fahrzeugklassen</div>
-                <div class="d-flex flex-wrap gap-3">
-                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassCar"><label class="form-check-label" for="testClassCar">Auto</label></div>
-                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassTruck"><label class="form-check-label" for="testClassTruck">LKW</label></div>
-                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassBus"><label class="form-check-label" for="testClassBus">Bus</label></div>
-                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassMotorcycle"><label class="form-check-label" for="testClassMotorcycle">Motorrad</label></div>
-                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassBicycle"><label class="form-check-label" for="testClassBicycle">Fahrrad</label></div>
-                </div>
-                <div class="row g-2 mt-2">
-                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testVehicleColorEnabled"><label class="form-check-label" for="testVehicleColorEnabled">Farbe berechnen</label></div></div>
-                    <div class="col-6"><label class="form-label">Farbpalette max.</label><input class="form-control" type="number" min="1" max="12" step="1" id="testVehicleColorPaletteMax"></div>
-                </div>
-                <div class="form-help-small mt-2">yolov8n.pt erkennt Fahrzeugtyp; Farbe wird aus dem Fahrzeugbild berechnet.</div>
-            </div>
-
-            <div class="test-settings-section">
-                <h6><i class="fas fa-font text-warning me-2"></i>OCR / Texterkennung</h6>
-                <label class="form-label">OCR Engine</label>
-                <select class="form-select mb-2" id="testOcrEngine">
-                    <option value="fast_plate_ocr">fast-plate-ocr Standard</option>
-                    <option value="easyocr">EasyOCR Backup</option>
-                </select>
-                <label class="form-label">fast-plate-ocr Hub-Modell</label>
-                <select class="form-select mb-2" id="testFastPlateModel">
-                    <option value="cct-s-v2-global-model">cct-s-v2-global-model</option>
-                    <option value="cct-xs-v2-global-model">cct-xs-v2-global-model</option>
-                    <option value="cct-s-v1-global-model">cct-s-v1-global-model</option>
-                    <option value="cct-xs-v1-global-model">cct-xs-v1-global-model</option>
-                </select>
-                <div class="row g-2">
-                    <div class="col-6"><label class="form-label">Device</label><select class="form-select" id="testFastPlateDevice"><option>auto</option><option>cpu</option><option>cuda</option></select></div>
-                    <div class="col-6"><label class="form-label">Min. OCR</label><input class="form-control" type="number" min="0" max="1" step="0.01" id="testOcrMinConf"></div>
-                </div>
-                <label class="form-label mt-2">ONNX Provider Override</label>
-                <input class="form-control mb-2" type="text" id="testFastPlateProviders" placeholder="z.B. CUDAExecutionProvider,CPUExecutionProvider">
-                <div class="row g-2">
-                    <div class="col-6"><label class="form-label">Min. Textlänge</label><input class="form-control" type="number" min="1" max="20" step="1" id="testMinTextLength"></div>
-                    <div class="col-6"><label class="form-label">Max. OCR-Varianten</label><input class="form-control" type="number" min="1" max="20" step="1" id="testMaxVariants"></div>
-                </div>
-                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testEasyBackup"><label class="form-check-label" for="testEasyBackup">EasyOCR als Backup verwenden</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRemovePad"><label class="form-check-label" for="testRemovePad">Padding-Zeichen entfernen</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testReturnConfidence"><label class="form-check-label" for="testReturnConfidence">Zeichen-Confidence ausgeben</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRotationVariants"><label class="form-check-label" for="testRotationVariants">Rotation-/Varianten-Test bei EasyOCR erlauben</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRetryOnFail"><label class="form-check-label" for="testRetryOnFail">OCR-Retry bei schlechtem Ergebnis</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testUppercaseOutput"><label class="form-check-label" for="testUppercaseOutput">Ausgabe gross schreiben</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testUseAllowlist"><label class="form-check-label" for="testUseAllowlist">Kennzeichen-Zeichenliste verwenden</label></div>
-            </div>
-
-            <div class="test-settings-section">
-                <h6><i class="fas fa-image text-info me-2"></i>Bildvorverarbeitung / OCR Backup</h6>
-                <div class="row g-2">
-                    <div class="col-6"><label class="form-label">Resize Faktor</label><input class="form-control" type="number" min="1" max="8" step="0.1" id="testResizeFactor"></div>
-                    <div class="col-6"><label class="form-label">Zielhöhe px</label><input class="form-control" type="number" min="32" max="512" step="4" id="testTargetHeight"></div>
-                    <div class="col-6"><label class="form-label">Min. Breite px</label><input class="form-control" type="number" min="32" max="1000" step="4" id="testMinWidth"></div>
-                    <div class="col-6"><label class="form-label">Gamma</label><input class="form-control" type="number" min="0.2" max="3" step="0.1" id="testGamma"></div>
-                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPreprocessingEnabled"><label class="form-check-label" for="testPreprocessingEnabled">Vorverarbeitung aktiv</label></div></div>
-                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDenoise"><label class="form-check-label" for="testDenoise">Rauschen entfernen</label></div></div>
-                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSharpen"><label class="form-check-label" for="testSharpen">Schärfen</label></div></div>
-                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testContrastEnhance"><label class="form-check-label" for="testContrastEnhance">Kontrast/CLAHE</label></div></div>
-                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testAdaptiveThreshold"><label class="form-check-label" for="testAdaptiveThreshold">Adaptive Threshold</label></div></div>
-                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDeskew"><label class="form-check-label" for="testDeskew">Deskew</label></div></div>
-                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMorphology"><label class="form-check-label" for="testMorphology">Morphology</label></div></div>
-                </div>
-                <div class="form-help-small mt-2">Diese Werte wirken vor allem bei EasyOCR/Backup. fast-plate-ocr nutzt den YOLO-Kennzeichen-Crop direkt.</div>
-            </div>
-
-            <div class="test-settings-section">
-                <h6><i class="fas fa-person-walking text-info me-2"></i>Personenanalyse & Personenzählung</h6>
-                <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" id="testPeopleEnabled"><label class="form-check-label" for="testPeopleEnabled">Personenanalyse aktiv</label></div>
-                <label class="form-label">Personen YOLO Modell</label>
-                <select class="form-select mb-2" id="testPersonModel"></select>
-                <div class="row g-2">
-                    <div class="col-6"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testPeopleConf"></div>
-                    <div class="col-6"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testPeopleImgsz"></div>
-                    <div class="col-6"><label class="form-label">IoU</label><input class="form-control" type="number" min="0.05" max="0.95" step="0.01" id="testPeopleIou"></div>
-                    <div class="col-6"><label class="form-label">Max Personen</label><input class="form-control" type="number" min="1" max="100" step="1" id="testPeopleMaxPerFrame"></div>
-                    <div class="col-6"><label class="form-label">Min. Breite</label><input class="form-control" type="number" min="1" max="500" step="1" id="testPeopleMinWidth"></div>
-                    <div class="col-6"><label class="form-label">Min. Höhe</label><input class="form-control" type="number" min="1" max="800" step="1" id="testPeopleMinHeight"></div>
-                    <div class="col-6"><label class="form-label">Zähllinie %</label><input class="form-control" type="number" min="1" max="99" step="1" id="testPeopleLine"></div>
-                    <div class="col-6"><label class="form-label">Linie Schieber</label><input class="form-range mt-2" type="range" min="1" max="99" step="1" id="testPeopleLineRange"></div>
-                    <div class="col-6"><label class="form-label">Achse</label><select class="form-select" id="testPeopleAxis"><option value="y">horizontal / oben-unten</option><option value="x">vertikal / links-rechts</option></select></div>
-                    <div class="col-6"><label class="form-label">Richtung zählen</label><select class="form-select" id="testPeopleDirection"><option value="both">beide Richtungen</option><option value="down">runter</option><option value="up">hoch</option><option value="right">rechts</option><option value="left">links</option></select></div>
-                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleLineRelative"><label class="form-check-label" for="testPeopleLineRelative">Zähllinie relativ zum Straßenbereich verwenden</label></div></div>
-                </div>
-                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testPeopleTracker"><label class="form-check-label" for="testPeopleTracker">Tracker aktiv</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleCountOnce"><label class="form-check-label" for="testPeopleCountOnce">Person pro Track nur einmal zählen</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleSaveAll"><label class="form-check-label" for="testPeopleSaveAll">Alle Personen mit Bild speichern</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleSaveCrop"><label class="form-check-label" for="testPeopleSaveCrop">Personen-Crop speichern</label></div>
-            </div>
-
-            <div class="test-settings-section">
-                <h6><i class="fas fa-road text-danger me-2"></i>Durchfahrten, Wiederkehrer, Kommen & Gehen</h6>
-                <div class="row g-2">
-                    <div class="col-6"><label class="form-label">Besuchslücke min</label><input class="form-control" type="number" min="1" max="1440" step="1" id="testVisitGap"></div>
-                    <div class="col-6"><label class="form-label">Gehen nach min</label><input class="form-control" type="number" min="1" max="1440" step="1" id="testActiveTimeout"></div>
-                    <div class="col-6"><label class="form-label">Fahrzeug-Achse</label><select class="form-select" id="testTrafficAxis"><option value="x">links/rechts</option><option value="y">oben/unten</option></select></div>
-                    <div class="col-6"><label class="form-label">Bewegung %</label><input class="form-control" type="number" min="1" max="80" step="1" id="testTrafficMove"></div>
-                    <div class="col-6"><label class="form-label">Tageszählung</label><select class="form-select" id="testDailyCountMode"><option value="visits">Besuche</option><option value="detections">Erkennungen</option><option value="unique_plates">Einzigartige Kennzeichen</option></select></div>
-                    <div class="col-6"><label class="form-label">Richtungsmodus</label><select class="form-select" id="testDirectionMode"><option value="auto">automatisch</option><option value="axis">Bewegungsachse</option><option value="session">Session/Timeout</option></select></div>
-                    <div class="col-6"><label class="form-label">Kommen Label</label><input class="form-control" id="testArrivalLabel"></div>
-                    <div class="col-6"><label class="form-label">Gehen Label</label><input class="form-control" id="testDepartureLabel"></div>
-                    <div class="col-6"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testIgnoreUnknown"><label class="form-check-label" for="testIgnoreUnknown">Unbekannte Kennzeichen ignorieren</label></div></div>
-                    <div class="col-6"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testIncludeDuplicateEvents"><label class="form-check-label" for="testIncludeDuplicateEvents">Duplikate mitzählen</label></div></div>
-                </div>
-                <div class="form-help-small mt-2">Fahrzeug-Durchfahrten basieren auf Kennzeichen-Sessions. Personen werden über die Zähllinie gezählt.</div>
-            </div>
-
-            <div class="test-settings-section">
-                <h6><i class="fas fa-gauge-high text-warning me-2"></i>RTSP Performance & Straßenbereich</h6>
-                <div class="row g-2">
-                    <div class="col-6"><label class="form-label">Frame-Intervall</label><input class="form-control" type="number" min="0.1" max="10" step="0.1" id="testProcessInterval"></div>
-                    <div class="col-6"><label class="form-label">ROI Padding %</label><input class="form-control" type="number" min="0" max="100" step="1" id="testRoiCropPadding"></div>
-                    <div class="col-6"><label class="form-label">ROI Min. Rand px</label><input class="form-control" type="number" min="0" max="1000" step="10" id="testRoiCropMinPx"></div>
-                    <div class="col-6"><label class="form-label">Idle-Scan Sek.</label><input class="form-control" type="number" min="1" max="120" step="1" id="testMotionIdleScan"></div>
-                    <div class="col-6"><label class="form-label">Motion Schwelle %</label><input class="form-control" type="number" min="0.01" max="10" step="0.01" id="testMotionThreshold"></div>
-                    <div class="col-6"><label class="form-label">Motion halten Sek.</label><input class="form-control" type="number" min="0" max="30" step="0.1" id="testMotionHold"></div>
-                </div>
-                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testCropBeforeDetection"><label class="form-check-label" for="testCropBeforeDetection">Straßenbereich vor YOLO als Crop verwenden</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMaskOutside"><label class="form-check-label" for="testMaskOutside">Außerhalb Straßenbereich maskieren</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMotionGate"><label class="form-check-label" for="testMotionGate">CPU-Sparmodus: YOLO nur bei Bewegung im Straßenbereich</label></div>
-                <div class="form-help-small mt-2">Diese Werte gelten nach dem Speichern für den RTSP-Loop und helfen, CPU-Last zu reduzieren.</div>
-            </div>
-
-            <div class="test-settings-section">
-                <h6><i class="fas fa-save text-success me-2"></i>Speichern & Anzeige</h6>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSavePlates"><label class="form-check-label" for="testSavePlates">Kennzeichen-Bilder speichern</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSaveVehicles"><label class="form-check-label" for="testSaveVehicles">Fahrzeug-Bilder speichern</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSaveFullFrame"><label class="form-check-label" for="testSaveFullFrame">Vollständigen Frame speichern</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testAnnotateFrames"><label class="form-check-label" for="testAnnotateFrames">Markierungen ins Ergebnisbild zeichnen</label></div>
-                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDrawConfidence"><label class="form-check-label" for="testDrawConfidence">Confidence im Bild anzeigen</label></div>
-            </div>
-        </div>
-    </div>
+<div class="pv-workspace-intro mb-3">
+  <div><div class="mini-label">Testzentrum</div><h2 class="mb-1">Erkennen, prüfen & einstellen</h2><p class="text-secondary mb-0">Zuerst Foto oder Video testen. Weitere Optionen und die Personen-Kalibrierung sind jederzeit erreichbar.</p></div>
+  <nav class="pv-workspace-links" aria-label="Testbereiche"><a href="#testUploadWorkspace" class="pv-workspace-chip"><i class="fas fa-upload"></i> Upload</a><a href="#peopleCalibrationWorkspace" class="pv-workspace-chip"><i class="fas fa-ruler-combined"></i> Personen-Kalibrierung</a><a href="#recognitionSettingsDetails" class="pv-workspace-chip" onclick="document.getElementById('recognitionSettingsDetails').open=true"><i class="fas fa-sliders"></i> Feinabstimmung</a><a href="#jobsContainer" class="pv-workspace-chip"><i class="fas fa-tasks"></i> Video-Jobs</a></nav>
 </div>
-<div class="row g-4">
+<div class="row g-4" id="testUploadWorkspace">
     <!-- Upload Section -->
     <div class="col-lg-6">
         <div class="card h-100">
@@ -582,13 +408,13 @@
                 
                 <video id="cameraPreview" class="camera-preview mb-3" autoplay playsinline style="display: none;"></video>
                 
-                <div class="d-flex gap-2">
+                <div class="d-flex flex-wrap gap-2">
                     <button class="btn btn-outline-primary flex-grow-1" id="cameraToggleBtn" onclick="toggleCamera()">
                         <i class="fas fa-video me-2"></i>
                         <span id="cameraToggleText">Kamera starten</span>
                     </button>
                     <button class="btn btn-success px-4" id="captureBtn" onclick="capturePhoto()" disabled title="Foto aufnehmen">
-                        <i class="fas fa-camera"></i>
+                        <i class="fas fa-camera me-1"></i><span>Foto aufnehmen</span>
                     </button>
                 </div>
 
@@ -596,7 +422,7 @@
 
                 <div class="people-test-panel p-3 rounded border border-secondary-subtle">
                     <h6 class="mb-2"><i class="fas fa-person-walking me-2 text-info"></i>Personenanalyse Foto-Upload</h6>
-                    <p class="text-secondary small mb-3">Lade ein Bild hoch und analysiere Personen mit denselben Einstellungen wie oben im Testprofil. Beim Speichern werden dieselben Werte auch im RTSP-Stream verwendet. Personen-Crops werden wie Fahrzeug-/Kennzeichenbilder abgelegt.</p>
+                    <p class="text-secondary small mb-3">Teste die Personenerkennung mit einem Foto. Gespeicherte Einstellungen und Zähllinie gelten auch für RTSP. Die Feinabstimmung findest du weiter unten.</p>
                     <input type="file" class="form-control mb-2" id="peopleTestImageInput" accept="image/*">
                     <div class="row g-2 mb-2">
                         <div class="col-sm-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleTestUseSavedSettings" checked><label class="form-check-label" for="peopleTestUseSavedSettings">Gespeicherte Personen-Einstellungen anwenden</label></div></div>
@@ -748,6 +574,13 @@
                             </div>
                         </div>
                         
+                        <div class="mt-3" id="videoCancelActions">
+                            <button type="button" id="cancelVideoBtn" class="btn btn-outline-warning btn-sm w-100" onclick="cancelJob(currentJobId)">
+                                <i class="fas fa-stop-circle me-2"></i>Video-Verarbeitung abbrechen
+                            </button>
+                        </div>
+                        <div class="mt-2 small text-secondary" id="videoRecentPlates" aria-live="polite"></div>
+
                         <!-- Complete Actions -->
                         <div class="mt-4" id="videoCompleteActions" style="display: none;">
                             <div class="alert alert-success d-flex align-items-center mb-3">
@@ -761,7 +594,7 @@
                                 <a href="#" id="downloadVideoBtn" class="btn btn-primary flex-grow-1" download>
                                     <i class="fas fa-download me-2"></i>Video herunterladen
                                 </a>
-                                <a href="{{ url_for('history') }}" class="btn btn-outline-primary">
+                                <a href="{{ pv_url_for('history') }}" class="btn btn-outline-primary">
                                     <i class="fas fa-history me-2"></i>Historie
                                 </a>
                             </div>
@@ -785,6 +618,271 @@
     </div>
 </div>
 
+<div class="pv-section-heading mt-4 mb-3" id="calibrationHeading"><div><span class="mini-label">Schritt 2</span><h3 class="mb-1">Personen-Zähllinie kalibrieren</h3><p class="text-secondary small mb-0">Position und Zählrichtung im Live- oder Ersatzbild anpassen.</p></div><a href="{{ pv_prefix }}/people" class="btn btn-outline-secondary btn-sm">Personenstatistik öffnen</a></div>
+<div class="row g-3 mb-4" id="peopleCalibrationWorkspace">
+    <div class="col-xl-8">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0"><i class="fas fa-map-location-dot me-2"></i>Personen-Kalibrierung · Zähllinie und Zone</h5>
+                <button class="btn btn-sm btn-outline-info" onclick="refreshPeopleAnalysisPreview()"><i class="fas fa-rotate me-1"></i>Aktualisieren</button>
+            </div>
+            <div class="card-body">
+                <div class="people-preview-shell compact" id="peopleLinePreviewShell" title="Klicken oder ziehen, um die Personen-Zähllinie zu verschieben"><img id="peopleAnalysisPreview" src="{{ pv_prefix }}/api/people/preview/image?from=test" alt="Personenanalyse Vorschau"></div>
+                <small class="text-secondary d-block mt-2">Livebild (oder Ersatzbild) mit Linie und Richtung. Die neue Position kannst du direkt im Bild anklicken.</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="card h-100">
+            <div class="card-header"><h5 class="card-title mb-0"><i class="fas fa-sliders me-2"></i>Linien-Einstellungen</h5></div>
+            <div class="card-body">
+                <div id="peopleActiveSettings"><p class="text-secondary mb-0">Lade Einstellungen...</p></div>
+                <hr class="my-3">
+                <div class="mini-label mb-2"><i class="fas fa-route me-1"></i>Linie direkt einstellen</div>
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="peopleQuickLineEnabled">
+                    <label class="form-check-label" for="peopleQuickLineEnabled">Zähllinie aktiv</label>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1">Linienposition: <strong id="peopleQuickLineLabel">50%</strong></label>
+                    <input class="form-range" type="range" min="1" max="99" step="1" id="peopleQuickLineRange">
+                    <input class="form-control form-control-sm mt-1" type="number" min="1" max="99" step="1" id="peopleQuickLinePercent">
+                </div>
+                <div class="row g-2">
+                    <div class="col-12">
+                        <label class="form-label small mb-1">Achse</label>
+                        <select class="form-select form-select-sm" id="peopleQuickAxis">
+                            <option value="y">Horizontal / oben-unten</option>
+                            <option value="x">Vertikal / links-rechts</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small mb-1">Richtung zählen</label>
+                        <select class="form-select form-select-sm" id="peopleQuickDirection">
+                            <option value="both">beide Richtungen</option>
+                            <option value="down">runter</option>
+                            <option value="up">hoch</option>
+                            <option value="right">rechts</option>
+                            <option value="left">links</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-2">
+                    <input class="form-check-input" type="checkbox" id="peopleQuickRelativeToRoi">
+                    <label class="form-check-label" for="peopleQuickRelativeToRoi">Linie relativ zum Straßenbereich</label>
+                </div>
+                <div class="d-grid gap-2 mt-3">
+                    <button class="btn btn-info btn-sm" type="button" onclick="savePeopleLineSettings()"><i class="fas fa-save me-1"></i>Zähllinie speichern & RTSP anwenden</button>
+                    <button class="btn btn-outline-secondary btn-sm" type="button" onclick="refreshPeopleAnalysisPreview(true)"><i class="fas fa-rotate me-1"></i>Vorschau aktualisieren</button>
+                </div>
+                <small class="text-secondary d-block mt-2">Du kannst die Linie auch direkt im Vorschaubild anklicken oder ziehen.</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<details id="recognitionSettingsDetails" class="pv-expand-workspace mt-4">
+    <summary><span><i class="fas fa-sliders me-2"></i><strong>Erkennungs-Einstellungen & Feinabstimmung</strong><small class="d-block text-secondary">YOLO, OCR, Bilder, Personenmodell und RTSP-Leistung · nur bei Bedarf öffnen</small></span><span class="pv-detail-toggle">Öffnen / schließen <i class="fas fa-chevron-down"></i></span></summary>
+    <div class="pv-expand-inner"><div class="card mb-4" id="recognitionTestSettingsCard">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h5 class="card-title mb-0"><i class="fas fa-sliders me-2"></i>Erkennungs-Einstellungen für Test & RTSP</h5>
+            <small class="text-secondary">Diese Werte gelten für Foto-Upload, Video-Upload und nach dem Speichern auch für den RTSP-Stream.</small>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <button class="btn btn-warning btn-sm" type="button" onclick="applyDefaultRecognitionSettings(false)"><i class="fas fa-wand-magic-sparkles me-1"></i>Default-Einstellungen</button>
+            <button class="btn btn-outline-warning btn-sm" type="button" onclick="applyDefaultRecognitionSettings(true)"><i class="fas fa-save me-1"></i>Default speichern & RTSP</button>
+            <button class="btn btn-primary btn-sm" type="button" onclick="saveTestRecognitionSettings(true)"><i class="fas fa-save me-1"></i>Speichern & RTSP anwenden</button>
+            <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadTestRecognitionSettings()"><i class="fas fa-rotate me-1"></i>Laden</button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="testSettingsStatus" class="alert alert-secondary py-2 small mb-3">Lade aktuelle Einstellungen...</div>
+        <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+            <span class="text-secondary small me-1">Schnellprofil:</span>
+            <button class="btn btn-outline-info btn-sm" type="button" onclick="applyRecognitionProfile('fast', false)">Schnell / CPU-schonend</button>
+            <button class="btn btn-outline-primary btn-sm" type="button" onclick="applyRecognitionProfile('balanced', false)">Ausgewogen</button>
+            <button class="btn btn-outline-success btn-sm" type="button" onclick="applyRecognitionProfile('strict', false)">Streng / sauber</button>
+            <button class="btn btn-outline-warning btn-sm" type="button" onclick="applyRecognitionProfile('night', false)">Nacht / schwierige Bilder</button>
+        </div>
+        <div class="test-settings-grid">
+            <div class="test-settings-section">
+                <h6><i class="fas fa-id-card text-success me-2"></i>YOLO Nummernschild-Detector</h6>
+                <label class="form-label">Kennzeichen YOLO .pt/.onnx/.engine Modell</label>
+                <select class="form-select mb-2" id="testPlateModel"></select>
+                <div class="row g-2">
+                    <div class="col-4"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testPlateConf"></div>
+                    <div class="col-4"><label class="form-label">IoU</label><input class="form-control" type="number" min="0.05" max="0.95" step="0.01" id="testPlateIou"></div>
+                    <div class="col-4"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testPlateImgsz"></div>
+                    <div class="col-6"><label class="form-label">Crop Padding %</label><input class="form-control" type="number" min="0" max="40" step="0.5" id="testPlatePadding"></div>
+                    <div class="col-6"><label class="form-label">Max Det.</label><input class="form-control" type="number" min="1" max="50" step="1" id="testPlateMaxDet"></div>
+                </div>
+                <div class="row g-2 mt-2">
+                    <div class="col-6"><label class="form-label">Min. Breite</label><input class="form-control" type="number" min="1" max="300" step="1" id="testMinPlateWidth"></div>
+                    <div class="col-6"><label class="form-label">Min. Höhe</label><input class="form-control" type="number" min="1" max="200" step="1" id="testMinPlateHeight"></div>
+                    <div class="col-6"><label class="form-label">Aspect min</label><input class="form-control" type="number" min="0.5" max="10" step="0.1" id="testPlateAspectMin"></div>
+                    <div class="col-6"><label class="form-label">Aspect max</label><input class="form-control" type="number" min="1" max="20" step="0.1" id="testPlateAspectMax"></div>
+                    <div class="col-12"><label class="form-label">Scan-Strategie</label><select class="form-select" id="testPlateScanStrategy"><option value="full_frame_first">Ganzes Bild zuerst + Fahrzeug-Zoom</option><option value="full_frame_only">Nur ganzes Bild</option><option value="vehicle_zoom_first">Fahrzeug-Zoom zuerst</option></select></div>
+                    <div class="col-6"><label class="form-label">Zoom-Faktor</label><input class="form-control" type="number" min="1" max="6" step="0.1" id="testZoomFactor"></div>
+                    <div class="col-6"><label class="form-label">Zoom-Padding px</label><input class="form-control" type="number" min="0" max="500" step="5" id="testZoomPadding"></div>
+                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testZoomEnabled"><label class="form-check-label" for="testZoomEnabled">Fahrzeug-Zoom für kleine Kennzeichen verwenden</label></div></div>
+                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testScanFullFrameWhenVehicleFound"><label class="form-check-label" for="testScanFullFrameWhenVehicleFound">Ganzes Bild zusätzlich scannen, auch wenn Fahrzeug-Zoom aktiv ist</label></div></div>
+                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDeduplicatePlates"><label class="form-check-label" for="testDeduplicatePlates">Doppelte Kennzeichen im selben Bild überspringen</label></div></div>
+                </div>
+                <div class="form-help-small mt-2">Default-Werte wie im funktionierenden Demo-Modus: conf 0.25, IoU 0.45, imgsz 960, Padding 8%.</div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-car-side text-primary me-2"></i>YOLO Fahrzeug-Erkennung</h6>
+                <label class="form-label">Fahrzeug YOLO Modell</label>
+                <select class="form-select mb-2" id="testVehicleModel"></select>
+                <div class="row g-2">
+                    <div class="col-4"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testVehicleConf"></div>
+                    <div class="col-4"><label class="form-label">IoU</label><input class="form-control" type="number" min="0.05" max="0.95" step="0.01" id="testVehicleIou"></div>
+                    <div class="col-4"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testVehicleImgsz"></div>
+                    <div class="col-6"><label class="form-label">Min. Breite</label><input class="form-control" type="number" min="1" max="1000" step="1" id="testMinVehicleWidth"></div>
+                    <div class="col-6"><label class="form-label">Min. Höhe</label><input class="form-control" type="number" min="1" max="1000" step="1" id="testMinVehicleHeight"></div>
+                    <div class="col-12"><label class="form-label">Max. Fahrzeug-/Kennzeichen-Erkennungen pro Frame</label><input class="form-control" type="number" min="1" max="50" step="1" id="testMaxDetections"></div>
+                </div>
+                <div class="mt-2 small text-secondary">Fahrzeugklassen</div>
+                <div class="d-flex flex-wrap gap-3">
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassCar"><label class="form-check-label" for="testClassCar">Auto</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassTruck"><label class="form-check-label" for="testClassTruck">LKW</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassBus"><label class="form-check-label" for="testClassBus">Bus</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassMotorcycle"><label class="form-check-label" for="testClassMotorcycle">Motorrad</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" id="testClassBicycle"><label class="form-check-label" for="testClassBicycle">Fahrrad</label></div>
+                </div>
+                <div class="row g-2 mt-2">
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testVehicleColorEnabled"><label class="form-check-label" for="testVehicleColorEnabled">Farbe berechnen</label></div></div>
+                    <div class="col-6"><label class="form-label">Farbpalette max.</label><input class="form-control" type="number" min="1" max="12" step="1" id="testVehicleColorPaletteMax"></div>
+                </div>
+                <div class="form-help-small mt-2">yolov8n.pt erkennt Fahrzeugtyp; Farbe wird aus dem Fahrzeugbild berechnet.</div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-font text-warning me-2"></i>OCR / Texterkennung</h6>
+                <label class="form-label">OCR Engine</label>
+                <select class="form-select mb-2" id="testOcrEngine">
+                    <option value="fast_plate_ocr">fast-plate-ocr Standard</option>
+                    <option value="easyocr">EasyOCR Backup</option>
+                </select>
+                <label class="form-label">fast-plate-ocr Hub-Modell</label>
+                <select class="form-select mb-2" id="testFastPlateModel">
+                    <option value="cct-s-v2-global-model">cct-s-v2-global-model</option>
+                    <option value="cct-xs-v2-global-model">cct-xs-v2-global-model</option>
+                    <option value="cct-s-v1-global-model">cct-s-v1-global-model</option>
+                    <option value="cct-xs-v1-global-model">cct-xs-v1-global-model</option>
+                </select>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Device</label><select class="form-select" id="testFastPlateDevice"><option>auto</option><option>cpu</option><option>cuda</option></select></div>
+                    <div class="col-6"><label class="form-label">Min. OCR</label><input class="form-control" type="number" min="0" max="1" step="0.01" id="testOcrMinConf"></div>
+                </div>
+                <label class="form-label mt-2">ONNX Provider Override</label>
+                <input class="form-control mb-2" type="text" id="testFastPlateProviders" placeholder="z.B. CUDAExecutionProvider,CPUExecutionProvider">
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Min. Textlänge</label><input class="form-control" type="number" min="1" max="20" step="1" id="testMinTextLength"></div>
+                    <div class="col-6"><label class="form-label">Max. OCR-Varianten</label><input class="form-control" type="number" min="1" max="20" step="1" id="testMaxVariants"></div>
+                </div>
+                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testEasyBackup"><label class="form-check-label" for="testEasyBackup">EasyOCR als Backup verwenden</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRemovePad"><label class="form-check-label" for="testRemovePad">Padding-Zeichen entfernen</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testReturnConfidence"><label class="form-check-label" for="testReturnConfidence">Zeichen-Confidence ausgeben</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRotationVariants"><label class="form-check-label" for="testRotationVariants">Rotation-/Varianten-Test bei EasyOCR erlauben</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testRetryOnFail"><label class="form-check-label" for="testRetryOnFail">OCR-Retry bei schlechtem Ergebnis</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testUppercaseOutput"><label class="form-check-label" for="testUppercaseOutput">Ausgabe gross schreiben</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testUseAllowlist"><label class="form-check-label" for="testUseAllowlist">Kennzeichen-Zeichenliste verwenden</label></div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-image text-info me-2"></i>Bildvorverarbeitung / OCR Backup</h6>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Resize Faktor</label><input class="form-control" type="number" min="1" max="8" step="0.1" id="testResizeFactor"></div>
+                    <div class="col-6"><label class="form-label">Zielhöhe px</label><input class="form-control" type="number" min="32" max="512" step="4" id="testTargetHeight"></div>
+                    <div class="col-6"><label class="form-label">Min. Breite px</label><input class="form-control" type="number" min="32" max="1000" step="4" id="testMinWidth"></div>
+                    <div class="col-6"><label class="form-label">Gamma</label><input class="form-control" type="number" min="0.2" max="3" step="0.1" id="testGamma"></div>
+                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPreprocessingEnabled"><label class="form-check-label" for="testPreprocessingEnabled">Vorverarbeitung aktiv</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDenoise"><label class="form-check-label" for="testDenoise">Rauschen entfernen</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSharpen"><label class="form-check-label" for="testSharpen">Schärfen</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testContrastEnhance"><label class="form-check-label" for="testContrastEnhance">Kontrast/CLAHE</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testAdaptiveThreshold"><label class="form-check-label" for="testAdaptiveThreshold">Adaptive Threshold</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDeskew"><label class="form-check-label" for="testDeskew">Deskew</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMorphology"><label class="form-check-label" for="testMorphology">Morphology</label></div></div>
+                </div>
+                <div class="form-help-small mt-2">Diese Werte wirken vor allem bei EasyOCR/Backup. fast-plate-ocr nutzt den YOLO-Kennzeichen-Crop direkt.</div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-person-walking text-info me-2"></i>Personenanalyse & Personenzählung</h6>
+                <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" id="testPeopleEnabled"><label class="form-check-label" for="testPeopleEnabled">Personenanalyse aktiv</label></div>
+                <label class="form-label">Personen YOLO Modell</label>
+                <select class="form-select mb-2" id="testPersonModel"></select>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Conf</label><input class="form-control" type="number" min="0.01" max="0.99" step="0.01" id="testPeopleConf"></div>
+                    <div class="col-6"><label class="form-label">imgsz</label><input class="form-control" type="number" min="320" max="1920" step="32" id="testPeopleImgsz"></div>
+                    <div class="col-6"><label class="form-label">IoU</label><input class="form-control" type="number" min="0.05" max="0.95" step="0.01" id="testPeopleIou"></div>
+                    <div class="col-6"><label class="form-label">Max Personen</label><input class="form-control" type="number" min="1" max="100" step="1" id="testPeopleMaxPerFrame"></div>
+                    <div class="col-6"><label class="form-label">Min. Breite</label><input class="form-control" type="number" min="1" max="500" step="1" id="testPeopleMinWidth"></div>
+                    <div class="col-6"><label class="form-label">Min. Höhe</label><input class="form-control" type="number" min="1" max="800" step="1" id="testPeopleMinHeight"></div>
+                    <div class="col-6"><label class="form-label">Zähllinie %</label><input class="form-control" type="number" min="1" max="99" step="1" id="testPeopleLine"></div>
+                    <div class="col-6"><label class="form-label">Linie Schieber</label><input class="form-range mt-2" type="range" min="1" max="99" step="1" id="testPeopleLineRange"></div>
+                    <div class="col-6"><label class="form-label">Achse</label><select class="form-select" id="testPeopleAxis"><option value="y">horizontal / oben-unten</option><option value="x">vertikal / links-rechts</option></select></div>
+                    <div class="col-6"><label class="form-label">Richtung zählen</label><select class="form-select" id="testPeopleDirection"><option value="both">beide Richtungen</option><option value="down">runter</option><option value="up">hoch</option><option value="right">rechts</option><option value="left">links</option></select></div>
+                    <div class="col-12"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleLineRelative"><label class="form-check-label" for="testPeopleLineRelative">Zähllinie relativ zum Straßenbereich verwenden</label></div></div>
+                </div>
+                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testPeopleTracker"><label class="form-check-label" for="testPeopleTracker">Tracker aktiv</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleCountOnce"><label class="form-check-label" for="testPeopleCountOnce">Person pro Track nur einmal zählen</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleSaveAll"><label class="form-check-label" for="testPeopleSaveAll">Alle Personen mit Bild speichern</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testPeopleSaveCrop"><label class="form-check-label" for="testPeopleSaveCrop">Personen-Crop speichern</label></div><div class="mt-2"><label class="form-label" for="testPeopleCropPadding">Personenbild-Abstand / Zoom zurück (%)</label><input type="number" class="form-control" id="testPeopleCropPadding" min="0" max="150" step="5" value="100"><small class="text-secondary">100 % zeigt mehr Umgebung um die Person. Wirkt auf neu gespeicherte Bilder und Upload-Tests.</small></div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-road text-danger me-2"></i>Durchfahrten, Wiederkehrer, Kommen & Gehen</h6>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Besuchslücke min</label><input class="form-control" type="number" min="1" max="1440" step="1" id="testVisitGap"></div>
+                    <div class="col-6"><label class="form-label">Gehen nach min</label><input class="form-control" type="number" min="1" max="1440" step="1" id="testActiveTimeout"></div>
+                    <div class="col-6"><label class="form-label">Fahrzeug-Achse</label><select class="form-select" id="testTrafficAxis"><option value="x">links/rechts</option><option value="y">oben/unten</option></select></div>
+                    <div class="col-6"><label class="form-label">Bewegung %</label><input class="form-control" type="number" min="1" max="80" step="1" id="testTrafficMove"></div>
+                    <div class="col-6"><label class="form-label">Tageszählung</label><select class="form-select" id="testDailyCountMode"><option value="visits">Besuche</option><option value="detections">Erkennungen</option><option value="unique_plates">Einzigartige Kennzeichen</option></select></div>
+                    <div class="col-6"><label class="form-label">Richtungsmodus</label><select class="form-select" id="testDirectionMode"><option value="auto">automatisch</option><option value="axis">Bewegungsachse</option><option value="session">Session/Timeout</option></select></div>
+                    <div class="col-6"><label class="form-label">Kommen Label</label><input class="form-control" id="testArrivalLabel"></div>
+                    <div class="col-6"><label class="form-label">Gehen Label</label><input class="form-control" id="testDepartureLabel"></div>
+                    <div class="col-6"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testIgnoreUnknown"><label class="form-check-label" for="testIgnoreUnknown">Unbekannte Kennzeichen ignorieren</label></div></div>
+                    <div class="col-6"><div class="form-check form-switch mt-4"><input class="form-check-input" type="checkbox" id="testIncludeDuplicateEvents"><label class="form-check-label" for="testIncludeDuplicateEvents">Duplikate mitzählen</label></div></div>
+                </div>
+                <div class="form-help-small mt-2">Fahrzeug-Durchfahrten basieren auf Kennzeichen-Sessions. Personen werden über die Zähllinie gezählt.</div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-gauge-high text-warning me-2"></i>RTSP Performance & Straßenbereich</h6>
+                <div class="row g-2">
+                    <div class="col-6"><label class="form-label">Frame-Intervall</label><input class="form-control" type="number" min="0.1" max="10" step="0.1" id="testProcessInterval"></div>
+                    <div class="col-6"><label class="form-label">ROI Padding %</label><input class="form-control" type="number" min="0" max="100" step="1" id="testRoiCropPadding"></div>
+                    <div class="col-6"><label class="form-label">ROI Min. Rand px</label><input class="form-control" type="number" min="0" max="1000" step="10" id="testRoiCropMinPx"></div>
+                    <div class="col-6"><label class="form-label">Idle-Scan Sek.</label><input class="form-control" type="number" min="1" max="120" step="1" id="testMotionIdleScan"></div>
+                    <div class="col-6"><label class="form-label">Motion Schwelle %</label><input class="form-control" type="number" min="0.01" max="10" step="0.01" id="testMotionThreshold"></div>
+                    <div class="col-6"><label class="form-label">Motion halten Sek.</label><input class="form-control" type="number" min="0" max="30" step="0.1" id="testMotionHold"></div>
+                </div>
+                <div class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" id="testCropBeforeDetection"><label class="form-check-label" for="testCropBeforeDetection">Straßenbereich vor YOLO als Crop verwenden</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMaskOutside"><label class="form-check-label" for="testMaskOutside">Außerhalb Straßenbereich maskieren</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testMotionGate"><label class="form-check-label" for="testMotionGate">CPU-Sparmodus: YOLO nur bei Bewegung im Straßenbereich</label></div>
+                <div class="form-help-small mt-2">Diese Werte gelten nach dem Speichern für den RTSP-Loop und helfen, CPU-Last zu reduzieren.</div>
+            </div>
+
+            <div class="test-settings-section">
+                <h6><i class="fas fa-save text-success me-2"></i>Speichern & Anzeige</h6>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSavePlates"><label class="form-check-label" for="testSavePlates">Kennzeichen-Bilder speichern</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSaveVehicles"><label class="form-check-label" for="testSaveVehicles">Fahrzeug-Bilder speichern</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testSaveFullFrame"><label class="form-check-label" for="testSaveFullFrame">Vollständigen Frame speichern</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testAnnotateFrames"><label class="form-check-label" for="testAnnotateFrames">Markierungen ins Ergebnisbild zeichnen</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="testDrawConfidence"><label class="form-check-label" for="testDrawConfidence">Confidence im Bild anzeigen</label></div>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+</details>
+
+<div class="pv-section-heading mt-4 mb-3"><div><span class="mini-label">Schritt 3</span><h3 class="mb-1">Video-Aufträge</h3></div></div>
 <!-- Active Jobs Section -->
 <div class="card mt-4">
     <div class="card-header d-flex justify-content-between align-items-center">
@@ -955,7 +1053,7 @@
     async function loadTestRecognitionSettings() {
         const status = document.getElementById('testSettingsStatus');
         try {
-            const response = await fetch('/api/test/settings');
+            const response = await fetch('{{ pv_prefix }}/api/test/settings');
             const data = await response.json();
             const cfg = data.config || {};
             availableYoloModels = data.models || [];
@@ -1036,6 +1134,7 @@
             setChecked('testPeopleCountOnce', people.count_once_per_track !== false);
             setChecked('testPeopleSaveAll', people.save_all_detections !== false);
             setChecked('testPeopleSaveCrop', people.save_person_crops !== false || people.image_history_store_crop !== false);
+            setVal('testPeopleCropPadding', people.image_history_crop_padding_percent ?? 100);
             setVal('testVisitGap', traffic.visit_gap_minutes ?? 15);
             setVal('testActiveTimeout', traffic.active_timeout_minutes ?? 30);
             setVal('testTrafficAxis', traffic.movement_axis || 'x');
@@ -1066,7 +1165,7 @@
             setChecked('testSaveFullFrame', detection.save_full_frame !== false);
             setChecked('testAnnotateFrames', detection.annotate_frames !== false);
             setChecked('testDrawConfidence', detection.draw_confidence !== false);
-            if (status) status.className = 'alert alert-success py-2 small mb-3', status.innerHTML = `<i class="fas fa-check me-1"></i>Aktive Werte geladen. Modelle gefunden: ${availableYoloModels.length}. OCR: <strong>${ocr.engine || 'fast_plate_ocr'}</strong>`;
+            if (status) status.className = 'alert alert-success py-2 small mb-3', status.innerHTML = `<i class="fas fa-check me-1"></i>Aktive Werte geladen. Modelle gefunden: ${availableYoloModels.length}. OCR: <strong>${pvEscapeHtml(ocr.engine || 'fast_plate_ocr')}</strong>`;
         } catch (e) {
             if (status) status.className = 'alert alert-warning py-2 small mb-3', status.textContent = 'Einstellungen konnten nicht geladen werden.';
         }
@@ -1082,7 +1181,7 @@
         setChecked('testEasyBackup', true); setChecked('testRemovePad', true); setChecked('testReturnConfidence', true); setChecked('testRotationVariants', true); setChecked('testRetryOnFail', true); setChecked('testUppercaseOutput', true); setChecked('testUseAllowlist', true);
         setChecked('testPreprocessingEnabled', true); setVal('testResizeFactor', 4.0); setVal('testTargetHeight', 120); setVal('testMinWidth', 200); setVal('testGamma', 1.2); setChecked('testDenoise', true); setChecked('testSharpen', true); setChecked('testContrastEnhance', true); setChecked('testAdaptiveThreshold', true); setChecked('testDeskew', true); setChecked('testMorphology', true);
         setChecked('testPeopleEnabled', true); setVal('testPeopleConf', 0.55); setVal('testPeopleImgsz', 640); setVal('testPeopleIou', 0.45); setVal('testPeopleMaxPerFrame', 30); setVal('testPeopleMinWidth', 20); setVal('testPeopleMinHeight', 40); setVal('testPeopleLine', 50); setVal('testPeopleLineRange', 50); setVal('testPeopleAxis', 'y'); setVal('testPeopleDirection', 'both'); setChecked('testPeopleLineRelative', true); syncTestPeopleLineInputs();
-        setChecked('testPeopleTracker', true); setChecked('testPeopleCountOnce', true); setChecked('testPeopleSaveAll', true); setChecked('testPeopleSaveCrop', true);
+        setChecked('testPeopleTracker', true); setChecked('testPeopleCountOnce', true); setChecked('testPeopleSaveAll', true); setChecked('testPeopleSaveCrop', true); setVal('testPeopleCropPadding', 100);
         setVal('testVisitGap', 15); setVal('testActiveTimeout', 30); setVal('testTrafficAxis', 'x'); setVal('testTrafficMove', 8); setVal('testDailyCountMode', 'visits'); setVal('testDirectionMode', 'auto'); setVal('testArrivalLabel', 'gekommen'); setVal('testDepartureLabel', 'gegangen'); setChecked('testIgnoreUnknown', true); setChecked('testIncludeDuplicateEvents', false);
         setVal('testProcessInterval', 0.8); setVal('testRoiCropPadding', 25); setVal('testRoiCropMinPx', 120); setVal('testMotionIdleScan', 5); setVal('testMotionThreshold', 0.20); setVal('testMotionHold', 2); setChecked('testCropBeforeDetection', true); setChecked('testMaskOutside', true); setChecked('testMotionGate', true);
         setChecked('testSavePlates', true); setChecked('testSaveVehicles', true); setChecked('testSaveFullFrame', true); setChecked('testAnnotateFrames', true); setChecked('testDrawConfidence', true);
@@ -1217,6 +1316,7 @@
                 image_history_enabled: true,
                 save_person_crops: boolVal('testPeopleSaveCrop'),
                 image_history_store_crop: boolVal('testPeopleSaveCrop'),
+                image_history_crop_padding_percent: Math.max(0, Math.min(150, numVal('testPeopleCropPadding', 100))),
                 image_history_store_annotated: false,
                 save_full_frame: false,
                 image_history_store_full_frame: false
@@ -1246,7 +1346,7 @@
                 }
             }
         };
-        const response = await fetch('/api/test/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+        const response = await fetch('{{ pv_prefix }}/api/test/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
         const data = await response.json();
         if (!data.success) throw new Error(data.error || 'Speichern fehlgeschlagen');
         if (showMessage) showToast('Gespeichert', 'Test-Einstellungen wurden gespeichert und gelten nun für den RTSP-Stream.', 'success');
@@ -1364,7 +1464,7 @@
         const formData = new FormData();
         formData.append('file', selectedFile);
         
-        fetch('/api/process/image', {
+        fetch('{{ pv_prefix }}/api/process/image', {
             method: 'POST',
             body: formData
         })
@@ -1479,7 +1579,7 @@
     async function loadPeopleSettingsForUpload() {
         const box = document.getElementById('peopleAppliedSettingsBox');
         try {
-            const response = await fetch('/api/people/settings-state');
+            const response = await fetch('{{ pv_prefix }}/api/people/settings-state');
             const data = await response.json();
             currentPeopleSettingsForUpload = data.people || {};
             const s = data.summary || {};
@@ -1487,15 +1587,15 @@
                 <div class="fw-semibold mb-1"><i class="fas fa-sliders me-1"></i>Aktive Einstellungen für diesen Upload</div>
                 <div class="people-upload-summary-grid">
                     <span>Modul: <strong>${labelOnOff(s.enabled)}</strong></span>
-                    <span>Modell: <code>${s.selected_model || '-'}</code></span>
+                    <span>Modell: <code>${pvEscapeHtml(s.selected_model || '-')}</code></span>
                     <span>Konfidenz: <strong>${s.confidence_threshold ?? '-'}</strong></span>
-                    <span>Linie: <strong>${labelOnOff(s.line_crossing_enabled)} · ${(s.movement_axis || '-').toUpperCase()} ${s.virtual_line_position_percent ?? '-'}%</strong></span>
+                    <span>Linie: <strong>${labelOnOff(s.line_crossing_enabled)} · ${pvEscapeHtml(String(s.movement_axis || '-').toUpperCase())} ${s.virtual_line_position_percent ?? '-'}%</strong></span>
                     <span>Zone: <strong>${labelOnOff(s.zone_enabled)}</strong></span>
                     <span>History: <strong>${labelOnOff(s.history_enabled)}</strong></span>
                     <span>Alle Detections: <strong>${labelOnOff(s.save_all_detections)}</strong></span>
                     <span>Personen weichzeichnen: <strong>${labelOnOff(s.privacy_blur_people)}</strong></span>
                     <span>Aufbewahrung: <strong>${s.retention_days ?? '-'} Tage</strong></span>
-                    <span>Export: <strong>${String(s.export_default_format || 'csv').toUpperCase()}</strong></span>
+                    <span>Export: <strong>${pvEscapeHtml(String(s.export_default_format || 'csv').toUpperCase())}</strong></span>
                 </div>`;
         } catch (error) {
             if (box) box.innerHTML = '<div class="text-warning">Aktuelle Personen-Einstellungen konnten nicht geladen werden.</div>';
@@ -1505,10 +1605,11 @@
 
     function personCropSrc(p) {
         if (!p) return '';
-        if (p.person_image_base64) return `data:image/jpeg;base64,${p.person_image_base64}`;
-        if (p.crop_image_base64) return `data:image/jpeg;base64,${p.crop_image_base64}`;
-        const imgs = p.images || {};
-        return imgs.crop ? `/api/people/images/${imgs.crop}` : '';
+        const imageData = p.person_image_base64 || p.crop_image_base64;
+        if (typeof imageData === 'string' && /^[a-zA-Z0-9+/=]+$/.test(imageData)) return `data:image/jpeg;base64,${imageData}`;
+        const path = (p.images || {}).crop;
+        return typeof path === 'string' && /^[a-zA-Z0-9_./-]{1,250}$/.test(path)
+            ? `{{ pv_prefix }}/api/people/images/${path.split('/').map(encodeURIComponent).join('/')}` : '';
     }
 
     function peopleCropGalleryHtml(people) {
@@ -1517,10 +1618,10 @@
         return `<div class="row g-3 mb-3">${rows.map((p, i) => {
             const src = personCropSrc(p);
             return `<div class="col-sm-6 col-lg-4"><div class="detection-result h-100 flex-column align-items-stretch">
-                ${src ? `<img src="${src}" alt="Person ${i + 1}" onclick="showImageModal(this.src, 'Person ${i + 1}')" style="cursor:pointer;width:100%;height:220px;object-fit:cover;">` : `<div class="detection-result-placeholder"><i class="fas fa-person-walking text-info"></i></div>`}
+                ${src ? `<img src="${pvEscapeHtml(src)}" alt="Person ${i + 1}" onclick="showImageModal(this.src, 'Person ${i + 1}')" style="cursor:pointer;width:100%;height:220px;object-fit:contain;background:#071324;padding:.5rem;">` : `<div class="detection-result-placeholder"><i class="fas fa-person-walking text-info"></i></div>`}
                 <div class="detection-result-info mt-2">
-                    <div class="fw-bold">Person ${p.track_id ? '#' + p.track_id : i + 1} ${p.counted ? '<span class="badge bg-success ms-2">gezählt</span>' : ''}</div>
-                    <div class="small text-secondary">${p.event_type || 'person_detected'} · ${p.direction || 'unknown'} · ${(p.confidence || 0).toFixed(2)}</div>
+                    <div class="fw-bold">Person ${pvEscapeHtml(p.track_id ? '#' + p.track_id : i + 1)} ${p.counted ? '<span class="badge bg-success ms-2">gezählt</span>' : ''}</div>
+                    <div class="small text-secondary">${pvEscapeHtml(p.event_type || 'person_detected')} · ${pvEscapeHtml(p.direction || 'unknown')} · ${(Number(p.confidence) || 0).toFixed(2)}</div>
                 </div>
             </div></div>`;
         }).join('')}</div>`;
@@ -1543,20 +1644,20 @@
         }
         if (box) box.innerHTML = '<div class="alert alert-info"><i class="fas fa-spinner fa-spin me-2"></i>Personen-Foto wird analysiert...</div>';
         try {
-            const response = await fetch('/api/people/analyze/image', { method: 'POST', body: formData });
+            const response = await fetch('{{ pv_prefix }}/api/people/analyze/image', { method: 'POST', body: formData });
             const data = await response.json();
             if (!data.success) {
-                if (box) box.innerHTML = `<div class="alert alert-warning"><i class="fas fa-triangle-exclamation me-2"></i>${data.error || 'Personen-Test fehlgeschlagen'}</div>`;
+                if (box) box.innerHTML = `<div class="alert alert-warning"><i class="fas fa-triangle-exclamation me-2"></i>${pvEscapeHtml(data.error || 'Personen-Test fehlgeschlagen')}</div>`;
                 showToast('Fehler', data.error || 'Personen-Test fehlgeschlagen', 'danger');
                 return;
             }
             if (box) {
-                const peopleRows = (data.people || []).map((p, i) => `<tr><td>${i + 1}</td><td>${(p.confidence || 0).toFixed(2)}</td><td>${p.track_id || '-'}</td><td>${p.event_type || '-'}</td><td>${p.direction || '-'}</td></tr>`).join('');
+                const peopleRows = (data.people || []).map((p, i) => `<tr><td>${i + 1}</td><td>${(Number(p.confidence) || 0).toFixed(2)}</td><td>${pvEscapeHtml(p.track_id || '-')}</td><td>${pvEscapeHtml(p.event_type || '-')}</td><td>${pvEscapeHtml(p.direction || '-')}</td></tr>`).join('');
                 box.innerHTML = `
                     <div class="alert alert-success">
                         <strong>${data.people_count || 0}</strong> Personen erkannt, <strong>${data.people_counted || 0}</strong> gezählt.
                         ${data.history_saved ? `<br><strong>${data.history_saved}</strong> Einträge in Personen-Historie gespeichert.` : ''}
-                        <br><small>Modus: ${data.model_mode || '-'} · Modell: ${data.selected_model || '-'}</small><br><small>Angewendet: Linie ${data.applied_settings?.movement_axis || '-'} ${data.applied_settings?.virtual_line_position_percent ?? '-'}% · Konfidenz ${data.applied_settings?.confidence_threshold ?? '-'}</small>
+                        <br><small>Modus: ${pvEscapeHtml(data.model_mode || '-')} · Modell: ${pvEscapeHtml(data.selected_model || '-')}</small><br><small>Angewendet: Linie ${pvEscapeHtml(data.applied_settings?.movement_axis || '-')} ${data.applied_settings?.virtual_line_position_percent ?? '-'}% · Konfidenz ${data.applied_settings?.confidence_threshold ?? '-'}</small>
                     </div>
                     ${peopleCropGalleryHtml(data.people || [])}
                     <div class="table-responsive"><table class="table table-sm table-dark table-striped align-middle mb-0"><thead><tr><th>#</th><th>Konf.</th><th>Track</th><th>Ereignis</th><th>Richtung</th></tr></thead><tbody>${peopleRows || '<tr><td colspan="5" class="text-secondary">Keine Personen erkannt</td></tr>'}</tbody></table></div>`;
@@ -1579,12 +1680,12 @@
             const imgUrl = personCropSrc(p);
             return `
             <div class="detection-result">
-                ${imgUrl ? `<img src="${imgUrl}" alt="Person ${index + 1}" onclick="showImageModal(this.src, 'Person')" style="cursor:pointer;">` : `<div class="detection-result-placeholder"><i class="fas fa-person-walking text-info"></i></div>`}
+                ${imgUrl ? `<img src="${pvEscapeHtml(imgUrl)}" alt="Person ${index + 1}" onclick="showImageModal(this.src, 'Person')" style="cursor:pointer;">` : `<div class="detection-result-placeholder"><i class="fas fa-person-walking text-info"></i></div>`}
                 <div class="detection-result-info">
-                    <div class="fw-bold">Person ${p.track_id ? '#' + p.track_id : index + 1} ${p.counted ? '<span class="badge bg-success ms-2">gezählt</span>' : ''}</div>
+                    <div class="fw-bold">Person ${pvEscapeHtml(p.track_id ? '#' + p.track_id : index + 1)} ${p.counted ? '<span class="badge bg-success ms-2">gezählt</span>' : ''}</div>
                     <div class="d-flex flex-wrap gap-2 align-items-center small text-secondary mt-2">
-                        <span><i class="fas fa-route me-1"></i>${p.event_type || 'person_detected'}</span>
-                        <span><i class="fas fa-arrow-right-arrow-left me-1"></i>${p.direction || 'unknown'}</span>
+                        <span><i class="fas fa-route me-1"></i>${pvEscapeHtml(p.event_type || 'person_detected')}</span>
+                        <span><i class="fas fa-arrow-right-arrow-left me-1"></i>${pvEscapeHtml(p.direction || 'unknown')}</span>
                         <span class="confidence-badge ${getConfidenceClass(p.confidence)}">${p.confidence ? Math.round(p.confidence * 100) : 0}%</span>
                     </div>
                 </div>
@@ -1610,6 +1711,9 @@
         pvSetStyle('videoProgress', 'display', 'block');
         pvSetStyle('videoCompleteActions', 'display', 'none');
         pvSetStyle('videoErrorMessage', 'display', 'none');
+        pvSetStyle('videoCancelActions', 'display', 'block');
+        document.getElementById('cancelVideoBtn').disabled = true; // Until an ID exists.
+        document.getElementById('videoRecentPlates').textContent = '';
         
         // Reset progress display
         document.getElementById('videoFileName').textContent = selectedFile.name;
@@ -1628,7 +1732,7 @@
         const formData = new FormData();
         formData.append('file', selectedFile);
         
-        fetch('/api/process/video', {
+        fetch('{{ pv_prefix }}/api/process/video', {
             method: 'POST',
             body: formData
         })
@@ -1636,6 +1740,7 @@
         .then(data => {
             if (data.success) {
                 currentJobId = data.job_id;
+                document.getElementById('cancelVideoBtn').disabled = false;
                 document.getElementById('videoJobId').textContent = data.job_id.substring(0, 8) + '...';
                 document.getElementById('videoJobStatusText').textContent = 'Verarbeitung...';
                 
@@ -1672,7 +1777,7 @@
     }
     
     function fetchJobStatus(jobId) {
-        fetch(`/api/process/video/${jobId}/status`)
+        fetch(`{{ pv_prefix }}/api/process/video/${jobId}/status`)
             .then(response => response.json())
             .then(data => {
                 updateVideoProgress(data);
@@ -1683,6 +1788,9 @@
                 } else if (data.status === 'error') {
                     stopVideoPolling();
                     showVideoError(data.error || 'Unbekannter Fehler');
+                } else if (data.status === 'cancelled') {
+                    stopVideoPolling();
+                    showVideoCancelled();
                 }
             })
             .catch(error => {
@@ -1699,13 +1807,23 @@
     function handleVideoCompleted(data) {
         if (data.job_id === currentJobId) {
             stopVideoPolling();
-            showVideoComplete(data.job_id, data);
+            if (data.status === 'completed') showVideoComplete(data.job_id, data);
+            else if (data.status === 'cancelled') showVideoCancelled();
+            else if (data.status === 'error') showVideoError(data.error || 'Video-Verarbeitung fehlgeschlagen');
         }
         refreshJobs();
     }
     
     function updateVideoProgress(data) {
-        const progress = data.progress || 0;
+        const progress = Math.max(0, Math.min(100, Number(data.progress) || 0));
+        if (data.status === 'cancelling') {
+            document.getElementById('videoJobStatusText').textContent = 'Wird abgebrochen...';
+            document.getElementById('cancelVideoBtn').disabled = true;
+        }
+        if (Array.isArray(data.recent_plates) && data.recent_plates.length) {
+            document.getElementById('videoRecentPlates').textContent =
+                'Erkannte Kennzeichen: ' + data.recent_plates.slice(-8).join(', ');
+        }
         
         pvSetStyle('videoProgressFill', 'width', progress + '%');
         document.getElementById('videoProgressPercent').textContent = progress + '%';
@@ -1740,10 +1858,11 @@
         document.getElementById('videoETA').textContent = '0:00';
         
         pvSetStyle('videoProcessingDetails', 'display', 'none');
+        pvSetStyle('videoCancelActions', 'display', 'none');
         pvSetStyle('videoCompleteActions', 'display', 'block');
         document.getElementById('videoCompleteInfo').textContent = 
             `${data.detections_count || 0} Kennzeichen in ${data.total_frames || 0} Frames erkannt`;
-        document.getElementById('downloadVideoBtn').href = `/api/process/video/${jobId}/output`;
+        document.getElementById('downloadVideoBtn').href = `{{ pv_prefix }}/api/process/video/${jobId}/output`;
         
         showToast('Fertig', `Video verarbeitet! ${data.detections_count || 0} Kennzeichen erkannt.`, 'success');
         refreshJobs();
@@ -1753,12 +1872,40 @@
         document.getElementById('videoJobStatus').className = 'job-status error';
         document.getElementById('videoJobStatus').innerHTML = '<i class="fas fa-times"></i> Fehler';
         pvSetStyle('videoProcessingDetails', 'display', 'none');
+        pvSetStyle('videoCancelActions', 'display', 'none');
         pvSetStyle('videoErrorMessage', 'display', 'block');
         document.getElementById('videoErrorText').textContent = error;
         
         showToast('Fehler', error, 'danger');
     }
     
+    function showVideoCancelled() {
+        document.getElementById('videoJobStatus').className = 'job-status cancelled';
+        document.getElementById('videoJobStatus').textContent = 'Abgebrochen';
+        pvSetStyle('videoProcessingDetails', 'display', 'none');
+        pvSetStyle('videoCancelActions', 'display', 'none');
+        pvSetStyle('videoCompleteActions', 'display', 'none');
+        showToast('Abgebrochen', 'Video-Verarbeitung wurde beendet.', 'info');
+        refreshJobs();
+    }
+
+    function cancelJob(jobId) {
+        if (!jobId || !/^[a-f0-9-]{36}$/.test(jobId)) return;
+        if (!confirm('Video-Verarbeitung wirklich abbrechen? Eine unvollständige Ausgabe wird verworfen.')) return;
+        fetch(`{{ pv_prefix }}/api/process/video/${jobId}/cancel`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) throw new Error(data.error || 'Abbruch fehlgeschlagen');
+                if (jobId === currentJobId) {
+                    document.getElementById('videoJobStatusText').textContent = 'Wird abgebrochen...';
+                    document.getElementById('cancelVideoBtn').disabled = true;
+                }
+                showToast('Abbruch angefordert', 'Der laufende Job wird sicher beendet.', 'info');
+                refreshJobs();
+            })
+            .catch(error => showToast('Abbruch nicht möglich', error.message, 'danger'));
+    }
+
     // ============================================
     // UI HELPERS
     // ============================================
@@ -1789,15 +1936,18 @@
             <div class="modal-dialog modal-lg modal-dialog-centered">
                 <div class="modal-content" style="background: var(--card-bg);">
                     <div class="modal-header border-secondary">
-                        <h5 class="modal-title">${title}</h5>
+                        <h5 class="modal-title">${pvEscapeHtml(title)}</h5>
                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body text-center p-0">
-                        <img src="${src}" class="img-fluid">
+                        <img class="img-fluid" alt="Bildvorschau">
                     </div>
                 </div>
             </div>
         `;
+        const previewImage = modal.querySelector('img');
+        // Use the DOM property, not HTML interpolation, for image URLs.
+        if (typeof src === 'string' && /^(data:image\/(jpeg|png|webp);base64,|blob:|\/)/i.test(src)) previewImage.src = src;
         document.body.appendChild(modal);
         const bsModal = new bootstrap.Modal(modal);
         bsModal.show();
@@ -1879,7 +2029,7 @@
     // ============================================
     
     function refreshJobs() {
-        fetch('/api/process/jobs')
+        fetch('{{ pv_prefix }}/api/process/jobs')
             .then(response => response.json())
             .then(jobs => {
                 displayJobs(jobs);
@@ -1894,10 +2044,10 @@
         const noJobsMessage = document.getElementById('noJobsMessage');
         const activeJobsCount = document.getElementById('activeJobsCount');
         
-        const jobsArray = Object.entries(jobs);
+        const jobsArray = Object.entries(jobs || {}).filter(([jobId]) => /^[a-zA-Z0-9_-]{1,128}$/.test(jobId));
         
         // Count active jobs
-        const activeCount = jobsArray.filter(([_, job]) => job.status === 'processing').length;
+        const activeCount = jobsArray.filter(([_, job]) => ['queued', 'processing', 'cancelling'].includes(job.status)).length;
         activeJobsCount.textContent = `${activeCount} aktiv`;
         
         if (jobsArray.length === 0) {
@@ -1919,43 +2069,53 @@
             <div class="job-card" id="job-${jobId}">
                 <div class="d-flex justify-content-between align-items-start">
                     <div class="flex-grow-1 min-width-0 me-2">
-                        <div class="fw-bold text-truncate">${job.filename || 'Video'}</div>
+                        <div class="fw-bold text-truncate">${pvEscapeHtml(job.filename || 'Video')}</div>
                         <small class="text-secondary">
                             <code>${jobId.substring(0, 8)}</code>
-                            ${job.created_at ? ` • ${formatJobDate(job.created_at)}` : ''}
+                            ${job.created_at ? ` • ${pvEscapeHtml(formatJobDate(job.created_at))}` : ''}
                         </small>
                     </div>
                     <div class="d-flex align-items-center gap-2">
-                        <span class="job-status ${job.status}">
+                        <span class="job-status ${['queued', 'processing', 'cancelling', 'cancelled', 'completed', 'error'].includes(job.status) ? job.status : 'unknown'}">
                             ${getJobStatusIcon(job.status)}
                             ${getJobStatusText(job)}
                         </span>
                         ${job.status === 'completed' ? `
-                            <a href="/api/process/video/${jobId}/output" class="btn btn-sm btn-outline-success" download title="Herunterladen">
+                            <a href="{{ pv_prefix }}/api/process/video/${jobId}/output" class="btn btn-sm btn-outline-success" download title="Herunterladen">
                                 <i class="fas fa-download"></i>
                             </a>
                         ` : ''}
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteJob('${jobId}')" title="Löschen">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                        ${['queued','processing'].includes(job.status) ? `
+                            <button type="button" class="btn btn-sm btn-outline-warning" onclick="cancelJob('${jobId}')" title="Verarbeitung abbrechen" aria-label="Verarbeitung abbrechen">
+                                <i class="fas fa-stop-circle"></i>
+                            </button>
+                        ` : ''}
+                        ${!['queued','processing','cancelling'].includes(job.status) ? `
+                            <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteJob('${jobId}')" title="Job löschen" aria-label="Job löschen">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        ` : ''}
                     </div>
                 </div>
                 ${job.status === 'processing' ? `
                     <div class="job-progress-mini">
-                        <div class="job-progress-mini-fill" style="width: ${job.progress || 0}%;"></div>
+                        <div class="job-progress-mini-fill" style="width: ${Math.max(0, Math.min(100, Number(job.progress) || 0))}%;"></div>
                     </div>
                     <small class="text-secondary">
-                        ${job.current_frame || 0}/${job.total_frames || 0} Frames • ${job.detections_count || 0} Erkennungen
+                        ${job.current_frame || 0}/${job.total_frames || 0} Frames • ${job.detections_count || 0} Erkennungen • ${job.saved_history_count || 0} gespeichert
                     </small>
                 ` : ''}
                 ${job.status === 'completed' ? `
                     <small class="text-success">
-                        <i class="fas fa-check me-1"></i>${job.detections_count || 0} Kennzeichen erkannt
+                        <i class="fas fa-check me-1"></i>${job.detections_count || 0} Kennzeichen erkannt • ${job.saved_history_count || 0} Historieneinträge gespeichert
                     </small>
+                ` : ''}
+                ${job.status === 'cancelled' ? `
+                    <small class="text-secondary"><i class="fas fa-stop-circle me-1"></i>Manuell abgebrochen</small>
                 ` : ''}
                 ${job.status === 'error' ? `
                     <small class="text-danger">
-                        <i class="fas fa-exclamation-circle me-1"></i>${job.error || 'Fehler'}
+                        <i class="fas fa-exclamation-circle me-1"></i>${pvEscapeHtml(job.error || 'Fehler')}
                     </small>
                 ` : ''}
             </div>
@@ -1980,6 +2140,12 @@
         switch (status) {
             case 'processing':
                 return '<i class="fas fa-spinner fa-spin"></i>';
+            case 'queued':
+                return '<i class="fas fa-clock"></i>';
+            case 'cancelling':
+                return '<i class="fas fa-spinner fa-spin"></i>';
+            case 'cancelled':
+                return '<i class="fas fa-stop-circle"></i>';
             case 'completed':
                 return '<i class="fas fa-check"></i>';
             case 'error':
@@ -1992,13 +2158,19 @@
     function getJobStatusText(job) {
         switch (job.status) {
             case 'processing':
-                return `${job.progress || 0}%`;
+                return `${Math.max(0, Math.min(100, Number(job.progress) || 0))}%`;
+            case 'queued':
+                return 'Wartet';
+            case 'cancelling':
+                return 'Abbruch...';
+            case 'cancelled':
+                return 'Abgebrochen';
             case 'completed':
                 return 'Fertig';
             case 'error':
                 return 'Fehler';
             default:
-                return job.status;
+                return pvEscapeHtml(job.status || 'Unbekannt');
         }
     }
     
@@ -2007,7 +2179,7 @@
             return;
         }
         
-        fetch(`/api/process/jobs/${jobId}`, { method: 'DELETE' })
+        fetch(`{{ pv_prefix }}/api/process/jobs/${jobId}`, { method: 'DELETE' })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
@@ -2043,5 +2215,193 @@
         }
         stopCamera();
     });
+</script>
+<script>
+let peopleLinePreviewMeta = {width: 1280, height: 720, road_roi: null};
+let peopleLineDragging = false;
+function clampPercent(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 50;
+    return Math.max(1, Math.min(99, Math.round(n)));
+}
+function normalizePeopleDirection(value, axis) {
+    const v = String(value || 'both');
+    if (v === 'positive') return axis === 'x' ? 'right' : 'down';
+    if (v === 'negative') return axis === 'x' ? 'left' : 'up';
+    if (['both','down','up','right','left'].includes(v)) return v;
+    return 'both';
+}
+function peopleLineControls() {
+    const percent = clampPercent(document.getElementById('peopleQuickLinePercent')?.value ?? document.getElementById('peopleQuickLineRange')?.value ?? 50);
+    const axis = document.getElementById('peopleQuickAxis')?.value || 'y';
+    return {
+        enabled: !!document.getElementById('peopleQuickLineEnabled')?.checked,
+        percent,
+        axis,
+        direction: normalizePeopleDirection(document.getElementById('peopleQuickDirection')?.value || 'both', axis),
+        relativeToRoi: !!document.getElementById('peopleQuickRelativeToRoi')?.checked
+    };
+}
+function setPeopleLineControls(s) {
+    if (!s) return;
+    const axis = s.movement_axis || 'y';
+    const direction = normalizePeopleDirection(s.crossing_direction || 'both', axis);
+    const percent = clampPercent(s.virtual_line_position_percent ?? 50);
+    const enabledEl = document.getElementById('peopleQuickLineEnabled');
+    const rangeEl = document.getElementById('peopleQuickLineRange');
+    const percentEl = document.getElementById('peopleQuickLinePercent');
+    const axisEl = document.getElementById('peopleQuickAxis');
+    const dirEl = document.getElementById('peopleQuickDirection');
+    const relEl = document.getElementById('peopleQuickRelativeToRoi');
+    if (enabledEl) enabledEl.checked = s.line_crossing_enabled !== false;
+    if (rangeEl) rangeEl.value = percent;
+    if (percentEl) percentEl.value = percent;
+    if (axisEl) axisEl.value = axis;
+    if (dirEl) dirEl.value = direction;
+    if (relEl) relEl.checked = s.line_relative_to_roi !== false;
+    updatePeopleLineLabel();
+}
+function updatePeopleLineLabel() {
+    const v = peopleLineControls();
+    const label = document.getElementById('peopleQuickLineLabel');
+    if (label) label.textContent = `${v.axis.toUpperCase()} ${v.percent}%`;
+}
+function peoplePreviewQueryFromControls() {
+    const v = peopleLineControls();
+    const params = new URLSearchParams();
+    params.set('from', 'test');
+    params.set('line_enabled', v.enabled ? '1' : '0');
+    params.set('line_percent', String(v.percent));
+    params.set('movement_axis', v.axis);
+    params.set('crossing_direction', v.direction);
+    params.set('line_relative_to_roi', v.relativeToRoi ? '1' : '0');
+    params.set('ts', String(Date.now()));
+    return params.toString();
+}
+function refreshPeopleAnalysisPreview(useControls = true) {
+    const img = document.getElementById('peopleAnalysisPreview');
+    if (!img) return;
+    img.src = useControls ? ('{{ pv_prefix }}/api/people/preview/image?' + peoplePreviewQueryFromControls()) : ('{{ pv_prefix }}/api/people/preview/image?from=test&ts=' + Date.now());
+}
+function peopleLineInputChanged() {
+    const rangeEl = document.getElementById('peopleQuickLineRange');
+    const percentEl = document.getElementById('peopleQuickLinePercent');
+    const percent = clampPercent(percentEl?.value ?? rangeEl?.value ?? 50);
+    if (rangeEl) rangeEl.value = percent;
+    if (percentEl) percentEl.value = percent;
+    const axis = document.getElementById('peopleQuickAxis')?.value || 'y';
+    const dirEl = document.getElementById('peopleQuickDirection');
+    if (dirEl) dirEl.value = normalizePeopleDirection(dirEl.value, axis);
+    updatePeopleLineLabel();
+    refreshPeopleAnalysisPreview(true);
+}
+async function savePeopleLineSettings() {
+    const v = peopleLineControls();
+    const response = await fetch('{{ pv_prefix }}/api/config/people', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            line_crossing_enabled: v.enabled,
+            virtual_line_position_percent: v.percent,
+            movement_axis: v.axis,
+            crossing_direction: v.direction,
+            line_relative_to_roi: v.relativeToRoi,
+            count_strategy: 'line_crossing',
+            tracker_enabled: true
+        })
+    });
+    const data = await response.json();
+    if (!data.success) {
+        alert(data.error || 'Zähllinie konnte nicht gespeichert werden.');
+        return;
+    }
+    if (typeof showToast === 'function') showToast('Zähllinie gespeichert', 'Die Personen-Zähllinie gilt jetzt für Test & Upload und RTSP.', 'success');
+    refreshPeopleAnalysisPreview(true);
+    const mirror = {'testPeopleLine':v.percent,'testPeopleLineRange':v.percent,'testPeopleAxis':v.axis,'testPeopleDirection':v.direction};
+    Object.entries(mirror).forEach(([id,val])=>{const el=document.getElementById(id);if(el)el.value=val;});
+    const rel=document.getElementById('testPeopleLineRelative');if(rel)rel.checked=v.relativeToRoi;
+    loadPeopleCalibrationSettings();
+}
+function previewImagePointFromEvent(evt) {
+    const img = document.getElementById('peopleAnalysisPreview');
+    if (!img) return null;
+    const box = img.getBoundingClientRect();
+    const naturalW = img.naturalWidth || peopleLinePreviewMeta.width || 1280;
+    const naturalH = img.naturalHeight || peopleLinePreviewMeta.height || 720;
+    const imgRatio = naturalW / Math.max(1, naturalH);
+    const boxRatio = box.width / Math.max(1, box.height);
+    let drawW = box.width, drawH = box.height, left = box.left, top = box.top;
+    if (boxRatio > imgRatio) {
+        drawH = box.height; drawW = drawH * imgRatio; left = box.left + (box.width - drawW) / 2;
+    } else {
+        drawW = box.width; drawH = drawW / imgRatio; top = box.top + (box.height - drawH) / 2;
+    }
+    const x = Math.max(0, Math.min(drawW, evt.clientX - left));
+    const y = Math.max(0, Math.min(drawH, evt.clientY - top));
+    return {xPx: x / Math.max(1, drawW) * naturalW, yPx: y / Math.max(1, drawH) * naturalH};
+}
+function setPeopleLineFromPreviewEvent(evt) {
+    const point = previewImagePointFromEvent(evt);
+    if (!point) return;
+    const axis = document.getElementById('peopleQuickAxis')?.value || 'y';
+    const rel = !!document.getElementById('peopleQuickRelativeToRoi')?.checked;
+    const roi = peopleLinePreviewMeta.road_roi || {};
+    const w = peopleLinePreviewMeta.width || 1280;
+    const h = peopleLinePreviewMeta.height || 720;
+    let percent;
+    if (rel && roi.enabled) {
+        if (axis === 'x') percent = ((point.xPx - Number(roi.x || 0)) / Math.max(1, Number(roi.width || w))) * 100;
+        else percent = ((point.yPx - Number(roi.y || 0)) / Math.max(1, Number(roi.height || h))) * 100;
+    } else {
+        percent = axis === 'x' ? (point.xPx / Math.max(1, w) * 100) : (point.yPx / Math.max(1, h) * 100);
+    }
+    const p = clampPercent(percent);
+    const rangeEl = document.getElementById('peopleQuickLineRange');
+    const percentEl = document.getElementById('peopleQuickLinePercent');
+    if (rangeEl) rangeEl.value = p;
+    if (percentEl) percentEl.value = p;
+    peopleLineInputChanged();
+}
+function initPeopleLineEditorEvents() {
+    ['peopleQuickLineEnabled','peopleQuickLineRange','peopleQuickLinePercent','peopleQuickAxis','peopleQuickDirection','peopleQuickRelativeToRoi'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', peopleLineInputChanged);
+        if (el) el.addEventListener('change', peopleLineInputChanged);
+    });
+    const shell = document.getElementById('peopleLinePreviewShell');
+    if (shell) {
+        if (shell) shell.style.cursor = 'crosshair';
+        shell.addEventListener('pointerdown', evt => { peopleLineDragging = true; shell.setPointerCapture?.(evt.pointerId); setPeopleLineFromPreviewEvent(evt); });
+        shell.addEventListener('pointermove', evt => { if (peopleLineDragging) setPeopleLineFromPreviewEvent(evt); });
+        shell.addEventListener('pointerup', () => { peopleLineDragging = false; });
+        shell.addEventListener('pointercancel', () => { peopleLineDragging = false; });
+    }
+}
+
+function loadPeopleCalibrationSettings() {
+    return fetch('{{ pv_prefix }}/api/people/settings-state').then(r=>r.json()).then(data => {
+        peopleLinePreviewMeta = data.preview || peopleLinePreviewMeta;
+        setPeopleLineControls(data.summary || {});
+        const panel=document.getElementById('peopleActiveSettings');
+        if(panel) panel.innerHTML='<div class="small text-secondary">Linie und Richtung wirken auf Foto, Video und RTSP. Änderungen werden erst nach „Speichern“ übernommen.</div>';
+        refreshPeopleAnalysisPreview(true);
+    }).catch(err => {console.warn('Kalibrierung konnte nicht geladen werden',err)});
+}
+function initTestWorkbench() {
+    initPeopleLineEditorEvents();
+    loadPeopleCalibrationSettings();
+    const advanced=document.getElementById('recognitionSettingsDetails');
+    if (window.location.hash === '#recognitionSettingsDetails' || window.location.hash === '#recognitionTestSettingsCard') advanced.open=true;
+    document.querySelectorAll('.test-settings-section').forEach((section, index) => {
+        const heading=section.querySelector('h6'); if (!heading) return;
+        const detail=document.createElement('details');detail.className='pv-sub-settings';
+        detail.open = index === 0;
+        const summary=document.createElement('summary');summary.appendChild(heading);
+        const inner=document.createElement('div');inner.className='pv-sub-inner';
+        while(section.firstChild)inner.appendChild(section.firstChild);
+        detail.append(summary,inner);section.replaceWith(detail);
+    });
+}
+document.addEventListener('DOMContentLoaded',initTestWorkbench);
 </script>
 {% endblock %}

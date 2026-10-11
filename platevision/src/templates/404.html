@@ -15,11 +15,11 @@
         <p class="text-secondary mb-4">
             Die angeforderte Seite existiert nicht oder wurde verschoben.
         </p>
-        <div class="d-flex gap-3 justify-content-center">
-            <a href="{{ url_for('dashboard') }}" class="btn btn-primary">
+        <div class="d-flex flex-wrap gap-3 justify-content-center">
+            <a href="{{ pv_url_for('dashboard') }}" class="btn btn-primary">
                 <i class="fas fa-home me-2"></i>Zum Dashboard
             </a>
-            <a href="{{ url_for('statistics_page') }}" class="btn btn-outline-success">
+            <a href="{{ pv_url_for('statistics_page') }}" class="btn btn-outline-success">
                 <i class="fas fa-road me-2"></i>Verkehrsstatistik
             </a>
             <button onclick="history.back()" class="btn btn-outline-secondary">

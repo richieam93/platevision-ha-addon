@@ -49,3 +49,10 @@ werden diese Abhängigkeiten aus ihren Paketquellen installiert.
 
 PlateVision ist nicht mit Ultralytics oder den genannten Modellprojekten
 verbunden und wird von diesen nicht offiziell unterstützt.
+
+## Bootstrap
+
+- Komponente: lokale `bootstrap.min.css` und `bootstrap.bundle.min.js` (Bootstrap 5.3.x)
+- Projekt: https://getbootstrap.com/
+- Lizenz: MIT, Copyright (c) 2011-2025 The Bootstrap Authors
+- Mitgelieferter Lizenztext: `third_party_licenses/Bootstrap-MIT.txt`

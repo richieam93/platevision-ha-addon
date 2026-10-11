@@ -194,6 +194,19 @@
 {% endblock %}
 
 {% block content %}
+<section class="pv-workspace-intro mb-3" aria-label="Einstellungen Schnellzugriff">
+  <div>
+    <div class="mini-label mb-1">Einstellungen</div>
+    <h2 class="mb-1">Wichtige Optionen sofort finden</h2>
+    <p class="text-secondary small mb-0">Zuerst die häufigsten Aufgaben; sämtliche bisherigen Expertenschalter sind weiterhin über die Einstellungsregister erreichbar.</p>
+  </div>
+  <nav class="pv-workspace-links" aria-label="Einstellungen Sprungmarken">
+    <button type="button" class="pv-workspace-chip" onclick="pvJumpSettingsTab('dashboardUiSettings','bestVehicleDisplaySettings')"><i class="fas fa-camera-retro"></i> Beste Fahrzeugbilder</button>
+    <a href="{{ pv_prefix }}/test#peopleCalibrationWorkspace" class="pv-workspace-chip"><i class="fas fa-person-walking"></i> Personen-Zähllinie</a>
+    <a href="{{ pv_prefix }}/test#recognitionSettingsDetails" class="pv-workspace-chip"><i class="fas fa-sliders"></i> Erkennung &amp; Bilder</a>
+    <a href="{{ pv_prefix }}/rtsp-settings" class="pv-workspace-chip"><i class="fas fa-video"></i> Kamera / RTSP</a>
+  </nav>
+</section>
 <div class="row">
     <!-- Settings Navigation -->
     <div class="col-lg-3 mb-4">
@@ -218,7 +231,7 @@
                     </a>
                     <a class="nav-link" data-bs-toggle="pill" href="#dashboardUiSettings" role="tab">
                         <i class="fas fa-chart-line"></i>
-                        Dashboard & Layout + Allgemein
+                        Anzeige & Fahrzeugbilder
                     </a>
                     <a class="nav-link" data-bs-toggle="pill" href="#privacyAlerts" role="tab">
                         <i class="fas fa-shield-alt"></i>
@@ -993,7 +1006,7 @@
                 </div>
                 <div class="d-flex flex-wrap gap-2 mb-3">
                     <a class="btn btn-sm btn-outline-primary" href="#storageEmbeddedInHistory"><i class="fas fa-database me-1"></i>Speicher öffnen</a>
-                    <a class="btn btn-sm btn-outline-info" href="/test"><i class="fas fa-flask me-1"></i>Erkennung im Testmodus einstellen</a>
+                    <a class="btn btn-sm btn-outline-info" href="{{ pv_prefix }}/test"><i class="fas fa-flask me-1"></i>Erkennung im Testmodus einstellen</a>
                 </div>
                 <div class="card">
                     <div class="card-header">
@@ -1463,7 +1476,7 @@
                 </div>
                 <div class="d-flex flex-wrap gap-2 mb-3">
                     <a class="btn btn-sm btn-outline-primary" href="#modelUploadEmbeddedInModels"><i class="fas fa-cloud-arrow-up me-1"></i>Modelle hochladen</a>
-                    <a class="btn btn-sm btn-outline-info" href="/test"><i class="fas fa-sliders me-1"></i>YOLO-Auswahl testen</a>
+                    <a class="btn btn-sm btn-outline-info" href="{{ pv_prefix }}/test"><i class="fas fa-sliders me-1"></i>YOLO-Auswahl testen</a>
                 </div>
                 <div class="card">
                     <div class="card-header">
@@ -1707,7 +1720,7 @@
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">Schnellzugriff</label><br>
-                                        <a href="/search" class="btn btn-outline-info"><i class="fas fa-search me-2"></i>Suche öffnen</a>
+                                        <a href="{{ pv_prefix }}/search" class="btn btn-outline-info"><i class="fas fa-search me-2"></i>Suche öffnen</a>
                                     </div>
                                     <div class="col-md-6">
                                         <div class="form-check form-switch">
@@ -1812,7 +1825,7 @@
                                 <div class="warning-box"><i class="fas fa-exclamation-triangle me-2"></i>Eine sichere Kommen/Gehen-Erkennung benötigt Richtungssignal, klare Bewegung im Bild oder zwei Kameras. Ohne das wird der Abgang über Timeout nur geschätzt.</div>
                             </div>
                             <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Verkehrsstatistik speichern</button>
-                            <a href="/statistics" class="btn btn-outline-success ms-2"><i class="fas fa-chart-bar me-2"></i>Statistik öffnen</a>
+                            <a href="{{ pv_prefix }}/statistics" class="btn btn-outline-success ms-2"><i class="fas fa-chart-bar me-2"></i>Statistik öffnen</a>
                         </form>
                     </div>
                 </div>
@@ -1983,7 +1996,7 @@
                 <div class="card mb-3 settings-pro-section">
                     <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                         <h5 class="card-title mb-0"><i class="fas fa-microchip text-danger me-2"></i>RTSP Leistung & CPU-Sparmodus</h5>
-                        <a href="/test" class="btn btn-sm btn-outline-primary"><i class="fas fa-flask me-1"></i>in Test & Upload fein einstellen</a>
+                        <a href="{{ pv_prefix }}/test" class="btn btn-sm btn-outline-primary"><i class="fas fa-flask me-1"></i>in Test & Upload fein einstellen</a>
                     </div>
                     <div class="card-body">
                         <form id="rtspPerformanceForm">
@@ -2021,6 +2034,21 @@
                                         <input type="number" class="form-control" id="autoRefreshSeconds" min="0" max="3600" value="{{ config.dashboard.auto_refresh_seconds if config.dashboard is defined and config.dashboard.auto_refresh_seconds is defined else 10 }}">
                                         <label class="form-label mt-3">Standard-Zeitraum Tage</label>
                                         <input type="number" class="form-control" id="defaultRangeDays" min="1" max="365" value="{{ config.dashboard.default_range_days if config.dashboard is defined and config.dashboard.default_range_days is defined else 7 }}">
+                                        <div class="pv-quality-settings mt-3" id="bestVehicleDisplaySettings">
+                                            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                                                <div><strong><i class="fas fa-camera-retro text-info me-1"></i>Nur die besten Fahrzeugbilder anzeigen</strong><div class="text-secondary small">Gilt für Dashboard und „Letzte Erkennung“. Historie, Suche und Statistik bleiben vollständig.</div></div>
+                                                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="showOnlyBestVehicle" {% if config.dashboard is defined and config.dashboard.show_only_best_vehicle %}checked{% endif %}><label class="form-check-label" for="showOnlyBestVehicle">Aktivieren</label></div>
+                                            </div>
+                                            <div class="row g-2">
+                                                <div class="col-sm-6"><label class="form-label" for="bestVehicleMinConfidence">Mindestens Konfidenz (%)</label><input class="form-control" type="number" id="bestVehicleMinConfidence" min="80" max="100" step="1" value="{{ ((config.dashboard.best_vehicle_min_confidence|default(0.8)|float) * 100)|round|int if config.dashboard is defined else 80 }}"></div>
+                                                <div class="col-sm-6"><label class="form-label" for="bestVehicleWindowSeconds">Erkennungsserie / Zeitraum</label><select class="form-select" id="bestVehicleWindowSeconds">{% set win=config.dashboard.best_vehicle_window_seconds|default(180)|int if config.dashboard is defined else 180 %}{% for seconds,label in [(30,'30 Sekunden'),(60,'1 Minute'),(120,'2 Minuten'),(180,'3 Minuten'),(300,'5 Minuten'),(600,'10 Minuten') ] %}<option value="{{seconds}}" {% if win==seconds %}selected{% endif %}>{{label}}</option>{% endfor %}</select></div>
+                                            </div>
+                                            <div class="form-check form-switch mt-3">
+                                                <input class="form-check-input" type="checkbox" id="bestVehiclePreferSharpness" {% if config.dashboard is defined and config.dashboard.best_vehicle_prefer_sharpness|default(true) %}checked{% endif %}>
+                                                <label class="form-check-label" for="bestVehiclePreferSharpness">Bildschärfe bei der Auswahl berücksichtigen</label>
+                                            </div>
+                                            <small class="text-secondary d-block mt-2">Zuerst gelten mindestens 80–100 % OCR-Konfidenz und dieselbe Erkennungsserie. Danach kombiniert PlateVision Konfidenz und eine optische Schärfe-Heuristik. Bei alten Erkennungen ohne Schärfewert zählt weiterhin nur die Konfidenz. Der gesamte Verlauf bleibt unverändert.</small>
+                                        </div>
                                         <hr>
                                         <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="showConfidenceChart" {% if config.dashboard is defined and config.dashboard.show_confidence_chart %}checked{% endif %}><label class="form-check-label" for="showConfidenceChart">Konfidenz-Chart anzeigen</label></div>
                                         <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="showHourlyChart" {% if config.dashboard is defined and config.dashboard.show_hourly_chart %}checked{% endif %}><label class="form-check-label" for="showHourlyChart">Stunden-Chart anzeigen</label></div>
@@ -2128,7 +2156,7 @@
                                 <div class="row g-3">
                                     <div class="col-lg-8">
                                         <div class="people-preview-shell">
-                                            <img id="peoplePreviewImage" src="/api/people/preview/image?init=1" alt="Personen-Kalibrierung Vorschau">
+                                            <img id="peoplePreviewImage" src="{{ pv_prefix }}/api/people/preview/image?init=1" alt="Personen-Kalibrierung Vorschau">
                                             <div class="people-preview-toolbar">
                                                 <span id="peoplePreviewSource" class="badge bg-secondary">Vorschau lädt...</span>
                                                 <button type="button" class="btn btn-sm btn-light" onclick="refreshPeoplePreview(true)"><i class="fas fa-rotate me-1"></i>Vorschau aktualisieren</button>
@@ -2246,13 +2274,13 @@
                                     <div class="col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="peopleImageHistoryAutoCleanup" {% if config.people is not defined or config.people.image_history_auto_cleanup_enabled is not defined or config.people.image_history_auto_cleanup_enabled %}checked{% endif %}><label class="form-check-label" for="peopleImageHistoryAutoCleanup">Auto-Cleanup Bilder</label></div></div>
                                     <div class="col-md-3"><label class="form-label">Alarm Schwelle / h</label><input type="number" class="form-control" id="peopleAlertThreshold" min="0" max="10000" value="{{ config.people.alert_threshold_per_hour if config.people is defined and config.people.alert_threshold_per_hour is defined else 0 }}"></div>
                                 </div>
-                                <div class="info-box mt-3"><i class="fas fa-info-circle me-2"></i>Personenbilder bleiben standardmässig 10 Tage erhalten und können über <a href="/people/gallery">Personenbilder</a> tageweise angesehen werden. Beim Verkürzen der Frist werden bereits gelöschte Bilder nicht wiederhergestellt. Exakte Personenzählung hängt von Kamerawinkel, Zähllinie und Bildrate ab.</div>
+                                <div class="info-box mt-3"><i class="fas fa-info-circle me-2"></i>Personenbilder bleiben standardmässig 10 Tage erhalten und können über <a href="{{ pv_prefix }}/people/gallery">Personenbilder</a> tageweise angesehen werden. Beim Verkürzen der Frist werden bereits gelöschte Bilder nicht wiederhergestellt. Exakte Personenzählung hängt von Kamerawinkel, Zähllinie und Bildrate ab.</div>
                             </div>
 
                             <div class="d-flex flex-wrap gap-2 mt-4">
                                 <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Personenanalyse speichern</button>
                                 <button type="button" class="btn btn-outline-warning" onclick="savePeopleSettings(true)"><i class="fas fa-sync me-2"></i>Speichern & Modelle neu laden</button>
-                                <a href="/people" class="btn btn-outline-info"><i class="fas fa-chart-simple me-2"></i>Personenanalyse öffnen</a>
+                                <a href="{{ pv_prefix }}/people" class="btn btn-outline-info"><i class="fas fa-chart-simple me-2"></i>Personenanalyse öffnen</a>
                                 <button type="button" class="btn btn-outline-success" onclick="runPeopleSnapshotTest()"><i class="fas fa-vial me-2"></i>Live-Snapshot analysieren</button>
                                 <button type="button" class="btn btn-outline-danger" onclick="cleanupPeopleImagesFromSettings()"><i class="fas fa-images me-2"></i>Bild-History bereinigen</button>
                             </div>
@@ -2365,7 +2393,7 @@
                             <a href="{{ app_source_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary me-2">
                                 <i class="fab fa-github me-2"></i>GitHub
                             </a>
-                            <a href="/api/system/info" target="_blank" class="btn btn-outline-secondary">
+                            <a href="{{ pv_prefix }}/api/system/info" target="_blank" class="btn btn-outline-secondary">
                                 <i class="fas fa-info me-2"></i>System Info
                             </a>
                         </div>
@@ -2514,7 +2542,7 @@
             min_vehicle_height: pvNum('minVehicleHeight', 60)
         };
         
-        saveConfig('/api/config/detection', data, 'Erkennungs-Einstellungen');
+        saveConfig('{{ pv_prefix }}/api/config/detection', data, 'Erkennungs-Einstellungen');
     });
     
     // OCR Form
@@ -2558,7 +2586,7 @@
             use_allowlist: pvBool('useAllowlist')
         };
         
-        saveConfig('/api/config/ocr', data, 'OCR-Einstellungen');
+        saveConfig('{{ pv_prefix }}/api/config/ocr', data, 'OCR-Einstellungen');
     });
     
     // Preprocessing Form
@@ -2591,7 +2619,7 @@
             }
         };
         
-        saveConfig('/api/config/ocr', data, 'Vorverarbeitungs-Einstellungen');
+        saveConfig('{{ pv_prefix }}/api/config/ocr', data, 'Vorverarbeitungs-Einstellungen');
     });
     
     // History Form
@@ -2618,7 +2646,7 @@
             low_confidence_threshold: pvNum('lowConfidenceThreshold', 0.45)
         };
         
-        saveConfig('/api/config/history', data, 'Historie-Einstellungen');
+        saveConfig('{{ pv_prefix }}/api/config/history', data, 'Historie-Einstellungen');
     });
     
     // Storage Form
@@ -2626,7 +2654,7 @@
         e.preventDefault();
         
         // Detection settings
-        fetch('/api/config/detection', {
+        fetch('{{ pv_prefix }}/api/config/detection', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2637,7 +2665,7 @@
         });
         
         // Extended storage settings
-        fetch('/api/config/storage', {
+        fetch('{{ pv_prefix }}/api/config/storage', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2658,7 +2686,7 @@
         });
 
         // General settings
-        fetch('/api/config', {
+        fetch('{{ pv_prefix }}/api/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2704,7 +2732,7 @@
             }
         };
         
-        fetch('/api/config', {
+        fetch('{{ pv_prefix }}/api/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
@@ -2753,7 +2781,7 @@
         showConfirm('Default Test & RTSP anwenden?',
             'Die funktionierenden Demo-Werte für YOLO, fast-plate-ocr, Personen-Crops, CPU-Gate und RTSP-Erkennung werden gespeichert. RTSP-URL und Straßenbereich bleiben erhalten.',
             function() {
-                fetch('/api/config/defaults', {
+                fetch('{{ pv_prefix }}/api/config/defaults', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({scope: 'recognition', preserve_rtsp: true, preserve_model_uploads: true, reload_models: true})
@@ -2775,7 +2803,7 @@
         showConfirm('Default-Einstellungen laden?',
             'PlateVision wird auf die empfohlenen Standardwerte gesetzt. RTSP-URL und gespeicherter Straßenbereich bleiben erhalten. Personenanalyse ist danach wieder aktiv.',
             function() {
-                fetch('/api/config/defaults', {
+                fetch('{{ pv_prefix }}/api/config/defaults', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ scope: 'global', preserve_rtsp: true, preserve_model_uploads: true, reload_models: true })
@@ -2797,7 +2825,7 @@
         showConfirm('Alle Einstellungen zurücksetzen?', 
             'Dies ist ein kompletter Werksreset und setzt auch RTSP/ROI auf Standardwerte zurück. Die Seite wird neu geladen.', 
             function() {
-                fetch('/api/config/reset', { method: 'POST' })
+                fetch('{{ pv_prefix }}/api/config/reset', { method: 'POST' })
                     .then(response => response.json())
                     .then(data => {
                         if (data.success) {
@@ -2815,7 +2843,7 @@
     }
     
     function exportSettings() {
-        fetch('/api/config')
+        fetch('{{ pv_prefix }}/api/config')
             .then(response => response.json())
             .then(config => {
                 const exportData = {
@@ -2856,7 +2884,7 @@
                 const data = JSON.parse(e.target.result);
                 const config = data.config || data;
                 
-                fetch('/api/config', {
+                fetch('{{ pv_prefix }}/api/config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(config)
@@ -2884,7 +2912,7 @@
     // ============================================
     
     function loadModelStatus() {
-        fetch('/api/models/status')
+        fetch('{{ pv_prefix }}/api/models/status')
             .then(response => response.json())
             .then(data => {
                 const statusHtml = `
@@ -2920,7 +2948,7 @@
         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Laden...';
         btn.disabled = true;
         
-        fetch('/api/models/reload', { method: 'POST' })
+        fetch('{{ pv_prefix }}/api/models/reload', { method: 'POST' })
             .then(response => response.json())
             .then(data => {
                 showToast('Info', 'Modelle werden neu geladen...', 'info');
@@ -2950,7 +2978,7 @@
             if (el) el.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
         });
         
-        fetch('/api/storage/info')
+        fetch('{{ pv_prefix }}/api/storage/info')
             .then(response => response.json())
             .then(data => {
                 document.getElementById('platesCount').textContent = data.plates_count || 0;
@@ -2971,7 +2999,7 @@
                 console.error('Fehler beim Laden der Speicher-Info:', error);
                 
                 // Fallback: Zumindest Historie laden
-                fetch('/api/history/statistics')
+                fetch('{{ pv_prefix }}/api/history/statistics')
                     .then(response => response.json())
                     .then(data => {
                         document.getElementById('historyCount').textContent = data.total_detections || 0;
@@ -3008,7 +3036,7 @@
         showConfirm('Kennzeichen-Bilder löschen?', 
             'Alle gespeicherten Kennzeichen-Bilder werden <strong class="text-danger">unwiderruflich gelöscht</strong>.', 
             function() {
-                fetch('/api/storage/clear/plates', { method: 'POST' })
+                fetch('{{ pv_prefix }}/api/storage/clear/plates', { method: 'POST' })
                     .then(response => response.json())
                     .then(data => {
                         if (data.success) {
@@ -3028,7 +3056,7 @@
         showConfirm('Fahrzeug-Bilder löschen?', 
             'Alle gespeicherten Fahrzeug-Bilder werden <strong class="text-danger">unwiderruflich gelöscht</strong>.', 
             function() {
-                fetch('/api/storage/clear/vehicles', { method: 'POST' })
+                fetch('{{ pv_prefix }}/api/storage/clear/vehicles', { method: 'POST' })
                     .then(response => response.json())
                     .then(data => {
                         if (data.success) {
@@ -3048,7 +3076,7 @@
         showConfirm('Upload-Dateien löschen?', 
             'Alle hochgeladenen und verarbeiteten Dateien werden <strong class="text-danger">unwiderruflich gelöscht</strong>.<br><small class="text-secondary">Dies betrifft auch laufende Video-Jobs.</small>', 
             function() {
-                fetch('/api/storage/clear/uploads', { method: 'POST' })
+                fetch('{{ pv_prefix }}/api/storage/clear/uploads', { method: 'POST' })
                     .then(response => response.json())
                     .then(data => {
                         if (data.success) {
@@ -3078,7 +3106,7 @@
                 <li><strong>Die gesamte Erkennungs-Historie</strong></li>
             </ul>`, 
             function() {
-                fetch('/api/storage/clear/all', { method: 'POST' })
+                fetch('{{ pv_prefix }}/api/storage/clear/all', { method: 'POST' })
                     .then(response => response.json())
                     .then(data => {
                         if (data.success) {
@@ -3237,8 +3265,8 @@
     }
 
     function saveAdvancedPayload(section, payload, endpoint) {
-        const body = endpoint === '/api/config/traffic' ? payload : { [section]: payload };
-        fetch(endpoint || '/api/config/advanced', {
+        const body = endpoint === '{{ pv_prefix }}/api/config/traffic' ? payload : { [section]: payload };
+        fetch(endpoint || '{{ pv_prefix }}/api/config/advanced', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
@@ -3296,13 +3324,13 @@
             movement_threshold_percent: pvNum('movementThresholdPercent', 8),
             arrival_label: pvStr('arrivalLabel', 'gekommen'),
             departure_label: pvStr('departureLabel', 'gegangen')
-        }, '/api/config/traffic');
+        }, '{{ pv_prefix }}/api/config/traffic');
     });
 
     const moduleSwitchesForm = document.getElementById('moduleSwitchesForm');
     if (moduleSwitchesForm) moduleSwitchesForm.addEventListener('submit', function(e) {
         e.preventDefault();
-        fetch('/api/config', {
+        fetch('{{ pv_prefix }}/api/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -3378,7 +3406,7 @@
     if (rtspPerformanceForm) rtspPerformanceForm.addEventListener('submit', function(e) {
         e.preventDefault();
         Promise.all([
-            fetch('/api/config/detection', {
+            fetch('{{ pv_prefix }}/api/config/detection', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
@@ -3388,7 +3416,7 @@
                     vehicle_color_palette_max: pvNum('settingsVehicleColorPaletteMax', 5)
                 })
             }),
-            fetch('/api/config/rtsp', {
+            fetch('{{ pv_prefix }}/api/config/rtsp', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
@@ -3424,7 +3452,11 @@
             show_watchlist: pvBool('showWatchlist'),
             show_storage: pvBool('showStorage'),
             compact_mode: pvBool('compactMode'),
-            default_range_days: pvNum('defaultRangeDays', 7)
+            default_range_days: pvNum('defaultRangeDays', 7),
+            show_only_best_vehicle: pvBool('showOnlyBestVehicle'),
+            best_vehicle_min_confidence: Math.max(.80, Math.min(1, pvNum('bestVehicleMinConfidence', 80) / 100)),
+            best_vehicle_window_seconds: pvNum('bestVehicleWindowSeconds', 180),
+            best_vehicle_prefer_sharpness: pvBool('bestVehiclePreferSharpness')
         });
     });
 
@@ -3487,7 +3519,7 @@
             fallback_to_cpu: pvBool('fallbackToCpu'),
             reload: reloadModelsAfterSave
         };
-        fetch('/api/config/models', {
+        fetch('{{ pv_prefix }}/api/config/models', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -3520,7 +3552,7 @@
         const current = select.dataset.current || select.value || document.getElementById('peopleCustomModelPath')?.value || '';
         select.innerHTML = '<option value="">Scanne Modelle...</option>';
         try {
-            const response = await fetch('/api/models/people/options');
+            const response = await fetch('{{ pv_prefix }}/api/models/people/options');
             const data = await response.json();
             const models = data.models || [];
             const existingModels = models.filter(m => m.exists !== false);
@@ -3530,12 +3562,20 @@
                 if (panel) panel.innerHTML = '<span class="text-warning">Keine vorhandenen .pt/.onnx/.engine Dateien gefunden. Erwartet werden z.B. <code>best.pt</code> und <code>last.pt</code> in <code>platevision/src/models/</code>, <code>/app/models</code> oder <code>/data/models</code>.</span>';
                 return;
             }
-            select.innerHTML = existingModels.map(m => `<option value="${m.path}" ${m.path === current || m.resolved_path === current ? 'selected' : ''}>${m.name} · ${m.kind_guess} · ${m.size_mb} MB</option>`).join('');
+            // File names come from disk/scans: never interpolate them into HTML.
+            select.replaceChildren();
+            for (const model of existingModels) {
+                const option = document.createElement('option');
+                option.value = String(model.path || '');
+                option.textContent = `${model.name || 'Modell'} · ${model.kind_guess || '-'} · ${Number(model.size_mb || 0)} MB`;
+                option.selected = model.path === current || model.resolved_path === current;
+                select.appendChild(option);
+            }
             const chosen = select.value || current;
             if (chosen) document.getElementById('peopleCustomModelPath').value = chosen;
             if (panel) {
                 const rec = existingModels.filter(m => m.kind_guess === 'people').length;
-                const missing = missingModels.length ? `<br><span class="text-warning">Nicht gefunden: ${missingModels.map(m => m.name).join(', ')}</span>` : '';
+                const missing = missingModels.length ? `<br><span class="text-warning">Nicht gefunden: ${missingModels.map(m => pvEscapeHtml(m.name || '')).join(', ')}</span>` : '';
                 panel.innerHTML = `<strong>${existingModels.length}</strong> Modelle gefunden, davon <strong>${rec}</strong> als Personenmodell empfohlen. Status: COCO ${data.status?.coco_model_loaded ? 'geladen' : 'nicht geladen'}, Human ${data.status?.human_model_loaded ? 'geladen' : 'nicht geladen'}.${missing}`;
             }
             renderModelInventory(models, 'modelUploadInventory');
@@ -3550,7 +3590,7 @@
         if (!path) { showToast('Hinweis', 'Bitte zuerst ein Modell auswählen oder einen Pfad eintragen.', 'warning'); return; }
         document.getElementById('peopleCustomModelPath').value = path;
         document.getElementById('peopleModelMode').value = 'model_file';
-        fetch('/api/models/people/select', {
+        fetch('{{ pv_prefix }}/api/models/people/select', {
             method: 'POST', headers: {'Content-Type':'application/json'},
             body: JSON.stringify({path, model_mode: 'model_file', reload: reload !== false})
         }).then(r => r.json()).then(result => {
@@ -3570,12 +3610,47 @@
     function renderModelInventory(models, targetId = 'modelUploadInventory') {
         const target = document.getElementById(targetId);
         if (!target) return;
-        const existing = (models || []).filter(m => m.exists !== false);
+        const existing = (Array.isArray(models) ? models : []).filter(m => m && m.exists !== false);
         if (!existing.length) {
-            target.innerHTML = '<span class="text-warning">Keine vorhandenen Modelle gefunden.</span>';
+            target.textContent = 'Keine vorhandenen Modelle gefunden.';
             return;
         }
-        target.innerHTML = `<div class="table-responsive"><table class="table table-sm table-dark table-striped align-middle mb-0"><thead><tr><th>Datei</th><th>Typ</th><th>Größe</th><th>Pfad</th><th>Aktion</th></tr></thead><tbody>${existing.map(m => `<tr><td>${m.name}</td><td>${m.kind_guess || '-'}</td><td>${m.size_mb || 0} MB</td><td><code>${m.path}</code></td><td>${m.kind_guess === 'people' ? `<button type="button" class="btn btn-sm btn-outline-info" onclick="selectUploadedPeopleModel('${m.path.replace(/'/g, "\\'")}')">als Personenmodell</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+        const wrapper = document.createElement('div');
+        wrapper.className = 'table-responsive';
+        const table = document.createElement('table');
+        table.className = 'table table-sm table-striped align-middle mb-0';
+        const header = document.createElement('thead');
+        const tr = document.createElement('tr');
+        for (const label of ['Datei', 'Typ', 'Groesse', 'Pfad', 'Aktion']) {
+            const th = document.createElement('th');
+            th.textContent = label;
+            tr.appendChild(th);
+        }
+        header.appendChild(tr);
+        table.appendChild(header);
+        const tbody = document.createElement('tbody');
+        for (const model of existing) {
+            const row = document.createElement('tr');
+            for (const value of [model.name, model.kind_guess || '-', `${Number(model.size_mb || 0)} MB`, model.path]) {
+                const cell = document.createElement('td');
+                cell.textContent = String(value ?? '');
+                row.appendChild(cell);
+            }
+            const actions = document.createElement('td');
+            if (model.kind_guess === 'people') {
+                const select = document.createElement('button');
+                select.type = 'button';
+                select.className = 'btn btn-sm btn-outline-info';
+                select.textContent = 'Als Personenmodell';
+                select.addEventListener('click', () => selectUploadedPeopleModel(String(model.path || '')));
+                actions.appendChild(select);
+            }
+            row.appendChild(actions);
+            tbody.appendChild(row);
+        }
+        table.appendChild(tbody);
+        wrapper.appendChild(table);
+        target.replaceChildren(wrapper);
     }
 
     function selectUploadedPeopleModel(path) {
@@ -3584,7 +3659,7 @@
         const peopleMode = document.getElementById('peopleModelMode');
         if (peopleCustom) peopleCustom.value = path;
         if (peopleMode) peopleMode.value = 'model_file';
-        fetch('/api/models/people/select', {
+        fetch('{{ pv_prefix }}/api/models/people/select', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({path, model_mode: 'model_file', reload: document.getElementById('modelUploadReload')?.checked || false})
@@ -3620,14 +3695,14 @@
         formData.append('overwrite', pvBool('modelUploadOverwrite') ? 'true' : 'false');
         if (resultBox) resultBox.innerHTML = '<div class="alert alert-info"><i class="fas fa-spinner fa-spin me-2"></i>Modell wird hochgeladen...</div>';
         try {
-            const response = await fetch('/api/models/upload', { method: 'POST', body: formData });
+            const response = await fetch('{{ pv_prefix }}/api/models/upload', { method: 'POST', body: formData });
             const data = await response.json();
             if (!data.success) {
-                if (resultBox) resultBox.innerHTML = `<div class="alert alert-danger"><i class="fas fa-triangle-exclamation me-2"></i>${data.error || 'Upload fehlgeschlagen'}</div>`;
+                if (resultBox) resultBox.innerHTML = `<div class="alert alert-danger"><i class="fas fa-triangle-exclamation me-2"></i>${pvEscapeHtml(data.error || 'Upload fehlgeschlagen')}</div>`;
                 showToast('Fehler', data.error || 'Upload fehlgeschlagen', 'danger');
                 return;
             }
-            if (resultBox) resultBox.innerHTML = `<div class="alert alert-success"><strong>${data.model?.name || 'Modell'}</strong> wurde hochgeladen.<br><small>Pfad: <code>${data.model?.path || '-'}</code>${data.selected ? ' · ausgewählt' : ''}${data.reload ? ' · Reload gestartet' : ''}</small>${data.model?.sha256 ? `<br><small>SHA-256: <code class="user-select-all">${data.model.sha256}</code></small>` : ''}</div>`;
+            if (resultBox) resultBox.innerHTML = `<div class="alert alert-success"><strong>${pvEscapeHtml(data.model?.name || 'Modell')}</strong> wurde hochgeladen.<br><small>Pfad: <code>${pvEscapeHtml(data.model?.path || '-')}</code>${data.selected ? ' · ausgewählt' : ''}${data.reload ? ' · Reload gestartet' : ''}</small>${data.model?.sha256 ? `<br><small>SHA-256: <code class="user-select-all">${pvEscapeHtml(data.model.sha256)}</code></small>` : ''}</div>`;
             renderModelInventory(data.models || [], 'modelUploadInventory');
             await loadPeopleModelOptions();
             loadModelStatus();
@@ -3714,16 +3789,16 @@
         const selectedModel = p.selected_model_file || p.custom_model_path || 'COCO Person-Klasse';
         el.innerHTML = `
             <div class="people-summary-row"><span>Modul</span><strong>${peopleBoolLabel(p.enabled)}</strong></div>
-            <div class="people-summary-row"><span>Modell</span><code>${selectedModel}</code></div>
+            <div class="people-summary-row"><span>Modell</span><code>${pvEscapeHtml(selectedModel)}</code></div>
             <div class="people-summary-row"><span>Konfidenz</span><strong>${p.confidence_threshold}</strong></div>
-            <div class="people-summary-row"><span>Zählstrategie</span><strong>${p.count_strategy}</strong></div>
-            <div class="people-summary-row"><span>Linie</span><strong>${peopleBoolLabel(p.line_crossing_enabled)} · ${p.movement_axis.toUpperCase()} ${p.virtual_line_position_percent}% · ${p.crossing_direction} · ${p.line_relative_to_roi ? 'Straße' : 'Bild'}</strong></div>
-            <div class="people-summary-row"><span>Straßen-ROI</span><strong>${peopleBoolLabel(p.roi_filter_enabled)} · ${p.roi_filter_mode} · ${p.min_roi_overlap_percent}%</strong></div>
+            <div class="people-summary-row"><span>Zählstrategie</span><strong>${pvEscapeHtml(p.count_strategy)}</strong></div>
+            <div class="people-summary-row"><span>Linie</span><strong>${peopleBoolLabel(p.line_crossing_enabled)} · ${pvEscapeHtml(p.movement_axis.toUpperCase())} ${p.virtual_line_position_percent}% · ${pvEscapeHtml(p.crossing_direction)} · ${p.line_relative_to_roi ? 'Straße' : 'Bild'}</strong></div>
+            <div class="people-summary-row"><span>Straßen-ROI</span><strong>${peopleBoolLabel(p.roi_filter_enabled)} · ${pvEscapeHtml(p.roi_filter_mode)} · ${p.min_roi_overlap_percent}%</strong></div>
             <div class="people-summary-row"><span>Zone</span><strong>${peopleBoolLabel(p.zone_enabled)} · X ${p.zone.x}% / Y ${p.zone.y}% / ${p.zone.width}×${p.zone.height}%</strong></div>
             <div class="people-summary-row"><span>Session-Lücke</span><strong>${p.session_gap_minutes} min</strong></div>
             <div class="people-summary-row"><span>Anwesend Timeout</span><strong>${p.present_timeout_minutes} min</strong></div>
             <div class="people-summary-row"><span>Gleiche Person sperren</span><strong>${peopleBoolLabel(p.person_recount_block_enabled)} · ${p.person_recount_block_minutes} min</strong></div>
-            <div class="people-summary-row"><span>Wiedererkennung</span><strong>${p.person_recount_identity_mode}</strong></div>
+            <div class="people-summary-row"><span>Wiedererkennung</span><strong>${pvEscapeHtml(p.person_recount_identity_mode)}</strong></div>
             <div class="people-summary-row"><span>Alle Detections</span><strong>${peopleBoolLabel(p.save_all_detections)}</strong></div>
             <div class="people-summary-row"><span>Testumgebung</span><strong>${peopleBoolLabel(p.test_environment_enabled)}</strong></div>
             <div class="people-summary-row"><span>Bild-History</span><strong>${peopleBoolLabel(p.image_history_enabled)}</strong></div>
@@ -3731,7 +3806,7 @@
             <div class="people-summary-row"><span>Annotiert</span><strong>${peopleBoolLabel(p.image_history_store_annotated)}</strong></div>
             <div class="people-summary-row"><span>Vollbild</span><strong>${peopleBoolLabel(p.save_full_frame)}</strong></div>
             <div class="people-summary-row"><span>Weichzeichnen</span><strong>${peopleBoolLabel(p.privacy_blur_people)}</strong></div>
-            <div class="people-summary-row"><span>Export</span><strong>${p.export_default_format.toUpperCase()}</strong></div>
+            <div class="people-summary-row"><span>Export</span><strong>${pvEscapeHtml(p.export_default_format.toUpperCase())}</strong></div>
             <div class="people-summary-row"><span>Aufbewahrung</span><strong>${p.retention_days} Tage</strong></div>
             <div class="people-summary-row"><span>Max. Ereignisse</span><strong>${p.max_history_entries}</strong></div>
             <div class="people-summary-row"><span>Auto-Cleanup Historie</span><strong>${peopleBoolLabel(p.auto_cleanup_enabled)}</strong></div>
@@ -3743,7 +3818,7 @@
     function cleanupPeopleImagesFromSettings() {
         const days = pvNum('peopleImageHistoryRetentionDays', 10);
         if (!confirm(`Personen-Bild-History älter als ${days} Tage löschen?`)) return;
-        fetch('/api/people/images/cleanup', {
+        fetch('{{ pv_prefix }}/api/people/images/cleanup', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({retention_days: days})
@@ -3783,7 +3858,7 @@
             zone_w: p.zone.width,
             zone_h: p.zone.height
         });
-        img.src = '/api/people/preview/image?' + params.toString();
+        img.src = '{{ pv_prefix }}/api/people/preview/image?' + params.toString();
         const source = document.getElementById('peoplePreviewSource');
         if (source) source.textContent = 'Vorschau aktualisiert';
     }
@@ -3810,7 +3885,7 @@
     function savePeopleSettings(reloadAfterSave = false) {
         const payload = getPeopleSettingsPayloadFromForm();
         payload.reload = reloadAfterSave;
-        fetch('/api/config/people', {
+        fetch('{{ pv_prefix }}/api/config/people', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -3839,12 +3914,12 @@
     function runPeopleSnapshotTest() {
         const box = document.getElementById('peopleTestResult');
         if (box) box.innerHTML = '<div class="alert alert-info"><i class="fas fa-spinner fa-spin me-2"></i>Teste aktuellen Live-Snapshot...</div>';
-        fetch('/api/people/test/snapshot', { method: 'POST' })
+        fetch('{{ pv_prefix }}/api/people/test/snapshot', { method: 'POST' })
             .then(r => r.json())
             .then(data => {
                 if (!box) return;
                 if (!data.success) {
-                    box.innerHTML = `<div class="alert alert-warning"><i class="fas fa-triangle-exclamation me-2"></i>${data.error || 'Test nicht möglich'}</div>`;
+                    box.innerHTML = `<div class="alert alert-warning"><i class="fas fa-triangle-exclamation me-2"></i>${pvEscapeHtml(data.error || 'Test nicht möglich')}</div>`;
                     return;
                 }
                 box.innerHTML = `<div class="alert alert-success"><strong>${data.people?.length || 0}</strong> Personen erkannt, <strong>${data.people_counted || 0}</strong> gezählt. Verarbeitungszeit: ${(data.processing_time || 0).toFixed(2)}s</div>` +
@@ -3856,7 +3931,7 @@
     const aboutForm = document.getElementById('aboutForm');
     if (aboutForm) aboutForm.addEventListener('submit', function(e) {
         e.preventDefault();
-        fetch('/api/config/about', {
+        fetch('{{ pv_prefix }}/api/config/about', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -3879,21 +3954,21 @@
         const auditBox = document.getElementById('settingsAuditRows');
         if (healthBox) healthBox.innerHTML = '<div class="text-secondary"><i class="fas fa-spinner fa-spin me-2"></i>Lade Health Checks...</div>';
         if (auditBox) auditBox.innerHTML = '<div class="text-secondary"><i class="fas fa-spinner fa-spin me-2"></i>Lade Audit...</div>';
-        fetch('/api/system/health')
+        fetch('{{ pv_prefix }}/api/system/health')
             .then(r => r.json())
             .then(d => {
                 if (!healthBox) return;
                 const rows = d.checks || [];
-                healthBox.innerHTML = rows.length ? rows.map(c => `<div class="border rounded p-3 d-flex justify-content-between" style="border-color:var(--card-border)!important"><div><b>${c.name}</b><div class="text-secondary small">${c.detail || ''}</div></div><span class="badge ${c.ok ? 'bg-success' : 'bg-warning text-dark'} align-self-start">${c.ok ? 'OK' : 'Prüfen'}</span></div>`).join('') : '<div class="text-secondary">Keine Health Checks vorhanden.</div>';
+                healthBox.innerHTML = rows.length ? rows.map(c => `<div class="border rounded p-3 d-flex justify-content-between" style="border-color:var(--card-border)!important"><div><b>${pvEscapeHtml(c.name)}</b><div class="text-secondary small">${pvEscapeHtml(c.detail || '')}</div></div><span class="badge ${c.ok ? 'bg-success' : 'bg-warning text-dark'} align-self-start">${c.ok ? 'OK' : 'Prüfen'}</span></div>`).join('') : '<div class="text-secondary">Keine Health Checks vorhanden.</div>';
             })
             .catch(() => { if (healthBox) healthBox.innerHTML = '<div class="alert alert-danger">Health Checks konnten nicht geladen werden.</div>'; });
-        fetch('/api/system/audit')
+        fetch('{{ pv_prefix }}/api/system/audit')
             .then(r => r.json())
             .then(d => {
                 if (!auditBox) return;
                 const html = [
-                    ...(d.issues || []).map(i => `<div class="alert alert-${i.level === 'warning' ? 'warning' : 'info'}"><b>${i.title}</b><br>${i.detail}</div>`),
-                    ...(d.suggestions || []).map(x => `<div class="border rounded p-2 mb-2" style="border-color:var(--card-border)!important"><i class="fas fa-check text-success me-2"></i>${x}</div>`)
+                    ...(d.issues || []).map(i => `<div class="alert alert-${i.level === 'warning' ? 'warning' : 'info'}"><b>${pvEscapeHtml(i.title)}</b><br>${pvEscapeHtml(i.detail)}</div>`),
+                    ...(d.suggestions || []).map(x => `<div class="border rounded p-2 mb-2" style="border-color:var(--card-border)!important"><i class="fas fa-check text-success me-2"></i>${pvEscapeHtml(x)}</div>`)
                 ].join('');
                 auditBox.innerHTML = html || '<div class="text-success">Keine offenen Empfehlungen.</div>';
             })
@@ -3947,5 +4022,11 @@
         if (document.getElementById('settingsHealthRows')) loadSettingsDiagnostics();
     });
 
+function pvJumpSettingsTab(tab, targetId) {
+    const link=document.querySelector('.settings-nav a[href="#'+tab+'"]');
+    if (link && window.bootstrap && bootstrap.Tab) bootstrap.Tab.getOrCreateInstance(link).show();
+    const target=document.getElementById(targetId);
+    if(target) setTimeout(() => target.scrollIntoView({behavior:'smooth', block:'center'}), 160);
+}
 </script>
 {% endblock %}
