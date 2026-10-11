@@ -14,7 +14,7 @@
     <!-- FPS Counter -->
     <span class="badge bg-dark" id="fpsCounter">
         <i class="fas fa-tachometer-alt me-1"></i>
-        <span id="fpsValue">0</span> FPS
+        <span id="fpsValue">0</span> FPS Kamera
     </span>
     
     <!-- Resolution -->
@@ -25,10 +25,10 @@
     
     <!-- Stream Controls -->
     <div class="btn-group">
-        <button class="btn btn-success" id="btnStart" onclick="startStream()">
+        <button class="btn btn-success" id="btnStart" onclick="startLiveStream()">
             <i class="fas fa-play me-1"></i>Start
         </button>
-        <button class="btn btn-danger" id="btnStop" onclick="stopStream()" style="display: none;">
+        <button class="btn btn-danger" id="btnStop" onclick="stopLiveStream()" style="display: none;">
             <i class="fas fa-stop me-1"></i>Stop
         </button>
         <button class="btn btn-outline-secondary" onclick="toggleFullscreen()" title="Vollbild">
@@ -393,13 +393,14 @@
     <div class="stream-main" id="streamMain">
         <!-- Stream Video/Image -->
         <img id="streamVideo" class="stream-video" src="" alt="Live Stream">
+        <span id="previewTransport" class="badge bg-dark position-absolute bottom-0 start-0 m-3" style="z-index: 6; display: none;" aria-live="polite"></span>
         
         <!-- Offline Overlay -->
         <div class="stream-offline-overlay" id="offlineOverlay">
             <i class="fas fa-video-slash offline-icon" id="offlineIcon"></i>
             <h4 id="offlineTitle">Stream nicht aktiv</h4>
             <p class="text-secondary mb-4" id="offlineMessage">Klicken Sie auf Start, um den RTSP Stream zu starten</p>
-            <button class="btn btn-primary btn-lg" onclick="startStream()" id="offlineStartBtn">
+            <button class="btn btn-primary btn-lg" onclick="startLiveStream()" id="offlineStartBtn">
                 <i class="fas fa-play me-2"></i>Stream starten
             </button>
             
@@ -453,12 +454,12 @@
             
             <div class="row g-2">
                 <div class="col-6">
-                    <button class="btn btn-success w-100" id="sidebarStartBtn" onclick="startStream()">
+                    <button class="btn btn-success w-100" id="sidebarStartBtn" onclick="startLiveStream()">
                         <i class="fas fa-play me-1"></i>Start
                     </button>
                 </div>
                 <div class="col-6">
-                    <button class="btn btn-danger w-100" id="sidebarStopBtn" onclick="stopStream()" disabled>
+                    <button class="btn btn-danger w-100" id="sidebarStopBtn" onclick="stopLiveStream()" disabled>
                         <i class="fas fa-stop me-1"></i>Stop
                     </button>
                 </div>
@@ -468,7 +469,7 @@
             <div class="mt-3">
                 <small class="text-secondary">RTSP URL:</small>
                 <div class="bg-dark rounded p-2 mt-1" style="font-size: 0.75rem; word-break: break-all;">
-                    <code id="rtspUrlDisplay">{{ config.rtsp.url if config else 'Nicht konfiguriert' }}</code>
+                    <code id="rtspUrlDisplay">{{ stream_status.url if stream_status and stream_status.url else 'Nicht konfiguriert' }}</code>
                 </div>
                 <a href="{{ pv_url_for('rtsp_settings') }}" class="btn btn-sm btn-outline-primary mt-2 w-100">
                     <i class="fas fa-cog me-1"></i>RTSP Einstellungen
@@ -612,9 +613,17 @@
     let isStreaming = false;
     let streamStartTime = null;
     let sessionDetections = [];
-    let fpsCounter = { frames: 0, lastTime: Date.now(), fps: 0 };
     let uptimeInterval = null;
-    let frameInterval = null;
+    // Ingress is a buffered HTTP proxy. A single JPEG per request is more
+    // reliable there than an indefinitely streaming multipart MJPEG response.
+    const isIngressView = {{ 'true' if pv_prefix else 'false' }};
+    let previewActive = false;
+    let previewTimer = null;
+    let previewAbort = null;
+    let previewObjectUrl = null;
+    let previewLastOk = 0;
+    let previewFailures = 0;
+    let mjpegStartupTimer = null;
     
     // DOM Elements
     const streamVideo = document.getElementById('streamVideo');
@@ -633,7 +642,7 @@
     // STREAM CONTROL
     // ============================================
     
-    function startStream() {
+    function startLiveStream() {
         updateUIConnecting();
         
         fetch('{{ pv_prefix }}/api/stream/start', { method: 'POST' })
@@ -655,7 +664,7 @@
             });
     }
     
-    function stopStream() {
+    function stopLiveStream() {
         fetch('{{ pv_prefix }}/api/stream/stop', { method: 'POST' })
             .then(response => response.json())
             .then(data => {
@@ -667,55 +676,147 @@
             });
     }
     
+    // A real MJPEG image's onload event is NOT emitted for each video frame.
+    // The capture FPS therefore comes from /api/stream/status, not img.onload.
     function startStreamFeed() {
-        // Use MJPEG stream
-        streamVideo.src = '{{ pv_prefix }}/api/stream/feed?' + Date.now();
-        if (streamVideo) streamVideo.style.display = 'block';
-        
+        stopStreamFeed();
+        if (!isStreaming) return;
+        streamVideo.style.display = 'block';
+        const transport = document.getElementById('previewTransport');
+        transport.style.display = 'inline-block';
+        if (isIngressView) {
+            startSingleFramePreview('Einzelbildvorschau über Home Assistant');
+            return;
+        }
+        transport.textContent = 'MJPEG-Livebild';
         streamVideo.onerror = function() {
-            console.error('Stream error');
-            if (isStreaming) {
-                // Try to reconnect
-                setTimeout(() => {
-                    if (isStreaming) {
-                        streamVideo.src = '{{ pv_prefix }}/api/stream/feed?' + Date.now();
-                    }
-                }, 2000);
+            if (isStreaming && !previewActive) {
+                startSingleFramePreview('MJPEG nicht darstellbar – Einzelbildvorschau aktiv');
             }
         };
-        
-        streamVideo.onload = function() {
-            fpsCounter.frames++;
-        };
-        
-        // FPS counter
-        frameInterval = setInterval(() => {
-            const now = Date.now();
-            const elapsed = (now - fpsCounter.lastTime) / 1000;
-            fpsCounter.fps = Math.round(fpsCounter.frames / elapsed);
-            fpsCounter.frames = 0;
-            fpsCounter.lastTime = now;
-            document.getElementById('fpsValue').textContent = fpsCounter.fps;
-        }, 1000);
+        streamVideo.src = '{{ pv_prefix }}/api/stream/feed?' + Date.now();
+        // Some browsers leave broken MJPEG requests hanging without onerror.
+        mjpegStartupTimer = setTimeout(() => {
+            if (isStreaming && !previewActive && streamVideo.naturalWidth === 0) {
+                startSingleFramePreview('MJPEG ohne Bild – Einzelbildvorschau aktiv');
+            }
+        }, 7000);
     }
-    
-    function stopStreamFeed() {
+
+    function showPreviewMessage(title, message) {
+        offlineOverlay.classList.remove('hidden');
+        offlineIcon.className = 'fas fa-spinner offline-icon connecting';
+        offlineTitle.textContent = title;
+        offlineMessage.textContent = message;
+        if (offlineStartBtn) offlineStartBtn.style.display = 'none';
+        if (errorAlert) errorAlert.style.display = 'none';
+    }
+
+    function startSingleFramePreview(reason) {
+        if (previewActive || !isStreaming) return;
+        clearTimeout(mjpegStartupTimer);
+        mjpegStartupTimer = null;
+        previewActive = true;
+        previewFailures = 0;
+        previewLastOk = 0;
+        streamVideo.onerror = null;
         streamVideo.src = '';
-        if (streamVideo) streamVideo.style.display = 'none';
-        
-        if (frameInterval) {
-            clearInterval(frameInterval);
-            frameInterval = null;
+        const transport = document.getElementById('previewTransport');
+        transport.style.display = 'inline-block';
+        transport.textContent = reason;
+        showPreviewMessage('Kameravorschau wird geladen', 'Warte auf das erste Kamerabild ...');
+        loadPreviewFrame();
+    }
+
+    async function loadPreviewFrame() {
+        if (!isStreaming || !previewActive) return;
+        if (document.hidden) {
+            previewTimer = setTimeout(loadPreviewFrame, 1500);
+            return;
         }
-        
+        const controller = new AbortController();
+        previewAbort = controller;
+        const deadline = setTimeout(() => controller.abort(), 6000);
+        let newUrl = null;
+        let nextDelay = 750;
+        try {
+            const response = await fetch('{{ pv_prefix }}/api/stream/preview?_=' + Date.now(), {
+                signal: controller.signal,
+                cache: 'no-store'
+            });
+            if (response.status === 204) {
+                nextDelay = 1200;
+                if (!previewLastOk) {
+                    showPreviewMessage('Warte auf Kamerabilder', 'RTSP-Verbindung wird aufgebaut oder liefert noch keine Bilder.');
+                }
+            } else {
+                if (!response.ok) throw new Error('Vorschau HTTP ' + response.status);
+                const blob = await response.blob();
+                if (!blob.size || !/^image\/jpeg/i.test(blob.type)) {
+                    throw new Error('Keine gültige JPEG-Antwort');
+                }
+                newUrl = URL.createObjectURL(blob);
+                // Decode before replacing the current displayed frame, so a
+                // slow or malformed response never blanks the current preview.
+                await new Promise((resolve, reject) => {
+                    const image = new Image();
+                    image.onload = resolve;
+                    image.onerror = () => reject(new Error('JPEG nicht lesbar'));
+                    image.src = newUrl;
+                });
+                if (!isStreaming || !previewActive) return;
+                const oldUrl = previewObjectUrl;
+                previewObjectUrl = newUrl;
+                newUrl = null;
+                streamVideo.src = previewObjectUrl;
+                streamVideo.style.display = 'block';
+                if (oldUrl) URL.revokeObjectURL(oldUrl);
+                previewLastOk = Date.now();
+                previewFailures = 0;
+                offlineOverlay.classList.add('hidden');
+            }
+        } catch (error) {
+            if (controller.signal.aborted && (!isStreaming || !previewActive)) return;
+            previewFailures++;
+            nextDelay = Math.min(2500, 500 * previewFailures);
+            if (!previewLastOk || Date.now() - previewLastOk > 7000) {
+                showPreviewMessage('Vorschau nicht erreichbar',
+                    'Die Kamera kann verbunden sein, aber die Bildanzeige antwortet nicht. Bitte Systemdiagnose prüfen.');
+            }
+            console.warn('PlateVision camera preview:', error && error.message || 'Fehler');
+        } finally {
+            clearTimeout(deadline);
+            if (newUrl) URL.revokeObjectURL(newUrl);
+            if (previewAbort === controller) previewAbort = null;
+            if (isStreaming && previewActive) previewTimer = setTimeout(loadPreviewFrame, nextDelay);
+        }
+    }
+
+    function stopStreamFeed() {
+        clearTimeout(mjpegStartupTimer);
+        mjpegStartupTimer = null;
+        clearTimeout(previewTimer);
+        previewTimer = null;
+        previewActive = false;
+        if (previewAbort) previewAbort.abort();
+        previewAbort = null;
+        previewLastOk = 0;
+        previewFailures = 0;
+        streamVideo.onerror = null;
+        streamVideo.src = '';
+        streamVideo.style.display = 'none';
+        if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+        previewObjectUrl = null;
+        document.getElementById('previewTransport').style.display = 'none';
         document.getElementById('fpsValue').textContent = '0';
     }
-    
+
     // ============================================
     // UI UPDATES
     // ============================================
     
     function updateUIConnecting() {
+        offlineOverlay.classList.remove('hidden');
         offlineIcon.className = 'fas fa-spinner offline-icon connecting';
         offlineTitle.textContent = 'Verbindung wird hergestellt...';
         offlineMessage.textContent = 'Bitte warten...';
@@ -730,7 +831,11 @@
     }
     
     function updateUIStreaming() {
-        offlineOverlay.classList.add('hidden');
+        if (previewActive && (!previewLastOk || Date.now() - previewLastOk > 7000)) {
+            showPreviewMessage('Kameravorschau wird geladen', 'Verbindung steht, aber das Kamerabild fehlt noch.');
+        } else {
+            offlineOverlay.classList.add('hidden');
+        }
         if (streamInfoOverlay) streamInfoOverlay.style.display = 'flex';
         
         connectionDot.className = 'connection-dot connected';
@@ -1014,47 +1119,66 @@
     // STATUS POLLING
     // ============================================
     
-    function checkStreamStatus() {
+    function checkLiveStreamStatus() {
         fetch('{{ pv_prefix }}/api/stream/status')
             .then(response => response.json())
             .then(data => {
-                const wasStreaming = isStreaming;
-                
-                if (data.status === 'running' && !isStreaming) {
-                    isStreaming = true;
-                    streamStartTime = streamStartTime || Date.now();
-                    updateUIStreaming();
-                    startStreamFeed();
-                    startUptimeCounter();
+                if (data.status === 'running') {
+                    if (!isStreaming) {
+                        isStreaming = true;
+                        streamStartTime = streamStartTime || Date.now();
+                        updateUIStreaming();
+                        startStreamFeed();
+                        startUptimeCounter();
+                    } else {
+                        // A previous 'connecting' event must not leave the UI
+                        // saying "Verbinde..." after frames actually arrive.
+                        updateUIStreaming();
+                    }
                 } else if (data.status === 'stopped' && isStreaming) {
                     isStreaming = false;
                     stopStreamFeed();
                     stopUptimeCounter();
                     updateUIStopped();
                 } else if (data.status === 'error') {
+                    if (isStreaming) stopStreamFeed();
                     updateUIError(data.error || 'Unbekannter Fehler');
                 } else if (data.status === 'connecting') {
                     updateUIConnecting();
                 }
-                
-                // Update reconnect counter
-                document.getElementById('statReconnects').textContent = data.reconnect_attempts || 0;
+                // These are capture FPS, not an estimate from the MJPEG img
+                // onload handler (which fires only once in many browsers).
+                const fps = Number(data.fps);
+                document.getElementById('fpsValue').textContent =
+                    data.connected && Number.isFinite(fps) ? fps.toFixed(1) : '0';
+                const resolution = data.resolution || {};
+                document.getElementById('resolutionValue').textContent =
+                    Number(resolution.width) > 0 && Number(resolution.height) > 0
+                    ? resolution.width + ' × ' + resolution.height : '--';
+                document.getElementById('statReconnects').textContent =
+                    data.reconnect_count ?? data.reconnect_attempts ?? 0;
+                const age = Number(data.last_frame_age_seconds);
+                if (data.status === 'running' && data.last_frame_age_seconds != null &&
+                        Number.isFinite(age) && age >= 20) {
+                    showPreviewMessage('Kamerastream ohne neue Bilder',
+                        'Letztes Kamerabild vor ' + age.toFixed(0) + ' Sekunden. RTSP-Einstellungen prüfen.');
+                }
             })
             .catch(error => {
-                console.error('Status check failed:', error);
+                console.warn('Status check failed:', error);
             });
     }
-    
+
     // ============================================
     // INITIALIZATION
     // ============================================
     
     document.addEventListener('DOMContentLoaded', function() {
         // Check initial status
-        checkStreamStatus();
+        checkLiveStreamStatus();
         
         // Poll status every 3 seconds
-        setInterval(checkStreamStatus, 3000);
+        setInterval(checkLiveStreamStatus, 3000);
         
         // Load today's detection count
         fetch('{{ pv_prefix }}/api/history/statistics')

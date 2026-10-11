@@ -4,7 +4,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.13.9 - safer notification consent and configuration updates
+Version 0.13.11 - reliable Home Assistant Ingress camera preview
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory, send_file, redirect, url_for, g, has_request_context
@@ -32,7 +32,7 @@ import shutil
 from contextlib import contextmanager
 from functools import wraps
 
-APP_VERSION = '0.13.9'
+APP_VERSION = '0.13.11'
 APP_EDITION = 'Home Assistant notifications, Watchlist alerts & Ingress'
 APP_LICENSE = 'AGPL-3.0-only'
 APP_LICENSE_SINCE = '0.9.0'
@@ -5445,6 +5445,34 @@ def stream_feed():
     
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+@app.route('/api/stream/preview')
+def api_stream_preview():
+    """One JPEG preview for browsers where HA Ingress cannot relay MJPEG.
+
+    Unlike the ROI calibration snapshot, this uses the current annotated frame.
+    A missing camera frame is reported as 204, never as a simulated live image.
+    """
+    frame = stream_manager.get_current_frame()
+    if frame is None:
+        return Response(status=204)
+    try:
+        height, width = frame.shape[:2]
+        # Browser previews do not need the full RTSP resolution. Restricting
+        # the JPEG dimensions keeps proxy traffic and CPU use bounded.
+        if width > 960:
+            frame = cv2.resize(frame, (960, max(1, round(height * 960 / width))),
+                               interpolation=cv2.INTER_AREA)
+        encoded_ok, encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 76])
+        if not encoded_ok:
+            raise ValueError('JPEG encoding failed')
+        response = Response(encoded.tobytes(), mimetype='image/jpeg')
+        response.headers['Cache-Control'] = 'no-store, max-age=0'
+        return response
+    except (ValueError, TypeError, cv2.error) as exc:
+        logger.warning('Stream-Vorschau konnte nicht erzeugt werden: %s', type(exc).__name__)
+        return jsonify({'success': False, 'error': 'Kamerabild konnte nicht kodiert werden'}), 503
+
+
 @app.route('/api/stream/snapshot')
 def api_stream_snapshot():
     """Rohes Einzel-Snapshot vom Stream oder ein kalibrierbares Fallback-Bild.
@@ -9784,6 +9812,14 @@ def api_system_health():
         connected = bool(status.get('connected'))
         add('stream_connected', connected, 'Verbunden' if connected else
             str(status.get('error') or 'Kamera ist nicht verbunden')[:180])
+        # A connected RTSP socket can stop yielding frames. A separate frame
+        # heartbeat detects this even while model inference is very slow.
+        age = status.get('last_frame_age_seconds')
+        if connected and age is not None:
+            age = max(0.0, _safe_numeric(age, 0))
+            add('stream_frames_fresh', age < 20.0,
+                f'Letztes Kamerabild vor {int(age)} Sekunden' if age >= 20.0
+                else 'Kamerabilder treffen ein')
     auto_start = bool(rtsp_cfg.get('autostart_enabled', rtsp_cfg.get('auto_start', False)))
     add('rtsp_autostart', True, 'aktiv' if auto_start else 'deaktiviert',
         state='ok' if auto_start and rtsp_enabled else 'disabled')
@@ -9837,7 +9873,9 @@ def api_system_health():
     camera = {'enabled': rtsp_enabled, 'connected': bool(status.get('connected')),
               'fps': _safe_numeric(status.get('fps'), 0),
               'processed_frames': int(_safe_numeric(status.get('frame_count'), 0)),
-              'detections': int(_safe_numeric(status.get('detection_count'), 0))}
+              'detections': int(_safe_numeric(status.get('detection_count'), 0)),
+              'last_frame_age_seconds': status.get('last_frame_age_seconds'),
+              'reconnect_count': int(_safe_numeric(status.get('reconnect_count'), 0))}
     return jsonify({'ok': summary['healthy'], 'summary': summary,
                     'camera': camera, 'homeassistant_notifications': ha_delivery,
                     'checks': checks, 'status': status,
@@ -10530,7 +10568,7 @@ def api_system_compatibility():
     original_config_sections = ['rtsp', 'detection', 'ocr', 'general', 'history', 'models']
     original_routes = [
         '/', '/dashboard', '/history', '/rtsp-settings', '/settings', '/test', '/live', '/latest', '/legal', '/legal/document/<name>',
-        '/api/stream/start', '/api/stream/stop', '/api/stream/status', '/api/stream/resolution', '/api/stream/feed', '/api/stream/snapshot',
+        '/api/stream/start', '/api/stream/stop', '/api/stream/status', '/api/stream/resolution', '/api/stream/feed', '/api/stream/preview', '/api/stream/snapshot',
         '/api/config', '/api/config/rtsp', '/api/config/detection', '/api/config/ocr', '/api/config/history',
         '/api/history', '/api/history/statistics', '/api/storage/info', '/api/process/image', '/api/latest',
         '/api/system/licenses', '/api/system/live', '/api/system/version', '/api/models/status', '/api/models/reload', '/api/models/available', '/api/models/people/options', '/api/models/people/select', '/api/config/validate', '/api/people/presence', '/api/people/cleanup', '/api/system/info', '/api/process/video', '/api/process/jobs'

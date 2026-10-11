@@ -71,7 +71,8 @@ const pvHealthLabels = {
   people_history_writable: 'Personenspeicher', storage_integrity: 'Datenintegrität',
   sqlite_plates: 'SQLite Kennzeichen', sqlite_people: 'SQLite Personen',
   rtsp_configured: 'RTSP-Einstellungen', rtsp_autostart: 'Kamera-Autostart',
-  stream_connected: 'Kamera-Verbindung', alarm_database: 'Alarmdatenbank',
+  stream_connected: 'Kamera-Verbindung', stream_frames_fresh: 'Kamerabild aktuell',
+  alarm_database: 'Alarmdatenbank',
   ha_notifications: 'Home-Assistant-Benachrichtigungen'
 };
 function pvMakeMonitorTile(label, value) {
@@ -100,7 +101,10 @@ async function loadDiag() {
       pvMakeMonitorTile('RTSP-Kamera', !camera.enabled ? 'Deaktiviert' : (camera.connected ? 'Verbunden' : 'Offline')),
       pvMakeMonitorTile('Bildrate', Number(camera.fps||0).toFixed(1) + ' FPS'),
       pvMakeMonitorTile('Verarbeitete Frames', Number(camera.processed_frames||0).toLocaleString('de-DE')),
-      pvMakeMonitorTile('Erkennungen (Stream)', Number(camera.detections||0).toLocaleString('de-DE'))
+      pvMakeMonitorTile('Erkennungen (Stream)', Number(camera.detections||0).toLocaleString('de-DE')),
+      pvMakeMonitorTile('Letztes Kamerabild', !camera.enabled ? 'Deaktiviert' :
+        (camera.last_frame_age_seconds == null ? 'Noch kein Bild' : `${Math.floor(Number(camera.last_frame_age_seconds))} s`)),
+      pvMakeMonitorTile('Neuverbindungen', Number(camera.reconnect_count||0).toLocaleString('de-DE'))
     );
     const haEl = document.getElementById('haDeliveryMonitor');
     haEl.replaceChildren();

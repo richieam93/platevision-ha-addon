@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = '0.13.9'
+EXPECTED_VERSION = '0.13.11'
 EXPECTED_MODELS = {
     'yolov8n.pt': '31e20dde3def09e2cf938c7be6fe23d9150bbbe503982af13345706515f2ef95',
     'license_plate_detector.pt': '8ec3b254a6c87610f037a90957462cafa11a9c03224e33a28c6a1d1ac2ac51b0',
@@ -97,6 +97,15 @@ require((ROOT/'tools/test_ha_hardening_0137.py').is_file(), 'HA-Zustellhardening
 require((ROOT/'tools/test_ha_queue_monitor_0138.py').is_file(), 'Zustellmonitor-Regression 0.13.8 fehlt')
 require((ROOT/'tools/test_config_defaults_0138.py').is_file(), 'Konfigurationsrollback-Test 0.13.8 fehlt')
 require((ROOT/'tools/test_consent_hardening_0139.py').is_file(), 'Opt-out-/Import-Test 0.13.9 fehlt')
+require((ROOT/'tools/test_runtime_hardening_01310.py').is_file(), 'Langzeit-Stabilitaetstest 0.13.10 fehlt')
+require((ROOT/'tools/qa_browser_camera_01310.py').is_file(), 'Kamera-Browsertest 0.13.10 fehlt')
+require((ROOT/'tools/test_stream_preview_01311.py').is_file(), 'Ingress-Vorschautest 0.13.11 fehlt')
+require((ROOT/'tools/qa_browser_stream_preview_01311.py').is_file(), 'Ingress-Vorschaubrowsertest 0.13.11 fehlt')
+require("@app.route('/api/stream/preview')" in app, 'JPEG-Vorschau-API fehlt')
+require('function checkLiveStreamStatus()' in (ROOT/'platevision/src/templates/live.html').read_text(), 'Getrennter Live-Status fehlt')
+require((ROOT/'PlateVision_0.13.10_Kameramonitor.png').is_file(), 'Kamera-Vorschau 0.13.10 fehlt')
+require('last_frame_age_seconds' in app and 'stream_frames_fresh' in app, 'Kamerabild-Heartbeat 0.13.10 fehlt')
+require('PAYLOAD_INDEX' in (ROOT/'platevision/src/history_sqlite.py').read_text(), 'SQLite-Payload-Abgleich 0.13.10 fehlt')
 require('def _persist_config_update(' in app and 'def _ha_worker_settings(' in app, 'Sicherer Einstellungswechsel 0.13.9 fehlt')
 require('oldest_due_seconds' in (ROOT/'platevision/src/watchlist_alerts.py').read_text(), 'Fällige HA-Queue-Metrik fehlt')
 require('HA-Versand' in (ROOT/'platevision/src/templates/diagnostics.html').read_text(), 'HA-Zustellmonitor fehlt')

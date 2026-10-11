@@ -25,7 +25,7 @@ def main():
     env = Environment(loader=FileSystemLoader(str(TEMPLATES)), undefined=ChainableUndefined, autoescape=True)
     ctx = {
         'config': config, 'app_config': config, 'lang': 'de', 'page': 'dashboard',
-        'app_version': '0.13.9', 'app_license': 'AGPL-3.0-only',
+        'app_version': '0.13.10', 'app_license': 'AGPL-3.0-only',
         'people_menu_enabled': True, 'stream_status': {'status': 'stopped'},
         'entries': [], 'stats': {},
         't': lambda key: key, 'pv_prefix': '',

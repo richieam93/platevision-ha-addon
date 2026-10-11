@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.11 – Schwarzes Livebild in Home Assistant Ingress korrigiert (11.10.2026)
+
+- **Ingress-Livestream:** Neue Einzelbildvorschau `/api/stream/preview`, die echte JPEGs über gewöhnliche HTTP-Antworten liefert. Der blockierende MJPEG-Feed bleibt für direkte Zugriffe bestehen; bei Fehlern wird dort automatisch auf JPEG umgestellt.
+- **Verbindungsanzeige:** Live-Funktionen überschreiben keine gleichnamigen globalen Funktionen aus `base.html` mehr. Die vorher widersprüchlichen Statusanzeigen „Verbinde …“ und „Verbunden“ arbeiten unabhängig und korrekt.
+- **FPS und Fehlerhinweise:** Anzeige real gemessener Kamera-FPS aus der API, lesbare Warte-/Fehlerhinweise statt rein schwarzer Fläche und Pausieren unsichtbarer Tab-Vorschauen.
+- **Datenschutz:** Die Live-Seite zeigt nur noch die anonymisierte RTSP-Hostanzeige, keine Benutzerkennungen, Passwörter oder Stream-Pfade.
+- **Prüfungen:** `tools/test_stream_preview_01311.py` und `tools/qa_browser_stream_preview_01311.py` ergänzen alle vorhandenen Regressionstests. Kein Datenbankumbau und keine Änderungen an den mitgelieferten KI-Modellen. Siehe `AENDERUNGSBERICHT_0.13.11.md`.
+
+## 0.13.10 – Stabiler RTSP-Dauerbetrieb und weniger SQLite-Schreiblast (11.10.2026)
+
+- **SQLite-Historie:** `sync()` vergleicht jetzt wirklich den gespeicherten JSON-Payload statt irrtümlich das letzte Suchindex-Feld. Unveränderte Datensätze werden bei Abgleichen nicht mehr alle überschrieben. Bei einer manuellen Neuordnung werden zuvor temporär verschobene SQL-Ränge dennoch vollständig wiederhergestellt.
+- **RTSP-Erkennung:** Die lokale Duplikatsperre wird erst nach einer erfolgreich gespeicherten Erkennung aktualisiert. Vorübergehende Speicherfehler oder vom HistoryManager abgewiesene Einträge blockieren dadurch keine spätere gültige Erkennung. Die Sperrzeit ist gegen ungültige, negative, unendliche und übergroße Werte abgesichert und verwendet eine monotone Uhr.
+- **RTSP-Fehlermeldungen:** Verbindungsausnahmen geben keine eingebetteten Benutzer, Passwörter, Stream-Pfade oder URL-Token mehr in den Capture-Log aus. Auch abweichend formatierte RTSP- und RTSPS-URLs in FFmpeg/OpenCV-Fehlern werden maskiert.
+- **Kamera-Neuverbindung:** Der Bewegungsfilter verwirft seinen alten Vergleichsframe beim Trennen der Kamera. Ein neuer Stream startet somit mit einem frischen Bewegungs-Referenzbild.
+- **Neue Diagnose:** Alter des zuletzt empfangenen RTSP-Bildes und Anzahl erfolgreicher Neuverbindungen in der Systemdiagnose. Ist die Kamera laut Verbindung aktiv, liefert aber seit mindestens 20 Sekunden kein Bild, erscheint eine eigene Warnung. Bewusst deaktivierte Kameras bleiben fehlerfrei.
+- **Prüfungen:** Neues `tools/test_runtime_hardening_01310.py` mit echten SQLite-Triggern, Fehlersimulation und API-Gesundheitsprüfung; `tools/qa_browser_camera_01310.py` für 320/390/1360 Pixel, Ingress und JavaScript. Keine SQLite-Schemaänderung, keine Änderung an KI-Modellen, Datenpfaden oder Portfreigaben. Details: `AENDERUNGSBERICHT_0.13.10.md` und `LANGZEITBETRIEB_0.13.10_DE.md`.
+
 ## 0.13.9 – Datenschutz bei parallelen Erkennungen und präzisere Zustelldiagnose (11.10.2026)
 
 - **Nebenläufige Erkennungen:** Das Einreihen eines Watchlist-Alarms hält nun dieselbe Sperre wie HA-Empfängerwechsel und globale Opt-outs. Nach dem Abschalten kann kein gerade verarbeiteter Frame unbemerkt eine neue Nachricht an den alten Empfänger einreihen.

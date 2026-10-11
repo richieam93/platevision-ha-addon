@@ -1,5 +1,9 @@
 # PlateVision Add-on Dokumentation
 
+**Update 0.13.11:** Schwarzer MJPEG-Stream in Home Assistant Ingress: neue HTTP-JPEG-Vorschau, Korrektur der globalen JavaScript-Funktionsnamen auf der Live-Seite, echte Kamera-FPS und maskierte RTSP-Adresse. Siehe `RTSP_LIVE_REPARATUR_0.13.11_DE.md` im Repository.
+
+**Update 0.13.10:** Neues Bildalter und Neuverbindungszähler im Kameramonitor (System → Diagnose). Ab 20 Sekunden ohne neues Bild bei bestehender RTSP-Verbindung wird eine Warnung angezeigt. Speicherung unveränderter Historieneinträge ist effizienter; fehlerhafte Speichervorgänge sperren nachfolgende Erkennungen nicht mehr. Details im Repository: `LANGZEITBETRIEB_0.13.10_DE.md`.
+
 PlateVision erkennt Kennzeichen, Fahrzeuge und Personen über RTSP oder Foto-Upload.
 
 Wichtige Bereiche:

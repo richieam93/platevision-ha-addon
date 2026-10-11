@@ -39,6 +39,9 @@ QUERY_COLUMNS = (
 )
 BASE_COLUMNS = ('event_key', 'rank', 'timestamp', 'plate_text', 'plate_normalized',
                 'source', 'event_type', 'confidence', 'payload')
+# _event_values() appends many indexed search fields after the raw JSON.
+# Comparing the last value would compare a search helper instead of the payload.
+PAYLOAD_INDEX = BASE_COLUMNS.index('payload')
 EVENT_COLUMNS = BASE_COLUMNS + tuple(column for column, _ in QUERY_COLUMNS)
 INSERT_SQL = (f"INSERT INTO events ({','.join(EVENT_COLUMNS)}) "
               f"VALUES ({','.join('?' for _ in EVENT_COLUMNS)})")
@@ -503,7 +506,11 @@ class SQLiteHistoryStore:
                     values = self._event_values(row, rank)
                     if key not in existing:
                         conn.execute(INSERT_SQL, values)
-                    elif existing[key][1] != values[-1] or existing[key][0] != rank:
+                    elif (not simple_prepend or existing[key][1] != values[PAYLOAD_INDEX]
+                          or existing[key][0] != rank):
+                        # A non-prepend reorder temporarily moves ALL ranks to
+                        # negative values, so restore every retained row even
+                        # when its final rank equals the original rank.
                         conn.execute(UPDATE_SQL, values[1:] + (key,))
                 self._put_meta(conn, 'revision', self.revision + 1)
                 conn.commit()

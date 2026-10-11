@@ -63,6 +63,9 @@ class RTSPHandler:
         self.last_fps_time = time.time()
         self.fps_frame_count = 0
         self.last_error = None
+        # Monotonic camera-frame heartbeat, independent from model inference.
+        self._last_frame_monotonic = None
+        self._successful_connections = 0
         
         # Frame Queue für Verarbeitung
         self.frame_queue = queue.Queue(maxsize=2)  # latest-frame bias: minimize latency on slow ML hardware
@@ -101,11 +104,30 @@ class RTSPHandler:
             return '(konfiguriert)'
     
     def _safe_error_text(self, exception):
-        """Prevent RTSP userinfo/tokens from showing up in errors or status."""
+        """Redact configured addresses and other RTSP links in library errors."""
+        import re  # also works in minimal standalone RTSP class tests
         message = str(exception)
         url = self.get_rtsp_url()
         if isinstance(url, str) and url:
             message = message.replace(url, self._public_rtsp_url())
+
+        # Native FFmpeg/OpenCV diagnostics may contain a reformatted URL,
+        # rather than the exact configured string. Strip credentials, stream
+        # paths, query parameters and fragments before emitting logs or status.
+        def scrub(match):
+            raw = match.group(0)
+            cleaned = raw.rstrip('),.;')
+            suffix = raw[len(cleaned):]
+            try:
+                parsed = urlsplit(cleaned)
+                host = parsed.netloc.rsplit('@', 1)[-1]
+                if parsed.scheme and host:
+                    return f'{parsed.scheme}://{host}' + suffix
+            except (TypeError, ValueError, AttributeError):
+                pass
+            return '(RTSP-Adresse)' + suffix
+
+        message = re.sub(r"(?i)\brtsps?://[^\s<>\"'\[\]]+", scrub, message)
         return message[:500]
 
     def is_running(self):
@@ -133,7 +155,11 @@ class RTSPHandler:
     
     def get_status(self):
         """Gibt den aktuellen Stream-Status zurück"""
+        frame_age = (None if self._last_frame_monotonic is None else
+                     round(max(0.0, time.monotonic() - self._last_frame_monotonic), 1))
         return {
+            'last_frame_age_seconds': frame_age,
+            'reconnect_count': max(0, self._successful_connections - 1),
             'status': ('running' if self.connected else 'connecting') if self.running else 'stopped',
             'connected': self.connected,
             'fps': self.get_fps(),
@@ -199,6 +225,8 @@ class RTSPHandler:
                 if ret and frame is not None:
                     self.connected = True
                     self.last_error = None
+                    self._last_frame_monotonic = time.monotonic()
+                    self._successful_connections += 1
                     
                     # Stream-Auflösung speichern
                     self.stream_height, self.stream_width = frame.shape[:2]
@@ -243,6 +271,11 @@ class RTSPHandler:
         self.fps = 0
         self.fps_frame_count = 0
         self.last_fps_time = time.time()
+        # Reconnected streams must establish a fresh motion baseline.
+        self._motion_prev_gray = None
+        self._motion_prev_shape = None
+        self._last_motion_time = 0.0
+        self._last_analysis_run_time = 0.0
         with self.frame_lock:
             self.current_frame = None
             self.annotated_frame = None
@@ -703,6 +736,8 @@ class RTSPHandler:
                     self._stop_event.wait(reconnect_delay)
                     continue
                 
+                # Report real captured frames even if the detector is busy.
+                self._last_frame_monotonic = time.monotonic()
                 # Stream-Auflösung aktualisieren falls sich was geändert hat
                 h, w = frame.shape[:2]
                 if w != self.stream_width or h != self.stream_height:
@@ -740,7 +775,7 @@ class RTSPHandler:
                 time.sleep(0.01)
                     
             except Exception as e:
-                logger.error(f"Capture Fehler: {e}")
+                logger.error('Capture Fehler: %s', self._safe_error_text(e))
                 self.last_error = self._safe_error_text(e)
                 self.disconnect()
                 self._stop_event.wait(reconnect_delay)
@@ -972,27 +1007,25 @@ class RTSPHandler:
         if not plate_text or len(plate_text) < 3:
             return
         
-        current_time = time.time()
-        
-        # Duplikat-Timeout
-        timeout = self.config_manager.get('history', 'duplicate_timeout') or 30
+        # A wall-clock jump must never extend the in-memory duplicate window.
+        import math  # keep the method self-contained for lightweight tests
+        current_time = time.monotonic()
+        try:
+            timeout = float(self.config_manager.get('history', 'duplicate_timeout'))
+            if not math.isfinite(timeout):
+                timeout = 30.0
+        except (TypeError, ValueError, OverflowError):
+            timeout = 30.0
+        timeout = max(0.0, min(timeout, 3600.0))
         filter_enabled = self.config_manager.get('history', 'filter_duplicates')
-        
+
         normalized = plate_text.upper().replace(' ', '').replace('-', '')
-        
-        if filter_enabled:
-            if normalized in self.recent_plates:
-                last_seen = self.recent_plates[normalized]
-                if current_time - last_seen < timeout:
-                    logger.debug(f"Duplikat übersprungen: {plate_text}")
-                    return
-        
-        self.recent_plates[normalized] = current_time
-        
-        # Alte Einträge bereinigen
-        self.recent_plates = {k: v for k, v in self.recent_plates.items() 
-                             if current_time - v < timeout * 2}
-        
+        last_seen = self.recent_plates.get(normalized)
+        if (filter_enabled and timeout > 0 and last_seen is not None
+                and 0 <= current_time - last_seen < timeout):
+            logger.debug("Duplikat übersprungen: %s", plate_text)
+            return
+
         # Entry für Historie
         entry = {
             "plate_text": plate_text,
@@ -1026,6 +1059,11 @@ class RTSPHandler:
         saved_entry = self.history_manager.add_entry(entry, check_duplicate=True)
         
         if saved_entry:
+            # A failed SQLite write or HistoryManager duplicate rejection must
+            # not suppress a later legitimate capture of the same plate.
+            self.recent_plates[normalized] = current_time
+            self.recent_plates = {key: seen for key, seen in self.recent_plates.items()
+                                  if 0 <= current_time - seen < max(1.0, timeout * 2)}
             self.detection_count += 1
             logger.info(f"RTSP Erkennung: {plate_text} (Konfidenz: {detection.get('confidence', 0):.2f})")
             
