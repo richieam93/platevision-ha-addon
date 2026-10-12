@@ -72,6 +72,7 @@ const pvHealthLabels = {
   sqlite_plates: 'SQLite Kennzeichen', sqlite_people: 'SQLite Personen',
   rtsp_configured: 'RTSP-Einstellungen', rtsp_autostart: 'Kamera-Autostart',
   stream_connected: 'Kamera-Verbindung', stream_frames_fresh: 'Kamerabild aktuell',
+  analysis_frames_fresh: 'KI-Bild aktuell',
   alarm_database: 'Alarmdatenbank',
   ha_notifications: 'Home-Assistant-Benachrichtigungen'
 };
@@ -104,7 +105,12 @@ async function loadDiag() {
       pvMakeMonitorTile('Erkennungen (Stream)', Number(camera.detections||0).toLocaleString('de-DE')),
       pvMakeMonitorTile('Letztes Kamerabild', !camera.enabled ? 'Deaktiviert' :
         (camera.last_frame_age_seconds == null ? 'Noch kein Bild' : `${Math.floor(Number(camera.last_frame_age_seconds))} s`)),
-      pvMakeMonitorTile('Neuverbindungen', Number(camera.reconnect_count||0).toLocaleString('de-DE'))
+      pvMakeMonitorTile('Neuverbindungen', Number(camera.reconnect_count||0).toLocaleString('de-DE')),
+      pvMakeMonitorTile('Angezeigtes Bild', {annotated:'KI-Overlay',raw:'Kamerabild',none:'Kein Bild'}[camera.preview_source] || 'Unbekannt'),
+      pvMakeMonitorTile('Letzte KI-Bildausgabe', camera.last_analysis_frame_age_seconds == null
+        ? 'Noch kein Bild' : `${Math.floor(Number(camera.last_analysis_frame_age_seconds))} s`),
+      pvMakeMonitorTile('Bilder im Analysepuffer', Number(camera.queued_frames||0).toLocaleString('de-DE')),
+      pvMakeMonitorTile('Übersprungene Pufferbilder', Number(camera.discarded_frames||0).toLocaleString('de-DE'))
     );
     const haEl = document.getElementById('haDeliveryMonitor');
     haEl.replaceChildren();

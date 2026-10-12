@@ -26,6 +26,10 @@ SRC=ROOT/'platevision/src'
 class PreviewStream:
     def __init__(self):
         self.frame = None
+        self.age = None
+
+    def get_status(self):
+        return {'last_frame_age_seconds': self.age}
 
     def get_current_frame(self):
         return None if self.frame is None else self.frame.copy()
@@ -55,6 +59,13 @@ def check_preview_endpoint():
         decoded=cv2.imdecode(np.frombuffer(response.data,dtype=np.uint8),cv2.IMREAD_COLOR)
         assert decoded is not None and decoded.shape[:2]==(720,960),decoded.shape
         assert decoded[30,30,1]>decoded[30,30,0], decoded[30,30]
+        # A frozen camera must not serve its last image as a live capture.
+        stream.age = 21.0
+        frozen = scope['api_stream_preview']()
+        assert frozen.status_code == 204 and not frozen.data
+        assert 'no-store' in frozen.headers.get('Cache-Control', '')
+        stream.age = 0.5
+        assert scope['api_stream_preview']().status_code == 200
     source=(SRC/'templates/live.html').read_text()
     assert 'config.rtsp.url' not in source, 'RTSP credentials must not appear in Live markup'
     assert 'stream_status.url' in source

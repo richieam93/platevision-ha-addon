@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-ARG BUILD_VERSION=0.13.11
+ARG BUILD_VERSION=0.13.14
 ARG BUILD_ARCH=amd64
 
 LABEL org.opencontainers.image.title="PlateVision" \

@@ -294,7 +294,7 @@ function imageBadges(row) {
 }
 function historyThumb(row) {
     const urls = row.image_urls || {};
-    const src = urls.crop || urls.annotated || urls.full_frame;
+    const src = pvSafeImageUrl(urls.crop) || pvSafeImageUrl(urls.annotated) || pvSafeImageUrl(urls.full_frame);
     return src ? `<img class="people-history-thumb" src="${escapeHtml(src)}" alt="Person">` : '<div class="people-history-thumb placeholder"><i class="fas fa-user"></i></div>';
 }
 async function loadPeopleStats() {
@@ -364,7 +364,7 @@ async function loadPeopleSessions() {
     const rows = data.sessions || [];
     document.getElementById('sessionMeta').textContent = `${data.total || 0} Sitzungen · Trennung nach ${data.session_gap_minutes || 5} Minuten Pause`;
     document.getElementById('sessionRows').innerHTML = rows.length ? rows.map(row => `
-        <tr><td>${row.preview ? `<img class="people-history-thumb" src="${escapeHtml(row.preview)}" alt="Person">` : '<div class="people-history-thumb placeholder"><i class="fas fa-user"></i></div>'}</td>
+        <tr><td>${pvSafeImageUrl(row.preview) ? `<img class="people-history-thumb" src="${escapeHtml(pvSafeImageUrl(row.preview))}" alt="Person">` : '<div class="people-history-thumb placeholder"><i class="fas fa-user"></i></div>'}</td>
         <td><div>${escapeHtml(formatDate(row.first_seen))}</div><small class="text-secondary">bis ${escapeHtml(formatDate(row.last_seen))}</small></td>
         <td>${durationText(row.duration_seconds)}</td><td><code>${escapeHtml(row.track_id ?? '-')}</code></td><td>${row.event_count}</td><td>${row.counted_events}</td>
         <td>${Object.entries(row.directions || {}).map(([key,value]) => `${escapeHtml(dirText(key))}: ${value}`).join('<br>') || '-'}</td>
@@ -416,9 +416,27 @@ async function openPeopleEvent(id) {
     document.getElementById('peopleEventLabel').value = row.label || '';
     document.getElementById('peopleEventNote').value = row.note || '';
     document.getElementById('peopleEventReview').value = row.review_status || 'unreviewed';
+    // The API deliberately returns root-relative paths. Home Assistant Ingress
+    // requires adding the active session prefix to both the image and its link.
     const urls = row.image_urls || {};
-    const imageEntries = [['crop','Personen-Crop'],['annotated','Annotiert'],['full_frame','Vollbild']].filter(([key]) => urls[key]);
-    document.getElementById('peopleEventImages').innerHTML = imageEntries.length ? imageEntries.map(([key,label]) => `<a href="${escapeHtml(urls[key])}" target="_blank" class="people-event-image"><img src="${escapeHtml(urls[key])}" alt="${label}"><span>${label}</span></a>`).join('') : '<div class="alert alert-secondary">Keine Bilder gespeichert.</div>';
+    const imageEntries = [['crop','Personen-Crop'],['annotated','Annotiert'],['full_frame','Vollbild']]
+        .map(([key, label]) => ({label, src: pvSafeImageUrl(urls[key])}))
+        .filter(entry => entry.src);
+    const imagesPanel = document.getElementById('peopleEventImages');
+    imagesPanel.innerHTML = imageEntries.length
+        ? imageEntries.map(({src, label}) => `<a href="${escapeHtml(src)}" target="_blank" rel="noopener noreferrer" class="people-event-image"><img src="${escapeHtml(src)}" alt="${label}"><span>${label}</span></a>`).join('')
+        : '<div class="alert alert-secondary">Keine Bilder gespeichert.</div>';
+    // History records can outlive image files after retention/backup cleanup.
+    // Report a missing file instead of displaying a broken image icon.
+    imagesPanel.querySelectorAll('img').forEach(img => img.addEventListener('error', () => {
+        const card = img.closest('.people-event-image');
+        if (!card) return;
+        const notice = document.createElement('div');
+        notice.className = 'alert alert-warning mb-0';
+        notice.setAttribute('role', 'status');
+        notice.textContent = `${img.alt || 'Personenbild'} nicht verfügbar. Bitte Bildarchiv und Aufbewahrungsfrist prüfen.`;
+        card.replaceWith(notice);
+    }, {once: true}));
     document.getElementById('peopleEventMetadata').innerHTML = `
         <div class="people-summary-row"><span>Zeit</span><strong>${escapeHtml(formatDate(row.timestamp))}</strong></div>
         <div class="people-summary-row"><span>Ereignis</span><strong>${escapeHtml(eventText(row.event_type))}</strong></div>
@@ -502,12 +520,18 @@ function cleanupPeopleHistory() {
 
 function personCropSrc(row) {
     if (!row) return '';
-    if (row.person_image_base64) return `data:image/jpeg;base64,${row.person_image_base64}`;
-    if (row.crop_image_base64) return `data:image/jpeg;base64,${row.crop_image_base64}`;
-    const urls = row.image_urls || row.images || {};
-    if (urls.crop && String(urls.crop).startsWith('/')) return urls.crop;
-    if (urls.crop) return `{{ pv_prefix }}/api/people/images/${urls.crop}`;
-    return '';
+    for (const data of [row.person_image_base64, row.crop_image_base64]) {
+        if (typeof data === 'string' && data.length && /^[A-Za-z0-9+/=]+$/.test(data)) {
+            return `data:image/jpeg;base64,${data}`;
+        }
+    }
+    const urls = row.image_urls || {};
+    const direct = pvSafeImageUrl(urls.crop) || pvSafeImageUrl(urls.annotated) || pvSafeImageUrl(urls.full_frame);
+    if (direct) return direct;
+    const relative = (row.images || {}).crop;
+    if (!relative || String(relative).startsWith('/')) return '';
+    const url = '/api/people/images/' + String(relative).split('/').map(encodeURIComponent).join('/');
+    return pvSafeImageUrl(url);
 }
 function peopleCropGalleryFromRows(rows) {
     rows = rows || [];
@@ -515,7 +539,7 @@ function peopleCropGalleryFromRows(rows) {
     return `<div class="people-image-gallery">${rows.map((row, idx) => {
         const src = personCropSrc(row);
         return `<div class="people-image-card">
-            ${src ? `<img src="${src}" alt="Person ${idx + 1}">` : '<div class="people-image-placeholder">Kein Personen-Crop</div>'}
+            ${src ? `<img src="${escapeHtml(src)}" alt="Person ${idx + 1}">` : '<div class="people-image-placeholder">Kein Personen-Crop</div>'}
             <div class="people-image-meta"><strong>Person ${row.track_id ?? idx + 1}</strong><br>${dirText(row.direction || 'unknown')} · ${pct(row.confidence || 0)}</div>
         </div>`;
     }).join('')}</div>`;

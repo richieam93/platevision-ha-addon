@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = '0.13.11'
+EXPECTED_VERSION = '0.13.14'
 EXPECTED_MODELS = {
     'yolov8n.pt': '31e20dde3def09e2cf938c7be6fe23d9150bbbe503982af13345706515f2ef95',
     'license_plate_detector.pt': '8ec3b254a6c87610f037a90957462cafa11a9c03224e33a28c6a1d1ac2ac51b0',
@@ -101,6 +101,14 @@ require((ROOT/'tools/test_runtime_hardening_01310.py').is_file(), 'Langzeit-Stab
 require((ROOT/'tools/qa_browser_camera_01310.py').is_file(), 'Kamera-Browsertest 0.13.10 fehlt')
 require((ROOT/'tools/test_stream_preview_01311.py').is_file(), 'Ingress-Vorschautest 0.13.11 fehlt')
 require((ROOT/'tools/qa_browser_stream_preview_01311.py').is_file(), 'Ingress-Vorschaubrowsertest 0.13.11 fehlt')
+require((ROOT/'tools/test_frame_freshness_01312.py').is_file(), 'RTSP-Frische-/Abbruchtest 0.13.12 fehlt')
+require((ROOT/'tools/test_mjpeg_limits_01312.py').is_file(), 'MJPEG-Limittest 0.13.12 fehlt')
+require((ROOT/'tools/test_rtsp_sessions_01313.py').is_file(), 'RTSP-Reconnect-/Persistenztest 0.13.13 fehlt')
+require((ROOT/'tools/qa_browser_live_settings_01313.py').is_file(), 'Browser-Test fuer serielle Slider-Speicherung 0.13.13 fehlt')
+require((ROOT/'tools/qa_browser_diagnostics_01313.py').is_file(), 'Kamera-Pufferdiagnose-Browsertest 0.13.13 fehlt')
+require('discarded_frames' in app and 'queued_frames' in app, 'Kamera-Warteschlangenmetrik 0.13.13 fehlt')
+require((ROOT/'tools/qa_browser_live_race_01312.py').is_file(), 'Chromium-Vorschau-Abbruchtest 0.13.12 fehlt')
+require('last_analysis_frame_age_seconds' in app and 'preview_source' in app, 'Analysebild-Frische-API 0.13.12 fehlt')
 require("@app.route('/api/stream/preview')" in app, 'JPEG-Vorschau-API fehlt')
 require('function checkLiveStreamStatus()' in (ROOT/'platevision/src/templates/live.html').read_text(), 'Getrennter Live-Status fehlt')
 require((ROOT/'PlateVision_0.13.10_Kameramonitor.png').is_file(), 'Kamera-Vorschau 0.13.10 fehlt')
@@ -153,6 +161,7 @@ require((ROOT/'platevision/src/templates/people_gallery.html').is_file(), 'Templ
 require("'image_history_retention_days': 10" in app, 'Standard-Bildaufbewahrung ist nicht 10 Tage')
 require("'max_history_entries': 20000" in app, 'Personen-Historienlimit fehlt')
 require((ROOT/'CHANGELOG.md').read_text(encoding='utf-8').count(f'## {EXPECTED_VERSION}') == 1, 'CHANGELOG enthält die aktuelle Version mehrfach')
+require((ROOT/'tools/qa_browser_people_images_01314.py').is_file(), 'Personenbild-Ingress-Browsertest 0.13.14 fehlt')
 require("@app.route('/api/people/history/bulk-delete', methods=['POST'])" in app, 'Personen-Sammellöschung fehlt')
 require("methods=['GET', 'PATCH']" in app and "/api/people/history/<event_id>" in app, 'Personen-Detail-/Review-Route fehlt')
 require('richieam93' in (ROOT/'NOTICE.md').read_text(encoding='utf-8'), 'Projektpseudonym fehlt in NOTICE.md')

@@ -72,7 +72,7 @@ def run():
             page.on('pageerror',lambda err:errors.append(str(err)))
             html=render('live').replace('</head>',MOCK+'</head>',1).replace("window.__previewMode='ok'","window.__previewMode='missing'")
             page.set_content(html,wait_until='domcontentloaded')
-            page.locator('#offlineTitle').get_by_text('Warte auf Kamerabilder').wait_for(timeout=10000)
+            page.locator('#offlineTitle').get_by_text('Warte auf neue Kamerabilder').wait_for(timeout=10000)
             assert page.locator('#offlineOverlay').is_visible()
             assert not errors,errors
             page.close()

@@ -4,7 +4,7 @@
 """
 PlateVision - License Plate Detection System
 Flask-based Web Application with RTSP Support
-Version 0.13.11 - reliable Home Assistant Ingress camera preview
+Version 0.13.14 - RTSP session isolation and persistent settings feedback
 """
 
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory, send_file, redirect, url_for, g, has_request_context
@@ -32,7 +32,7 @@ import shutil
 from contextlib import contextmanager
 from functools import wraps
 
-APP_VERSION = '0.13.11'
+APP_VERSION = '0.13.14'
 APP_EDITION = 'Home Assistant notifications, Watchlist alerts & Ingress'
 APP_LICENSE = 'AGPL-3.0-only'
 APP_LICENSE_SINCE = '0.9.0'
@@ -5417,33 +5417,61 @@ def api_rtsp_analysis_area():
         config_manager.config.setdefault('rtsp', {})['analysis_area'] = normalized
         config_manager.config['rtsp']['resolution'] = {'width': coord_w, 'height': coord_h}
         config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
-        config_manager.save_config()
+        # ConfigManager rolls back a failed atomic disk write. Do not report
+        # an unsaved polygon as successful (it would vanish after restart).
+        if not config_manager.save_config():
+            return jsonify({'success': False,
+                            'error': 'Analysebereich konnte nicht gespeichert werden'}), 503
         return jsonify({'success': True, 'analysis_area': config_manager.config['rtsp']['analysis_area'], 'geometry': _current_stream_geometry()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/stream/feed')
 def stream_feed():
+    """Bound the work per direct-MJPEG client, including offline waiting.
+
+    HA Ingress uses single-frame JPEG requests; direct MJPEG remains available,
+    but must not encode synthetic black frames 30 times per second for each
+    browser tab while the camera is offline. Keep the legacy MIME format.
+    """
     raw_mode = str(request.args.get('raw', '')).lower() in ('1', 'true', 'yes')
+
     def generate():
+        waiting_jpeg = None
         while True:
             frame = stream_manager.get_raw_frame() if raw_mode else stream_manager.get_current_frame()
-            if frame is not None:
-                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                frame_bytes = buffer.tobytes()
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            if frame is None:
+                if waiting_jpeg is None:
+                    placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                    cv2.putText(placeholder, 'Warte auf Kamerabilder...', (95, 240),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                    encoded_ok, encoded = cv2.imencode('.jpg', placeholder, [cv2.IMWRITE_JPEG_QUALITY, 65])
+                    if not encoded_ok:
+                        break
+                    waiting_jpeg = encoded.tobytes()
+                frame_bytes = waiting_jpeg
+                interval = 1.0  # Offline clients need only one status image/s.
             else:
-                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(placeholder, "Warte auf Stream...", (150, 240),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                _, buffer = cv2.imencode('.jpg', placeholder)
-                frame_bytes = buffer.tobytes()
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            time.sleep(0.033)
-    
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+                try:
+                    encoded_ok, encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    if not encoded_ok:
+                        raise ValueError('Frame could not be encoded')
+                    frame_bytes = encoded.tobytes()
+                except (cv2.error, ValueError, TypeError):
+                    logger.warning('MJPEG-Bild konnte nicht erzeugt werden')
+                    time.sleep(0.5)
+                    continue
+                interval = 0.1  # Max. 10 JPEG/s/client reduces encoding CPU.
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n'
+                   b'Cache-Control: no-store\r\n\r\n' + frame_bytes + b'\r\n')
+            time.sleep(interval)
+
+    response = Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    response.headers['Cache-Control'] = 'no-store, max-age=0'
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response
+
 
 @app.route('/api/stream/preview')
 def api_stream_preview():
@@ -5452,9 +5480,19 @@ def api_stream_preview():
     Unlike the ROI calibration snapshot, this uses the current annotated frame.
     A missing camera frame is reported as 204, never as a simulated live image.
     """
-    frame = stream_manager.get_current_frame()
+    # Never label a frozen old image "live" when RTSP stopped supplying
+    # frames but the capture socket is still reported as connected.
+    state = stream_manager.get_status()
+    age = state.get('last_frame_age_seconds')
+    try:
+        stale = age is not None and float(age) >= 20.0
+    except (ValueError, TypeError, OverflowError):
+        stale = False
+    frame = None if stale else stream_manager.get_current_frame()
     if frame is None:
-        return Response(status=204)
+        response = Response(status=204)
+        response.headers['Cache-Control'] = 'no-store, max-age=0'
+        return response
     try:
         height, width = frame.shape[:2]
         # Browser previews do not need the full RTSP resolution. Restricting
@@ -5712,8 +5750,8 @@ def api_save_rtsp_config():
         
         config_manager.config['rtsp'].update(data)
         config_manager.config = config_manager._normalize_analysis_area(config_manager.config)
-        config_manager.save_config()
-        
+        if not config_manager.save_config():
+            return jsonify({'success': False, 'error': 'RTSP-Einstellungen konnten nicht gespeichert werden'}), 503
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
@@ -5725,7 +5763,8 @@ def api_save_detection_config():
             return jsonify(config_manager.config.get('detection', {}))
         data = request.json
         config_manager.config['detection'].update(data)
-        config_manager.save_config()
+        if not config_manager.save_config():
+            return jsonify({'success': False, 'error': 'Erkennungseinstellungen konnten nicht gespeichert werden'}), 503
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
@@ -5759,7 +5798,8 @@ def api_save_history_config():
             return jsonify(config_manager.config.get('history', {}))
         data = request.json
         config_manager.config['history'].update(data)
-        config_manager.save_config()
+        if not config_manager.save_config():
+            return jsonify({'success': False, 'error': 'Historieneinstellungen konnten nicht gespeichert werden'}), 503
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
@@ -5773,7 +5813,8 @@ def api_save_storage_config():
         data = request.get_json(silent=True) or {}
         config_manager.config.setdefault('storage', {})
         config_manager.config['storage'].update(data)
-        config_manager.save_config()
+        if not config_manager.save_config():
+            return jsonify({'success': False, 'error': 'Speichereinstellungen konnten nicht gespeichert werden'}), 503
         return jsonify({'success': True, 'config': _public_config()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
@@ -9820,6 +9861,14 @@ def api_system_health():
             add('stream_frames_fresh', age < 20.0,
                 f'Letztes Kamerabild vor {int(age)} Sekunden' if age >= 20.0
                 else 'Kamerabilder treffen ein')
+        # The camera can be healthy while inference is stalled. A healthy
+        # preview falls back to raw frames, while diagnosis exposes the lag.
+        analysis_age = status.get('last_analysis_frame_age_seconds')
+        if connected and analysis_age is not None:
+            analysis_age = max(0.0, _safe_numeric(analysis_age, 0))
+            add('analysis_frames_fresh', analysis_age < 20.0,
+                (f'KI-Analysebild vor {int(analysis_age)} Sekunden aktualisiert' if analysis_age >= 20.0
+                 else 'KI-Analysebilder werden aktualisiert'))
     auto_start = bool(rtsp_cfg.get('autostart_enabled', rtsp_cfg.get('auto_start', False)))
     add('rtsp_autostart', True, 'aktiv' if auto_start else 'deaktiviert',
         state='ok' if auto_start and rtsp_enabled else 'disabled')
@@ -9875,6 +9924,10 @@ def api_system_health():
               'processed_frames': int(_safe_numeric(status.get('frame_count'), 0)),
               'detections': int(_safe_numeric(status.get('detection_count'), 0)),
               'last_frame_age_seconds': status.get('last_frame_age_seconds'),
+              'last_analysis_frame_age_seconds': status.get('last_analysis_frame_age_seconds'),
+              'preview_source': status.get('preview_source', 'none'),
+              'queued_frames': int(_safe_numeric(status.get('queued_frames'), 0)),
+              'discarded_frames': int(_safe_numeric(status.get('discarded_frames'), 0)),
               'reconnect_count': int(_safe_numeric(status.get('reconnect_count'), 0))}
     return jsonify({'ok': summary['healthy'], 'summary': summary,
                     'camera': camera, 'homeassistant_notifications': ha_delivery,

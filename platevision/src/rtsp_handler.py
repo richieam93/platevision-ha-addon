@@ -65,7 +65,12 @@ class RTSPHandler:
         self.last_error = None
         # Monotonic camera-frame heartbeat, independent from model inference.
         self._last_frame_monotonic = None
+        self._last_annotated_monotonic = None
         self._successful_connections = 0
+        # Every camera connection owns a generation. Frames from a prior
+        # connection must never be published after an RTSP reconnect.
+        self._stream_generation = 0
+        self._dropped_frames = 0
         
         # Frame Queue für Verarbeitung
         self.frame_queue = queue.Queue(maxsize=2)  # latest-frame bias: minimize latency on slow ML hardware
@@ -153,13 +158,36 @@ class RTSPHandler:
             'height': self.stream_height
         }
     
+    def _preview_source_locked(self):
+        """Prefer annotations, but never show a frozen inference result forever.
+
+        The capture thread continues receiving fresh frames while YOLO is slow
+        or loading. After 2.5 seconds, show the most recent raw frame instead
+        of an obsolete annotated image. Called with frame_lock held.
+        """
+        if self.annotated_frame is not None:
+            if (self.current_frame is None or self._last_frame_monotonic is None or
+                    self._last_annotated_monotonic is None or
+                    self._last_frame_monotonic - self._last_annotated_monotonic <= 2.5):
+                return 'annotated'
+        return 'raw' if self.current_frame is not None else 'none'
+
     def get_status(self):
         """Gibt den aktuellen Stream-Status zurück"""
-        frame_age = (None if self._last_frame_monotonic is None else
-                     round(max(0.0, time.monotonic() - self._last_frame_monotonic), 1))
+        now = time.monotonic()
+        with self.frame_lock:
+            last_frame = self._last_frame_monotonic
+            last_analysis = self._last_annotated_monotonic
+            source = self._preview_source_locked()
+        frame_age = (None if last_frame is None else round(max(0.0, now - last_frame), 1))
+        analysis_age = (None if last_analysis is None else round(max(0.0, now - last_analysis), 1))
         return {
             'last_frame_age_seconds': frame_age,
+            'last_analysis_frame_age_seconds': analysis_age,
+            'preview_source': source,
             'reconnect_count': max(0, self._successful_connections - 1),
+            'queued_frames': self.frame_queue.qsize(),
+            'discarded_frames': self._dropped_frames,
             'status': ('running' if self.connected else 'connecting') if self.running else 'stopped',
             'connected': self.connected,
             'fps': self.get_fps(),
@@ -174,11 +202,12 @@ class RTSPHandler:
         }
     
     def get_current_frame(self):
-        """Aktuelles Frame (annotiert) zurückgeben"""
+        """Show annotated frames while fresh, otherwise the current camera feed."""
         with self.frame_lock:
-            if self.annotated_frame is not None:
+            source = self._preview_source_locked()
+            if source == 'annotated':
                 return self.annotated_frame.copy()
-            elif self.current_frame is not None:
+            if source == 'raw':
                 return self.current_frame.copy()
         return None
     
@@ -225,14 +254,15 @@ class RTSPHandler:
                 if ret and frame is not None:
                     self.connected = True
                     self.last_error = None
-                    self._last_frame_monotonic = time.monotonic()
                     self._successful_connections += 1
-                    
+
                     # Stream-Auflösung speichern
                     self.stream_height, self.stream_width = frame.shape[:2]
-                    
+
                     with self.frame_lock:
-                        self.current_frame = frame
+                        self._stream_generation += 1
+                        self.current_frame = frame.copy()
+                        self._last_frame_monotonic = time.monotonic()
                     
                     logger.info("RTSP Verbindung hergestellt: %s - Auflösung: %sx%s", self._public_rtsp_url(), self.stream_width, self.stream_height)
                     return True
@@ -277,8 +307,13 @@ class RTSPHandler:
         self._last_motion_time = 0.0
         self._last_analysis_run_time = 0.0
         with self.frame_lock:
+            # Immediately invalidate in-flight processing from this camera
+            # before clearing its images or draining queued frames.
+            self._stream_generation += 1
             self.current_frame = None
             self.annotated_frame = None
+            self._last_frame_monotonic = None
+            self._last_annotated_monotonic = None
         self._clear_frame_queue()
         logger.info("RTSP Verbindung getrennt")
     
@@ -298,6 +333,7 @@ class RTSPHandler:
             self._stop_event = threading.Event()
             self.running = True
             self.last_error = None
+            self._dropped_frames = 0
             self._clear_frame_queue()
             self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
             self.process_thread = threading.Thread(target=self._process_loop, daemon=True)
@@ -328,6 +364,8 @@ class RTSPHandler:
                 with self.frame_lock:
                     self.current_frame = None
                     self.annotated_frame = None
+                    self._last_frame_monotonic = None
+                    self._last_annotated_monotonic = None
             else:
                 self.disconnect()
             if pending:
@@ -731,13 +769,18 @@ class RTSPHandler:
                 ret, frame = self.cap.read()
                 
                 if not ret or frame is None:
-                    logger.warning("Frame konnte nicht gelesen werden, reconnecting...")
-                    self.disconnect()
-                    self._stop_event.wait(reconnect_delay)
+                    if self.running and not self._stop_event.is_set():
+                        logger.warning("Frame konnte nicht gelesen werden, reconnecting...")
+                        self.disconnect()
+                        self._stop_event.wait(reconnect_delay)
+                    if not self.running or self._stop_event.is_set():
+                        break
                     continue
-                
-                # Report real captured frames even if the detector is busy.
-                self._last_frame_monotonic = time.monotonic()
+                # A native read() may finish after stop() returned. Do not
+                # repopulate a cleared buffer while the old worker exits.
+                if not self.running or self._stop_event.is_set():
+                    break
+
                 # Stream-Auflösung aktualisieren falls sich was geändert hat
                 h, w = frame.shape[:2]
                 if w != self.stream_width or h != self.stream_height:
@@ -745,24 +788,30 @@ class RTSPHandler:
                     self.stream_height = h
                     logger.info(f"Stream-Auflösung geändert: {w}x{h}")
                 
-                # Frame speichern
+                # Store a precise capture timestamp and connection identity
+                # *with* each queued image. The processing thread may dequeue
+                # it much later; its start time is not the frame's age.
                 with self.frame_lock:
+                    captured_at = time.monotonic()
+                    generation = self._stream_generation
                     self.current_frame = frame.copy()
-                
+                    self._last_frame_monotonic = captured_at
+
                 # Never build up seconds of stale frames during slow inference.
                 # If full, discard the oldest image rather than the newest one.
-                latest_frame = frame.copy()
+                frame_packet = (frame.copy(), captured_at, generation)
                 try:
-                    self.frame_queue.put_nowait(latest_frame)
+                    self.frame_queue.put_nowait(frame_packet)
                 except queue.Full:
                     try:
                         self.frame_queue.get_nowait()
+                        self._dropped_frames += 1
                     except queue.Empty:
                         pass
                     try:
-                        self.frame_queue.put_nowait(latest_frame)
+                        self.frame_queue.put_nowait(frame_packet)
                     except queue.Full:
-                        pass  # consumer may race us; try again next frame
+                        self._dropped_frames += 1  # newer capture will retry
                 
                 # FPS berechnen
                 self.fps_frame_count += 1
@@ -783,29 +832,47 @@ class RTSPHandler:
         # stop() call. Never close a handle while native read() is active.
         self.disconnect()
 
+    def _configured_process_interval(self):
+        """Read the live slider safely, including zero, NaN and corrupt config."""
+        try:
+            value = self.config_manager.get('detection', 'process_interval')
+            interval = float(0.5 if value is None else value)
+            if not np.isfinite(interval):
+                return 0.5
+            return max(0.01, min(10.0, interval))
+        except (TypeError, ValueError, OverflowError):
+            return 0.5
+
     def _process_loop(self):
         """Verarbeitungs-Schleife für Nummernschilderkennung"""
-        try:
-            process_interval = float(self.config_manager.get('detection', 'process_interval') or 0.5)
-            if process_interval != process_interval or abs(process_interval) == float('inf'):
-                process_interval = 0.5
-        except (TypeError, ValueError, OverflowError):
-            process_interval = 0.5
-        process_interval = max(0.01, min(10.0, process_interval))
+        process_interval = self._configured_process_interval()
 
         while self.running:
             try:
                 # Frame aus Queue holen
                 try:
-                    frame = self.frame_queue.get(timeout=1)
+                    packet = self.frame_queue.get(timeout=1)
                 except queue.Empty:
                     continue
-                
-                if frame is None:
+
+                if packet is None:
                     continue
-                
+                if (isinstance(packet, tuple) and len(packet) == 3 and
+                        isinstance(packet[0], np.ndarray)):
+                    frame, analysis_source_time, source_generation = packet
+                else:
+                    # Compatibility with older callers and synthetic test
+                    # producers that enqueue only a NumPy image.
+                    frame = packet
+                    analysis_source_time = time.monotonic()
+                    with self.frame_lock:
+                        source_generation = self._stream_generation
+
+                if (not self.running or self._stop_event.is_set() or
+                        source_generation != self._stream_generation):
+                    continue
                 frame_h, frame_w = frame.shape[:2]
-                
+
                 # Erkennung durchführen
                 if self.detector:
                     # Modelle laden falls nötig
@@ -837,9 +904,16 @@ class RTSPHandler:
                             self._draw_people_line(annotated, area_info)
                             cv2.putText(annotated, "CPU-Sparmodus: keine Bewegung im Strassenbereich", (10, 30),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+                            if not self.running or self._stop_event.is_set():
+                                break
                             with self.frame_lock:
+                                if (not self.running or self._stop_event.is_set() or
+                                        source_generation != self._stream_generation):
+                                    continue
                                 self.annotated_frame = annotated
+                                self._last_annotated_monotonic = analysis_source_time
                             self.frame_count += 1
+                            process_interval = self._configured_process_interval()
                             self._stop_event.wait(process_interval)
                             continue
 
@@ -959,23 +1033,30 @@ class RTSPHandler:
                             cv2.putText(annotated, area_text, (10, 60),
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
                         
-                        # Annotiertes Frame speichern
-                        with self.frame_lock:
-                            self.annotated_frame = annotated
-                        
-                        self.frame_count += 1
-                        
-                        # A stop may have arrived during slow model inference.
-                        # Do not write detections from an obsolete camera session.
+                        # Stop may arrive during slow inference. Never publish
+                        # old camera images or detections after the stream ends.
                         if not self.running or self._stop_event.is_set():
                             break
+                        with self.frame_lock:
+                            if (not self.running or self._stop_event.is_set() or
+                                        source_generation != self._stream_generation):
+                                continue
+                            self.annotated_frame = annotated
+                            self._last_annotated_monotonic = analysis_source_time
+                        self.frame_count += 1
 
-                        # Erkennungen verarbeiten
+                        # Erkennungen verarbeiten only for this connection.
                         for detection in results.get('detections', []):
+                            if (not self.running or self._stop_event.is_set() or
+                                    source_generation != self._stream_generation):
+                                break
                             if detection.get('plate_text'):
                                 self._handle_detection(detection, results)
 
                         for person in results.get('people', []):
+                            if (not self.running or self._stop_event.is_set() or
+                                    source_generation != self._stream_generation):
+                                break
                             self._handle_person_detection(person, results, frame=frame, annotated=annotated)
                                 
                     except Exception as e:
@@ -984,15 +1065,17 @@ class RTSPHandler:
                         traceback.print_exc()
                 else:
                     # Wenn kein Detector, nur Frame anzeigen
+                    if not self.running or self._stop_event.is_set():
+                        break
                     with self.frame_lock:
+                        if (not self.running or self._stop_event.is_set() or
+                                        source_generation != self._stream_generation):
+                            continue
                         self.annotated_frame = frame
-                
-                # Live changes to the interval should apply without an RTSP restart.
-                try:
-                    updated = float(self.config_manager.get('detection', 'process_interval') or 0.5)
-                    process_interval = max(0.01, min(10.0, updated)) if np.isfinite(updated) else 0.5
-                except (ValueError, TypeError, OverflowError):
-                    process_interval = 0.5
+                        self._last_annotated_monotonic = analysis_source_time
+
+                # The UI slider must also take effect without an RTSP restart.
+                process_interval = self._configured_process_interval()
                 self._stop_event.wait(process_interval)
 
             except Exception as e:
@@ -1062,9 +1145,16 @@ class RTSPHandler:
             # A failed SQLite write or HistoryManager duplicate rejection must
             # not suppress a later legitimate capture of the same plate.
             self.recent_plates[normalized] = current_time
-            self.recent_plates = {key: seen for key, seen in self.recent_plates.items()
-                                  if 0 <= current_time - seen < max(1.0, timeout * 2)}
             self.detection_count += 1
+            # The old cache was swept on every detection (O(n) per vehicle)
+            # and had no hard size limit for highly variable plate traffic.
+            if len(self.recent_plates) > 4096 or self.detection_count % 64 == 0:
+                fresh = {key: seen for key, seen in self.recent_plates.items()
+                         if 0 <= current_time - seen < max(1.0, timeout * 2)}
+                if len(fresh) > 4096:
+                    recent = sorted(fresh.items(), key=lambda item: item[1], reverse=True)
+                    fresh = dict(recent[:3584])  # leave headroom until next compaction
+                self.recent_plates = fresh
             logger.info(f"RTSP Erkennung: {plate_text} (Konfidenz: {detection.get('confidence', 0):.2f})")
             
             # WebSocket Event senden (falls socketio verfügbar)

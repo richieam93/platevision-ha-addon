@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.13.13 – Kamerasitzungen, verlässliche Einstellungen und Pufferdiagnose (11.10.2026)
+
+- **RTSP-Verbindungswechsel:** Ein Kameraneustart macht Bildpakete und laufende Analysen der bisherigen Verbindung ungültig. Diese dürfen nach dem Reconnect weder das aktuelle Kamerabild überdecken noch alte Erkennungen nachliefern. Auch nach einem verspätet beendeten VideoCapture.read() beim Stop bleibt der Puffer leer.
+- **Echte Frame-Zeitstempel:** Die Capture-Schleife übergibt jetzt `(Bild, Aufnahmezeit, Verbindungskennung)` an die Analyse. Ein verzögertes KI-Ergebnis wird anhand des Kameraaufnahmezeitpunkts bewertet, nicht anhand des späteren Auslesens aus der Warteschlange. Ältere Aufrufer mit reinen NumPy-Bildern bleiben kompatibel.
+- **Neue Diagnose:** Kamera-Warteschlangentiefe und Anzahl der unter Last verdrängten Bilder im Streamstatus sowie in der Systemdiagnose. Das macht KI-Rückstau sichtbar, ohne Kennzeichen, Bilder oder Kamera-Zugangsdaten zu protokollieren.
+- **Speicherkorrektheit:** RTSP-, Erkennungs-, Historien-, Speicher- und Analysebereich-Einstellungen geben bei fehlgeschlagener dauerhafter Speicherung HTTP 503 zurück; die bestehenden ConfigManager-Rollbacks bleiben erhalten. Kein irreführendes `success: true` bei ENOSPC.
+- **Schieberegler:** Die Live-Seite fasst rasch aufeinanderfolgende Änderungen zu einem Schreibvorgang zusammen, führt Änderungen in der richtigen Reihenfolge aus und zeigt Speicherfehler an (350 ms Verzögerung).
+- **Regressionen:** Neuer Test `tools/test_rtsp_sessions_01313.py` für Stop, Reconnect, Queue, Bildalter und fünf Fehlerpfade sowie `tools/qa_browser_live_settings_01313.py` für serialisierte Browser-Speicherung. Keine Migration von SQLite und keine Veränderungen an KI-Modellgewichten.
+
+## 0.13.12 – Livebild-Frische, zuverlässiger Browserneustart und geringere MJPEG-Last (11.10.2026)
+
+- **Kein eingefrorenes KI-Bild:** Wenn die Verarbeitung langsamer als die RTSP-Aufnahme wird, fällt die Liveausgabe nach 2,5 Sekunden Verzögerung auf das neueste echte Kamerabild zurück. Erst wieder aktuelle KI-Overlays haben Vorrang. Der Zeitstempel gehört zur Quelle des Analysebilds und nicht zum (ggf. viel späteren) Ende der Auswertung.
+- **Keine Bilder aus gestoppten Sessions:** Eine noch laufende KI-Inferenz darf nach Stop keinen alten Frame mehr veröffentlichen. Bildpuffer und Zeitstempel werden bei Trennung gemeinsam bereinigt.
+- **Home Assistant Ingress:** Die JPEG-Vorschau liefert bei fehlendem oder seit mindestens 20 Sekunden nicht mehr aktualisiertem Kamerabild HTTP 204 (ohne Cache) statt irreführend altes Videomaterial als aktuell zu präsentieren.
+- **Browser-Neustarts:** Alte HTTP-Antworten oder langsam dekodierende JPEGs werden beim Stop/Neustart verworfen. Abbruch und Zeitlimit gelten auch während der Bilddekodierung; ein alter Abruf kann keinen neuen Stream mehr überschreiben. Der Laufzeit-Zähler wird nicht mehrfach gestartet und wird beim Stop zurückgesetzt.
+- **Leichtere MJPEG-Ausgabe:** Direkter MJPEG-Zugriff auf maximal 10 JPEG/s begrenzt; beim Warten ohne Kamera wird nur 1 statisches JPEG/s gesendet und das Standbild wiederverwendet. Bestehendes MJPEG-Format bleibt kompatibel.
+- **Dauerbetrieb:** Der Zwischenspeicher der zuletzt erkannten Kennzeichen hat jetzt eine Obergrenze von 4096 Einträgen und wird seltener aufgeräumt, ohne die Duplikat-Sperrzeit auszuhebeln. Das Erkennungsintervall wird auch bei aktivem CPU-Bewegungsgate live übernommen.
+- **Erweiterte Diagnose:** Kamera-/Analysebild-Alter und tatsächlich angezeigte Quelle (`KI-Overlay`, `Kamerabild`, `Kein Bild`) in `/api/stream/status`, `/api/system/health` und in den Diagnose-/Liveanzeigen. Bestehende Schnittstellenfelder bleiben unverändert.
+- **Prüfungen:** Neue Backendtests `test_frame_freshness_01312.py`, `test_mjpeg_limits_01312.py` und Chromium-Test `qa_browser_live_race_01312.py`, ergänzt um einen Test auf eingefrorene Einzelbilder. Keine Datenbankmigration, keine Änderungen an Modellen, RTSP-Zugangsdaten oder Home-Assistant-Portvorgaben. Siehe `AENDERUNGSBERICHT_0.13.12.md`.
+
 ## 0.13.11 – Schwarzes Livebild in Home Assistant Ingress korrigiert (11.10.2026)
 
 - **Ingress-Livestream:** Neue Einzelbildvorschau `/api/stream/preview`, die echte JPEGs über gewöhnliche HTTP-Antworten liefert. Der blockierende MJPEG-Feed bleibt für direkte Zugriffe bestehen; bei Fehlern wird dort automatisch auf JPEG umgestellt.

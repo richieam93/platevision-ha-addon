@@ -465,6 +465,11 @@
                 </div>
             </div>
             
+            <div class="small text-secondary mt-3" aria-live="polite">
+                Bildquelle: <strong id="previewSourceValue">Kein Bild</strong>
+                <span id="analysisAgeValue" class="d-block mt-1">KI-Analyse: noch kein Frame</span>
+            </div>
+
             <!-- RTSP URL Display -->
             <div class="mt-3">
                 <small class="text-secondary">RTSP URL:</small>
@@ -623,6 +628,8 @@
     let previewObjectUrl = null;
     let previewLastOk = 0;
     let previewFailures = 0;
+    // A cancelled old fetch/decode must never draw into a new camera session.
+    let previewGeneration = 0;
     let mjpegStartupTimer = null;
     
     // DOM Elements
@@ -717,6 +724,7 @@
         clearTimeout(mjpegStartupTimer);
         mjpegStartupTimer = null;
         previewActive = true;
+        previewGeneration++;
         previewFailures = 0;
         previewLastOk = 0;
         streamVideo.onerror = null;
@@ -728,8 +736,43 @@
         loadPreviewFrame();
     }
 
+    // Abort and timeout must also apply while the browser decodes a valid
+    // response. fetch()'s AbortController by itself only covers the transfer.
+    function decodePreviewImage(url, signal) {
+        return new Promise((resolve, reject) => {
+            const image = new Image();
+            let completed = false;
+            let timeoutId;
+            const finish = (error) => {
+                if (completed) return;
+                completed = true;
+                clearTimeout(timeoutId);
+                signal.removeEventListener('abort', cancelled);
+                image.onload = null;
+                image.onerror = null;
+                if (error) {
+                    image.src = '';
+                    reject(error);
+                } else {
+                    resolve();
+                }
+            };
+            const cancelled = () => finish(new Error('Vorschau abgebrochen'));
+            signal.addEventListener('abort', cancelled, {once: true});
+            image.onload = () => finish(null);
+            image.onerror = () => finish(new Error('JPEG nicht lesbar'));
+            timeoutId = setTimeout(() => finish(new Error('JPEG-Dekodierung dauert zu lange')), 4500);
+            if (signal.aborted) {
+                cancelled();
+            } else {
+                image.src = url;
+            }
+        });
+    }
+
     async function loadPreviewFrame() {
         if (!isStreaming || !previewActive) return;
+        const generation = previewGeneration;
         if (document.hidden) {
             previewTimer = setTimeout(loadPreviewFrame, 1500);
             return;
@@ -744,10 +787,12 @@
                 signal: controller.signal,
                 cache: 'no-store'
             });
+            if (!isStreaming || !previewActive || generation !== previewGeneration || controller.signal.aborted) return;
             if (response.status === 204) {
                 nextDelay = 1200;
-                if (!previewLastOk) {
-                    showPreviewMessage('Warte auf Kamerabilder', 'RTSP-Verbindung wird aufgebaut oder liefert noch keine Bilder.');
+                if (!previewLastOk || Date.now() - previewLastOk > 7000) {
+                    showPreviewMessage('Warte auf neue Kamerabilder',
+                        'RTSP-Verbindung wird aufgebaut oder liefert aktuell keine neuen Bilder.');
                 }
             } else {
                 if (!response.ok) throw new Error('Vorschau HTTP ' + response.status);
@@ -758,13 +803,8 @@
                 newUrl = URL.createObjectURL(blob);
                 // Decode before replacing the current displayed frame, so a
                 // slow or malformed response never blanks the current preview.
-                await new Promise((resolve, reject) => {
-                    const image = new Image();
-                    image.onload = resolve;
-                    image.onerror = () => reject(new Error('JPEG nicht lesbar'));
-                    image.src = newUrl;
-                });
-                if (!isStreaming || !previewActive) return;
+                await decodePreviewImage(newUrl, controller.signal);
+                if (!isStreaming || !previewActive || generation !== previewGeneration || controller.signal.aborted) return;
                 const oldUrl = previewObjectUrl;
                 previewObjectUrl = newUrl;
                 newUrl = null;
@@ -776,7 +816,7 @@
                 offlineOverlay.classList.add('hidden');
             }
         } catch (error) {
-            if (controller.signal.aborted && (!isStreaming || !previewActive)) return;
+            if (!isStreaming || !previewActive || generation !== previewGeneration) return;
             previewFailures++;
             nextDelay = Math.min(2500, 500 * previewFailures);
             if (!previewLastOk || Date.now() - previewLastOk > 7000) {
@@ -788,11 +828,14 @@
             clearTimeout(deadline);
             if (newUrl) URL.revokeObjectURL(newUrl);
             if (previewAbort === controller) previewAbort = null;
-            if (isStreaming && previewActive) previewTimer = setTimeout(loadPreviewFrame, nextDelay);
+            if (isStreaming && previewActive && generation === previewGeneration) {
+                previewTimer = setTimeout(loadPreviewFrame, nextDelay);
+            }
         }
     }
 
     function stopStreamFeed() {
+        previewGeneration++;
         clearTimeout(mjpegStartupTimer);
         mjpegStartupTimer = null;
         clearTimeout(previewTimer);
@@ -873,6 +916,8 @@
     }
     
     function updateUIError(error) {
+        stopStreamFeed();
+        stopUptimeCounter();
         offlineOverlay.classList.remove('hidden');
         if (streamInfoOverlay) streamInfoOverlay.style.display = 'none';
         
@@ -905,6 +950,7 @@
     // ============================================
     
     function startUptimeCounter() {
+        if (uptimeInterval) return; // status polling and the Start request can race
         updateStreamTime();
         uptimeInterval = setInterval(updateStreamTime, 1000);
     }
@@ -914,6 +960,9 @@
             clearInterval(uptimeInterval);
             uptimeInterval = null;
         }
+        // A later restart via the global header must not reuse the uptime
+        // origin of the previous camera session.
+        streamStartTime = null;
         document.getElementById('streamTime').textContent = '00:00:00';
         document.getElementById('statStreamUptime').textContent = '00:00';
     }
@@ -1035,26 +1084,43 @@
     // SETTINGS CONTROLS
     // ============================================
     
-    function updateInterval(value) {
-        const interval = value / 10;
-        document.getElementById('intervalValue').textContent = interval.toFixed(1) + 's';
-        
-        // Save setting
-        fetch('{{ pv_prefix }}/api/config/detection', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ process_interval: interval })
-        });
+    // Several slider events can otherwise write the config file dozens of
+    // times in one second, or complete out of order. Serialize writes and
+    // coalesce subsequent changes to the latest values.
+    let detectionSaveTimer = null;
+    let detectionSaveQueue = Promise.resolve();
+    let pendingDetectionChanges = {};
+    function scheduleDetectionSave(key, value) {
+        pendingDetectionChanges[key] = value;
+        clearTimeout(detectionSaveTimer);
+        detectionSaveTimer = setTimeout(() => {
+            detectionSaveTimer = null;
+            const changes = pendingDetectionChanges;
+            pendingDetectionChanges = {};
+            detectionSaveQueue = detectionSaveQueue.catch(() => {}).then(async () => {
+                const response = await fetch('{{ pv_prefix }}/api/config/detection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(changes)
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const result = await response.json();
+                if (!result.success) throw new Error(result.error || 'Speichern fehlgeschlagen');
+            }).catch(error => {
+                showToast('Einstellungen', 'Änderung nicht gespeichert: ' + String(error.message || error), 'danger');
+            });
+        }, 350);
     }
-    
+
+    function updateInterval(value) {
+        const interval = Number(value) / 10;
+        document.getElementById('intervalValue').textContent = interval.toFixed(1) + 's';
+        scheduleDetectionSave('process_interval', interval);
+    }
+
     function updateLiveConfidence(value) {
         document.getElementById('liveConfidenceValue').textContent = value + '%';
-        
-        fetch('{{ pv_prefix }}/api/config/detection', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ confidence_threshold: value / 100 })
-        });
+        scheduleDetectionSave('confidence_threshold', Number(value) / 100);
     }
     
     // ============================================
@@ -1157,6 +1223,14 @@
                     ? resolution.width + ' × ' + resolution.height : '--';
                 document.getElementById('statReconnects').textContent =
                     data.reconnect_count ?? data.reconnect_attempts ?? 0;
+                const sources = {annotated: 'KI-Overlay', raw: 'Aktuelles Kamerabild', none: 'Kein Bild'};
+                const source = data.preview_source || 'none';
+                document.getElementById('previewSourceValue').textContent = sources[source] || 'Unbekannt';
+                const analysisAge = Number(data.last_analysis_frame_age_seconds);
+                document.getElementById('analysisAgeValue').textContent =
+                    data.last_analysis_frame_age_seconds == null || !Number.isFinite(analysisAge)
+                    ? 'KI-Analyse: noch kein Frame'
+                    : 'Letzte KI-Bildausgabe vor ' + analysisAge.toFixed(0) + ' s';
                 const age = Number(data.last_frame_age_seconds);
                 if (data.status === 'running' && data.last_frame_age_seconds != null &&
                         Number.isFinite(age) && age >= 20) {
